@@ -1,10 +1,11 @@
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                                QPushButton, QComboBox, QGroupBox, QRadioButton,
                                QFontComboBox, QSpinBox, QColorDialog, QCheckBox, QWidget, QTextEdit,
-    QFrame, QButtonGroup, QTabWidget, QGridLayout, QMessageBox, QLineEdit, QApplication, QSpacerItem, QSizePolicy)
+    QFrame, QButtonGroup, QTabWidget, QGridLayout, QMessageBox, QLineEdit, QApplication, QSpacerItem, QSizePolicy,
+    QTableWidget, QTableWidgetItem, QHeaderView)  # Dodaj QTableWidget, QTableWidgetItem, QHeaderView
 from PySide6.QtCore import Qt, Signal, QTime
 from PySide6.QtGui import QFont
-import functools
+from db_connector import DatabaseConnector, get_modifier_id  # Dodaj import get_modifier_id
 
 class ThemeSettingsDialog(QDialog):
     """
@@ -396,3 +397,333 @@ class InsertSymbolDialog(QDialog):
     def get_selected_symbol(self):
         """Zwraca wybrany symbol"""
         return self.selected_symbol
+
+
+class ScheduleChangeDialog(QDialog):
+    """Dialog do edycji zmian w grafiku"""
+
+    def __init__(self, parent=None, grouped_cells=None, year=None, month=None):
+        super().__init__(parent)
+        self.setWindowTitle("Wstaw zmianę grafiku")
+        self.setMinimumWidth(700)  # Zwiększona szerokość dla dodatkowej kolumny
+        self.setMinimumHeight(500)  # Zwiększona wysokość dla większej liczby wierszy
+
+        self.parent = parent
+        self.grouped_cells = grouped_cells
+        self.year = year
+        self.month = month
+
+        # Spłaszcz dane - wszystkie komórki w jednej liście
+        self.flattened_cells = self.flatten_grouped_cells(grouped_cells)
+
+        self.setup_ui()
+
+    def flatten_grouped_cells(self, grouped_cells):
+        """Spłaszcza pogrupowane komórki do jednej listy"""
+        flattened = []
+        for user_id, dates in grouped_cells.items():
+            for date, cells in dates.items():
+                for cell in cells:
+                    flattened.append(cell)
+        return flattened
+
+    def setup_ui(self):
+        main_layout = QVBoxLayout(self)
+
+        # Nagłówek
+        header_label = QLabel("Edycja zmian w grafiku")
+        header_label.setStyleSheet("font-size: 14pt; font-weight: bold; margin-bottom: 10px;")
+        main_layout.addWidget(header_label)
+
+        # Tabela dla wszystkich komórek
+        self.cells_table = QTableWidget()
+        self.cells_table.setColumnCount(6)  # Data, Użytkownik, Symbol, Lokalizacja, Godzina rozpoczęcia, Akcje
+        self.cells_table.setHorizontalHeaderLabels(
+            ["Data", "Użytkownik", "Symbol", "Lokalizacja", "Godzina rozpoczęcia", "Akcje"])
+
+        # Ustaw właściwości dla lepszego wyświetlania
+        self.cells_table.horizontalHeader().setStretchLastSection(True)
+        self.cells_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Data
+        self.cells_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Użytkownik
+        self.cells_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)  # Symbol
+        self.cells_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)  # Lokalizacja
+        self.cells_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)  # Godzina rozpoczęcia
+
+        # Dodaj wiersze dla każdej komórki
+        self.cells_table.setRowCount(len(self.flattened_cells))
+
+        for row, cell in enumerate(self.flattened_cells):
+            # Kolumna daty
+            date_item = QTableWidgetItem(self.format_date(cell.get('date', '')))
+            date_item.setFlags(date_item.flags() & ~Qt.ItemIsEditable)  # Tylko do odczytu
+            self.cells_table.setItem(row, 0, date_item)
+
+            # Kolumna użytkownika
+            user_item = QTableWidgetItem(cell.get('user_name', 'Nieznany'))
+            user_item.setFlags(user_item.flags() & ~Qt.ItemIsEditable)  # Tylko do odczytu
+            self.cells_table.setItem(row, 1, user_item)
+
+            # Kolumna symbolu
+            current_symbol = cell.get('current_symbol', '')
+            symbol_item = QTableWidgetItem(current_symbol)
+            symbol_item.setFlags(symbol_item.flags() & ~Qt.ItemIsEditable)  # Tylko do odczytu
+            self.cells_table.setItem(row, 2, symbol_item)
+
+            # Kolumna lokalizacji (Combo box)
+            location_combo = QComboBox()
+            location_combo.addItem("SBC (s)", "s")
+            location_combo.addItem("mPrzystanek (p)", "p")
+            location_combo.addItem("HomeOffice (h)", "h")
+
+            # Ustaw bieżącą lokalizację z symbolu, jeśli dostępna
+            if current_symbol and ';' in current_symbol:
+                parts = current_symbol.split(';')
+                if parts[0] in ['s', 'p', 'h']:
+                    location_index = {'s': 0, 'p': 1, 'h': 2}.get(parts[0], 0)
+                    location_combo.setCurrentIndex(location_index)
+
+            self.cells_table.setCellWidget(row, 3, location_combo)
+
+            # Kolumna godziny rozpoczęcia (SpinBox)
+            time_spin = QSpinBox()
+            time_spin.setMinimum(0)
+            time_spin.setMaximum(23)
+            time_spin.setButtonSymbols(QSpinBox.UpDownArrows)  # Pokazuj przyciski góra/dół
+            time_spin.setSpecialValueText("")  # Brak specjalnego tekstu dla wartości minimalnej
+
+            # Ustaw bieżącą godzinę rozpoczęcia, jeśli dostępna
+            start_hour = cell.get('start_hour')
+            if start_hour is not None and isinstance(start_hour, int) and 0 <= start_hour < 24:
+                time_spin.setValue(start_hour)
+            else:
+                time_spin.setValue(8)  # Domyślnie 8:00
+
+            self.cells_table.setCellWidget(row, 4, time_spin)
+
+            # Przycisk akcji
+            apply_button = QPushButton("Zastosuj")
+            apply_button.setStyleSheet("background-color: #2196F3; color: white;")
+
+            # Zapisz oryginalny indeks komórki w danych przycisku
+            apply_button.setProperty("cell_index", row)
+
+            # Połącz przycisk z obsługą z danymi komórki - używając indeksu komórki
+            apply_button.clicked.connect(self.apply_change_by_index)
+
+            self.cells_table.setCellWidget(row, 5, apply_button)
+
+        main_layout.addWidget(self.cells_table)
+
+        # Dodaj przyciski na dole
+        button_layout = QHBoxLayout()
+
+        # Przycisk zamknięcia
+        close_button = QPushButton("Zamknij")
+        close_button.clicked.connect(self.close)
+
+        button_layout.addStretch()
+        button_layout.addWidget(close_button)
+
+        main_layout.addLayout(button_layout)
+
+    def apply_change_by_index(self):
+        """Obsługuje kliknięcie przycisku 'Zastosuj' i stosuje zmianę dla wybranej komórki"""
+        # Pobierz przycisk, który wywołał tę funkcję
+        button = self.sender()
+        if not button:
+            return
+
+        # Pobierz indeks komórki z właściwości przycisku
+        cell_index = button.property("cell_index")
+        if cell_index is None or cell_index >= len(self.flattened_cells):
+            return
+
+        # Pobierz dane komórki
+        cell = self.flattened_cells[cell_index]
+
+        # Pobierz wartości z kontrolek
+        location_combo = self.cells_table.cellWidget(cell_index, 3)
+        time_spin = self.cells_table.cellWidget(cell_index, 4)
+
+        if not location_combo or not time_spin:
+            QMessageBox.warning(self, "Błąd", "Nie można odczytać wartości.", QMessageBox.Ok)
+            return
+
+        location = location_combo.currentData()
+        start_hour = time_spin.value()
+
+        # Pobierz dane potrzebne do wywołania procedury
+        user_id = cell.get('user_id')
+        date_str = cell.get('date')
+        nr_kadrowy = cell.get('nr_kadrowy')
+        current_symbol = cell.get('current_symbol', '')
+
+        # Przygotuj nowy symbol - ZMODYFIKOWANA LOGIKA
+        # Podziel istniejący symbol, jeśli jest, aby zachować wartości po godzinie rozpoczęcia
+        if current_symbol and ';' in current_symbol:
+            parts = current_symbol.split(';')
+            # Sprawdź ile części ma symbol
+            if len(parts) >= 3:
+                # Format: lokalizacja;godzina_rozpoczęcia;pozostałe_wartości;
+                # Zamień lokalizację i godzinę rozpoczęcia, zachowując inne części
+                new_symbol = f"{location};{start_hour};{';'.join(parts[2:])}"
+            elif len(parts) == 2:
+                # Format: lokalizacja;godzina_rozpoczęcia;
+                new_symbol = f"{location};{start_hour};"
+            else:
+                # Format: tylko lokalizacja;
+                new_symbol = f"{location};{start_hour};"
+        else:
+            # Jeśli nie ma istniejącego symbolu lub jest bez średnika, utwórz nowy
+            new_symbol = f"{location};{start_hour};8;"  # Domyślna wartość 8 godzin pracy
+
+        # Upewnij się, że symbol kończy się średnikiem
+        if not new_symbol.endswith(';'):
+            new_symbol += ';'
+
+        # Wyodrębnij rok i miesiąc z daty
+        year, month, _ = date_str.split('-')
+
+        # Wywołaj procedurę, aby zastosować zmianę
+        try:
+            result = self.call_change_procedure(
+                user_id,
+                int(year),
+                int(month),
+                date_str,
+                new_symbol,
+                nr_kadrowy
+            )
+
+            if result["success"]:
+                # Zaktualizuj tekst i styl przycisku, aby wskazać sukces
+                button.setText("Zmieniono ✓")
+                button.setStyleSheet("background-color: #4CAF50; color: white;")
+
+                # Zaktualizuj element symbolu w tabeli
+                symbol_item = self.cells_table.item(cell_index, 2)
+                if symbol_item:
+                    symbol_item.setText(new_symbol)
+
+                # Odśwież dane w głównym oknie
+                self.parent.data_provider.refresh_data(int(year), int(month))
+                self.parent.update_table_content()
+            else:
+                QMessageBox.warning(self, "Błąd", result["message"], QMessageBox.Ok)
+
+        except Exception as e:
+            QMessageBox.critical(self, "Błąd", f"Wystąpił błąd: {str(e)}", QMessageBox.Ok)
+
+    def format_date(self, date_str):
+        """Formatuje ciąg daty z YYYY-MM-DD do DD.MM.YYYY"""
+        try:
+            year, month, day = date_str.split('-')
+            return f"{day}.{month}.{year}"
+        except:
+            return date_str
+
+    def call_change_procedure(self, user_id, year, month, date_str, symbol, nr_kadrowy, pobieranie_sugestii=None):
+        """
+        Wywołuje procedurę składowaną p_P_ZZ_ImportZmianNaSerwer_v4 aby zastosować zmianę w grafiku
+
+        Args:
+            user_id: ID użytkownika
+            year: Rok
+            month: Miesiąc
+            date_str: Data w formacie 'YYYY-MM-DD'
+            symbol: Nowy symbol, w tym lokalizacja
+            nr_kadrowy: Numer kadrowy pracownika
+            pobieranie_sugestii: Parametr NULL
+
+        Returns:
+            dict: Wynik operacji z kluczami 'success' i 'message'
+        """
+        try:
+            # Przygotuj parametry dla procedury składowanej
+            params = [
+                nr_kadrowy,  # @Nr_Kadrowy
+                year,  # @Rok
+                month,  # @Miesiac
+                date_str,  # @Data
+                symbol,  # @Symbol
+                pobieranie_sugestii  # @CzyPobieranieSugestii
+            ]
+
+            # Utwórz połączenie z bazą danych
+            conn = DatabaseConnector.get_connection()
+            cursor = conn.cursor()
+
+            # Przygotuj wywołanie procedury składowanej
+            placeholders = ", ".join(["?"] * len(params))
+            sql = f"{{CALL [dbo].[p_P_ZZ_ImportZmianNaSerwer_v4] ({placeholders})}}"
+
+            # Wykonaj procedurę składowaną
+            cursor.execute(sql, params)
+
+            # Pobierz wyniki
+            result_sets = []
+
+            # Procedura może zwrócić wiele zestawów wyników
+            while True:
+                try:
+                    rows = cursor.fetchall()
+                    if rows:
+                        result_sets.append(rows)
+
+                    # Sprawdź, czy są więcej zestawów wyników
+                    if not cursor.nextset():
+                        break
+                except:
+                    break
+
+            # Domyślny komunikat
+            success = False
+            message = "Nieznany wynik operacji."
+
+            # Sprawdź wyniki - zwykle pierwszy zestaw wyników zawiera informacje o sukcesie/niepowodzeniu
+            if result_sets and result_sets[0]:
+                first_result = result_sets[0][0]
+
+                # Pobierz komunikat z wyniku
+                message = str(first_result[0]) if first_result and len(first_result) > 0 else "Operacja zakończona."
+
+                # Określ sukces na podstawie treści komunikatu
+                success = not (
+                            "błąd" in message.lower() or "nieudany" in message.lower() or "niepowodzenie" in message.lower())
+
+            # Zatwierdź transakcję i zamknij połączenie
+            conn.commit()
+            conn.close()
+
+            # Zaktualizuj datę ostatniej modyfikacji, jeśli zakończono sukcesem
+            if success:
+                try:
+                    # Pobierz najnowszą datę modyfikacji
+                    query = """
+                        SELECT MAX(DataModyfikacji) as DataModyfikacji FROM p_v_zz_GrafikiPracy
+                    """
+                    conn = DatabaseConnector.get_connection()
+                    cursor = conn.cursor()
+                    cursor.execute(query)
+                    result = cursor.fetchone()
+                    conn.close()
+
+                    if result and result[0]:
+                        # Zapisz jako własną modyfikację
+                        self.parent.last_self_modification_date = result[0]
+                        self.parent.last_modification_date = result[0]
+                        print(f"Zarejestrowano własną modyfikację z datą: {self.parent.last_self_modification_date}")
+                except Exception as e:
+                    print(f"Błąd rejestrowania własnej modyfikacji: {e}")
+
+            return {
+                "success": success,
+                "message": message
+            }
+
+        except Exception as e:
+            print(f"Błąd wywołania procedury zmiany: {e}")
+            return {
+                "success": False,
+                "message": f"Wystąpił błąd: {str(e)}"
+            }
