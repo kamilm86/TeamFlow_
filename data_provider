@@ -1,0 +1,945 @@
+from PySide6.QtCore import QObject, Signal
+from db_connector import DatabaseConnector
+
+# Klasa do przechowywania zindeksowanych zdarzeń
+class EventsIndex:
+    """
+    Klasa do efektywnego przechowywania i dostępu do zdarzeń zindeksowanych według daty i użytkownika.
+    Umożliwia szybkie wyszukiwanie zdarzeń dla konkretnej pary (użytkownik, data) oraz filtrowanie.
+    """
+
+    def __init__(self):
+        # Główny indeks - przechowuje zdarzenia w formacie {(user_id, date_str): [event1, event2, ...]}
+        self.user_date_index = {}
+
+        # Indeks wg dat - przechowuje zdarzenia w formacie {date_str: [event1, event2, ...]}
+        self.date_index = {}
+
+        # Indeks wg użytkowników - przechowuje zdarzenia w formacie {user_id: [event1, event2, ...]}
+        self.user_index = {}
+
+        # Indeks wg typu - przechowuje zdarzenia w formacie {event_type: [event1, event2, ...]}
+        self.type_index = {}
+
+        # Indeks wg ID - przechowuje zdarzenia w formacie {event_id: event}
+        self.id_index = {}
+
+        # Wszystkie zdarzenia w jednej liście
+        self.all_events = []
+
+    def clear(self):
+        """Czyści wszystkie indeksy"""
+        self.user_date_index.clear()
+        self.date_index.clear()
+        self.user_index.clear()
+        self.type_index.clear()
+        self.id_index.clear()
+        self.all_events.clear()
+
+    def add_event(self, event):
+        """
+        Dodaje zdarzenie do wszystkich indeksów
+
+        Args:
+            event (dict): Słownik reprezentujący zdarzenie
+        """
+        # Pobierz kluczowe pola z wydarzenia
+        user_id = str(event.get('user_id', ''))
+        event_date = event.get('date_key', '')
+        event_type = event.get('type', '')
+        event_id = event.get('id', 0)
+
+        # Standaryzacja formatu daty
+        date_str = self._standardize_date(event_date)
+
+        # Dodaj do głównego indeksu (user_id, date_str)
+        key = (user_id, date_str)
+        if key not in self.user_date_index:
+            self.user_date_index[key] = []
+        self.user_date_index[key].append(event)
+
+        # Dodaj do indeksu dat
+        if date_str not in self.date_index:
+            self.date_index[date_str] = []
+        self.date_index[date_str].append(event)
+
+        # Dodaj do indeksu użytkowników
+        if user_id not in self.user_index:
+            self.user_index[user_id] = []
+        self.user_index[user_id].append(event)
+
+        # Dodaj do indeksu typów
+        if event_type not in self.type_index:
+            self.type_index[event_type] = []
+        self.type_index[event_type].append(event)
+
+        # Dodaj do indeksu ID
+        if event_id:
+            self.id_index[event_id] = event
+
+        # Dodaj do listy wszystkich zdarzeń
+        self.all_events.append(event)
+
+    def build_from_events(self, events_list):
+        """
+        Buduje indeksy na podstawie listy zdarzeń
+
+        Args:
+            events_list (list): Lista słowników zdarzeń
+        """
+        self.clear()
+        for event in events_list:
+            self.add_event(event)
+        return self
+
+    def get_events_for_user_date(self, user_id, date_str):
+        """
+        Zwraca listę zdarzeń dla konkretnego użytkownika i daty
+
+        Args:
+            user_id (str): ID użytkownika
+            date_str (str): Data w formacie 'YYYY-MM-DD'
+
+        Returns:
+            list: Lista zdarzeń
+        """
+        user_id = str(user_id)
+        date_str = self._standardize_date(date_str)
+        key = (user_id, date_str)
+        return self.user_date_index.get(key, [])
+
+    def get_events_for_user(self, user_id):
+        """
+        Zwraca listę wszystkich zdarzeń dla konkretnego użytkownika
+
+        Args:
+            user_id (str): ID użytkownika
+
+        Returns:
+            list: Lista zdarzeń
+        """
+        user_id = str(user_id)
+        return self.user_index.get(user_id, [])
+
+    def get_events_for_date(self, date_str):
+        """
+        Zwraca listę wszystkich zdarzeń dla konkretnej daty
+
+        Args:
+            date_str (str): Data w formacie 'YYYY-MM-DD'
+
+        Returns:
+            list: Lista zdarzeń
+        """
+        date_str = self._standardize_date(date_str)
+        return self.date_index.get(date_str, [])
+
+    def get_events_by_type(self, event_type):
+        """
+        Zwraca listę wszystkich zdarzeń określonego typu
+
+        Args:
+            event_type (str): Typ zdarzenia
+
+        Returns:
+            list: Lista zdarzeń
+        """
+        return self.type_index.get(event_type, [])
+
+    def get_event_by_id(self, event_id):
+        """
+        Zwraca zdarzenie o określonym ID
+
+        Args:
+            event_id: ID zdarzenia
+
+        Returns:
+            dict: Zdarzenie lub None jeśli nie znaleziono
+        """
+        return self.id_index.get(event_id)
+
+    def delete_event(self, event_id, event_type=None):
+        """
+        Usuwa zdarzenie o określonym ID i opcjonalnie typu ze wszystkich indeksów
+
+        Args:
+            event_id: ID zdarzenia
+            event_type: Typ zdarzenia (opcjonalnie)
+
+        Returns:
+            bool: True jeśli znaleziono i usunięto, False w przeciwnym wypadku
+        """
+        # Jeśli podano typ, sprawdź, czy istnieje zdarzenie o tym ID i typie
+        if event_type:
+            events_to_delete = []
+            for event in self.all_events:
+                if event.get('id') == event_id and event.get('type') == event_type:
+                    events_to_delete.append(event)
+
+            if not events_to_delete:
+                print(f"Nie znaleziono zdarzenia o ID {event_id} i typie {event_type}")
+                return False
+
+            # Usuń każde dopasowane zdarzenie
+            for event in events_to_delete:
+                # Pobierz dane potrzebne do aktualizacji indeksów
+                deleted_type = event.get('type', '')
+                user_id = str(event.get('user_id', ''))
+                event_date = event.get('date_key', '')
+                date_str = self._standardize_date(event_date)
+
+                print(
+                    f"Usuwam z indeksu zdarzenie typu {deleted_type}: ID={event_id}, Użytkownik={user_id}, Data={date_str}")
+
+                # Usuń z indeksu ID jeśli to właściwe zdarzenie
+                if event_id in self.id_index and self.id_index[event_id].get('type') == event_type:
+                    del self.id_index[event_id]
+
+                # Usuń z listy wszystkich zdarzeń
+                self.all_events = [e for e in self.all_events if
+                                   not (e.get('id') == event_id and e.get('type') == event_type)]
+
+                # Usuń z indeksu (user_id, date_str)
+                key = (user_id, date_str)
+                if key in self.user_date_index:
+                    self.user_date_index[key] = [e for e in self.user_date_index[key] if
+                                                 not (e.get('id') == event_id and e.get('type') == event_type)]
+                    if not self.user_date_index[key]:
+                        del self.user_date_index[key]
+
+                # Usuń z indeksu dat
+                if date_str in self.date_index:
+                    self.date_index[date_str] = [e for e in self.date_index[date_str] if
+                                                 not (e.get('id') == event_id and e.get('type') == event_type)]
+                    if not self.date_index[date_str]:
+                        del self.date_index[date_str]
+
+                # Usuń z indeksu użytkowników
+                if user_id in self.user_index:
+                    self.user_index[user_id] = [e for e in self.user_index[user_id] if
+                                                not (e.get('id') == event_id and e.get('type') == event_type)]
+                    if not self.user_index[user_id]:
+                        del self.user_index[user_id]
+
+                # Usuń z indeksu typów
+                if deleted_type in self.type_index:
+                    self.type_index[deleted_type] = [e for e in self.type_index[deleted_type] if
+                                                     not (e.get('id') == event_id and e.get('type') == event_type)]
+                    if not self.type_index[deleted_type]:
+                        del self.type_index[deleted_type]
+
+            return True
+
+        # Oryginalna logika dla przypadku gdy nie podano typu zdarzenia
+        event = self.id_index.get(event_id)
+        if not event:
+            print(f"Nie znaleziono zdarzenia o ID {event_id} (bez określonego typu)")
+            return False
+
+        # Usuń z indeksu ID
+        del self.id_index[event_id]
+
+        # Usuń z listy wszystkich zdarzeń
+        self.all_events = [e for e in self.all_events if e.get('id') != event_id]
+
+        # Usuń z pozostałych indeksów
+        user_id = str(event.get('user_id', ''))
+        event_date = event.get('date_key', '')
+        date_str = self._standardize_date(event_date)
+        event_type = event.get('type', '')
+
+        print(f"Usuwam z indeksu zdarzenie: ID={event_id}, Typ={event_type}, Użytkownik={user_id}, Data={date_str}")
+
+        # Usuń z indeksu (user_id, date_str)
+        key = (user_id, date_str)
+        if key in self.user_date_index:
+            self.user_date_index[key] = [e for e in self.user_date_index[key] if e.get('id') != event_id]
+            if not self.user_date_index[key]:
+                del self.user_date_index[key]
+
+        # Usuń z indeksu dat
+        if date_str in self.date_index:
+            self.date_index[date_str] = [e for e in self.date_index[date_str] if e.get('id') != event_id]
+            if not self.date_index[date_str]:
+                del self.date_index[date_str]
+
+        # Usuń z indeksu użytkowników
+        if user_id in self.user_index:
+            self.user_index[user_id] = [e for e in self.user_index[user_id] if e.get('id') != event_id]
+            if not self.user_index[user_id]:
+                del self.user_index[user_id]
+
+        # Usuń z indeksu typów
+        if event_type in self.type_index:
+            self.type_index[event_type] = [e for e in self.type_index[event_type] if e.get('id') != event_id]
+            if not self.type_index[event_type]:
+                del self.type_index[event_type]
+
+        return True
+
+    def filter_events_with_index(self, **kwargs):
+        """
+        Filtruje zdarzenia używając indeksu.
+
+        Args:
+            **kwargs: Kryteria filtrowania (user_id, date_from, date_to, type, etc.)
+
+        Returns:
+            list: Lista przefiltrowanych zdarzeń
+        """
+        return self.events_index.filter_events(**kwargs)
+
+    def filter_events(self, **kwargs):
+        """
+        Filtruje zdarzenia według podanych kryteriów
+
+        Args:
+            **kwargs: Kryteria filtrowania (user_id, date_from, date_to, type, etc.)
+
+        Returns:
+            list: Lista przefiltrowanych zdarzeń
+        """
+        # Określ najbardziej efektywny indeks do rozpoczęcia filtrowania
+        filtered_events = None
+
+        # Jeśli podano konkretnego użytkownika i datę, użyj głównego indeksu
+        if 'user_id' in kwargs and 'date' in kwargs:
+            user_id = str(kwargs['user_id'])
+            date_str = self._standardize_date(kwargs['date'])
+            key = (user_id, date_str)
+            filtered_events = self.user_date_index.get(key, []).copy()
+
+        # Jeśli podano tylko użytkownika, użyj indeksu użytkowników
+        elif 'user_id' in kwargs:
+            user_id = str(kwargs['user_id'])
+            filtered_events = self.user_index.get(user_id, []).copy()
+
+        # Jeśli podano tylko datę, użyj indeksu dat
+        elif 'date' in kwargs:
+            date_str = self._standardize_date(kwargs['date'])
+            filtered_events = self.date_index.get(date_str, []).copy()
+
+        # Jeśli podano tylko typ, użyj indeksu typów
+        elif 'type' in kwargs:
+            filtered_events = self.type_index.get(kwargs['type'], []).copy()
+
+        # W przeciwnym razie rozpocznij od wszystkich zdarzeń
+        else:
+            filtered_events = self.all_events.copy()
+
+        # Jeśli nie mamy punktu startowego, zwróć pustą listę
+        if filtered_events is None:
+            return []
+
+        # Zastosuj dodatkowe filtry
+        result = filtered_events
+
+        # Filtruj po datach od-do
+        if 'date_from' in kwargs:
+            date_from = self._standardize_date(kwargs['date_from'])
+            result = [e for e in result if self._standardize_date(e.get('date_key', '')) >= date_from]
+
+        if 'date_to' in kwargs:
+            date_to = self._standardize_date(kwargs['date_to'])
+            result = [e for e in result if self._standardize_date(e.get('date_key', '')) <= date_to]
+
+        # Filtruj po typie (jeśli nie użyto wcześniej indeksu typów)
+        if 'type' in kwargs and filtered_events != self.type_index.get(kwargs['type'], []):
+            result = [e for e in result if e.get('type', '') == kwargs['type']]
+
+        # Filtruj po user_id (jeśli nie użyto wcześniej indeksu użytkowników)
+        if 'user_id' in kwargs and filtered_events != self.user_index.get(str(kwargs['user_id']), []):
+            user_id = str(kwargs['user_id'])
+            result = [e for e in result if str(e.get('user_id', '')) == user_id]
+
+        # Filtruj po temacie
+        if 'topic' in kwargs:
+            topic_filter = kwargs['topic'].lower()
+            result = [e for e in result if topic_filter in str(e.get('topic', '')).lower()]
+
+        # Filtruj po nazwie
+        if 'name' in kwargs:
+            name_filter = kwargs['name'].lower()
+            result = [e for e in result if name_filter in str(e.get('name', '')).lower()]
+
+        # Filtruj po typach zdarzeń - lista dozwolonych typów
+        if 'allowed_types' in kwargs and kwargs['allowed_types']:
+            allowed_types = kwargs['allowed_types']
+            result = [e for e in result if e.get('type', '') in allowed_types]
+
+        return result
+
+    def _standardize_date(self, date_obj):
+        """
+        Standaryzuje format daty do 'YYYY-MM-DD'
+
+        Args:
+            date_obj: Data w dowolnym formacie (string, datetime, itp.)
+
+        Returns:
+            str: Data w formacie 'YYYY-MM-DD'
+        """
+        if not date_obj:
+            return ''
+
+        # Jeśli to już string, wyciągnij tylko datę
+        if isinstance(date_obj, str):
+            # Obsługa różnych formatów
+            if 'T' in date_obj:  # Format ISO 'YYYY-MM-DDThh:mm:ss'
+                return date_obj.split('T')[0]
+            elif ' ' in date_obj:  # Format 'YYYY-MM-DD hh:mm:ss'
+                return date_obj.split(' ')[0]
+            elif len(date_obj) == 10 and date_obj.count('-') == 2:  # Format 'YYYY-MM-DD'
+                return date_obj
+            elif len(date_obj) == 10 and date_obj.count('.') == 2:  # Format 'DD.MM.YYYY'
+                parts = date_obj.split('.')
+                if len(parts) == 3:
+                    return f"{parts[2]}-{parts[1]}-{parts[0]}"
+            # Jeśli nie dopasowano do żadnego formatu, zwróć oryginalny string
+            return date_obj
+
+        # Jeśli to obiekt datetime, skonwertuj na string
+        if hasattr(date_obj, 'strftime'):
+            return date_obj.strftime('%Y-%m-%d')
+
+        # W przypadku nieznanego typu, zwróć pusty string
+        return ''
+
+class DataProvider(QObject):  # Dziedziczy po QObject, aby móc emitować sygnały
+    """
+    Klasa do obsługi pobierania danych z bazy danych.
+    Wykorzystuje funkcje tabelaryczne SQL i cache'owanie danych w pamięci
+    dla minimalizacji liczby zapytań do bazy danych.
+    """
+    data_changed = Signal(str, int, int)  # Typ danych, rok, miesiąc
+
+    def __init__(self):
+        super().__init__()
+        self.db_connector = DatabaseConnector
+        self.cache = {}  # Cache do przechowywania danych w pamięci
+        self.events_index = EventsIndex()  # Dodaj indeks zdarzeń jako część DataProvider
+
+    def _get_cache_key(self, operation, year, month, **kwargs):
+        """Generuje klucz cache'u na podstawie parametrów operacji"""
+        # Bazowy klucz zawiera operację, rok i miesiąc
+        key = f"{operation}_{year}_{month}"
+
+        # Dodaj dodatkowe parametry, jeśli istnieją
+        if kwargs:
+            # Sortuj parametry po kluczu, aby zapewnić spójność klucza
+            param_str = "_".join(f"{k}={v}" for k, v in sorted(kwargs.items()))
+            key += f"_{param_str}"
+
+        return key
+
+    def get_schedule_data(self, year, month, use_cache=True):
+        """
+        Pobiera dane grafiku dla określonego roku i miesiąca przy użyciu funkcji tabelarycznej.
+        Wyniki są cache'owane w pamięci.
+
+        Args:
+            year: Rok
+            month: Miesiąc
+            use_cache: Czy używać cache'u (domyślnie True)
+
+        Returns:
+            list: Dane grafiku
+        """
+        cache_key = self._get_cache_key("schedule", year, month)
+
+        # Sprawdź, czy dane są już w cache'u
+        if use_cache and cache_key in self.cache:
+            print(f"Używam cache'owanych danych grafiku dla {year}-{month}")
+            return self.cache[cache_key]
+
+        try:
+            query = """
+            SELECT * FROM [dbo].[fn_GetScheduleData](?, ?, NULL, NULL, NULL)
+            ORDER BY WydzialGrafik, PrzelozonyDane, UzytkownikDane, Data
+            """
+
+            conn = self.db_connector.get_connection()
+            cursor = conn.cursor()
+            cursor.execute(query, (year, month))
+            schedule_data = cursor.fetchall()
+            conn.close()
+
+            # Zapisz dane w cache'u
+            self.cache[cache_key] = schedule_data
+
+            return schedule_data
+        except Exception as e:
+            print(f"Błąd podczas pobierania danych grafiku: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+
+    def get_events_data(self, year, month, use_cache=True, as_dict=True, build_index=True):
+        """
+        Pobiera dane zdarzeń dla określonego roku i miesiąca.
+        Wyniki są cache'owane w pamięci i opcjonalnie buduje indeks.
+
+        Args:
+            year: Rok
+            month: Miesiąc
+            use_cache: Czy używać cache'u (domyślnie True)
+            as_dict: Czy konwertować dane na słowniki (domyślnie True)
+
+        Returns:
+            list: Dane zdarzeń (jako lista słowników gdy as_dict=True)
+        """
+        cache_key = self._get_cache_key("events", year, month)
+        dict_cache_key = f"{cache_key}_as_dict"
+
+        # Sprawdź, czy dane są już w cache'u
+        if use_cache:
+            if as_dict and dict_cache_key in self.cache:
+                print(f"Używam cache'owanych danych zdarzeń (słowniki) dla {year}-{month}")
+                return self.cache[dict_cache_key]
+            elif not as_dict and cache_key in self.cache:
+                print(f"Używam cache'owanych danych zdarzeń (krotki) dla {year}-{month}")
+                return self.cache[cache_key]
+
+        try:
+            query = """
+            SELECT * FROM [dbo].[fn_GetEventsData](?, ?)
+            """
+
+            conn = self.db_connector.get_connection()
+            cursor = conn.cursor()
+            cursor.execute(query, (year, month))
+            events_data = cursor.fetchall()
+            conn.close()
+
+            # Zapisz surowe dane w cache'u
+            self.cache[cache_key] = events_data
+
+            # Jeśli wymagane są słowniki, przekonwertuj dane
+            if as_dict:
+                # Konwertuj pyodbc.Row na słowniki
+                events_dicts = []
+                for row in events_data:
+                    # Rozpakuj dane z wiersza
+                    event_type, event_id, temat, nazwa, uzytkownik, data, data_od, data_do, status = row
+
+                    # Formatowanie daty
+                    if hasattr(data, 'strftime'):
+                        date_str = data.strftime('%Y-%m-%d')
+                        date_display = data.strftime('%d.%m.%Y')
+                    else:
+                        # Obsługa różnych formatów daty
+                        if isinstance(data, str):
+                            date_str = data
+                            # Konwertuj format daty z YYYY-MM-DD na DD.MM.YYYY
+                            if len(data.split('-')) == 3:
+                                year_part, month_part, day_part = data.split('-')
+                                date_display = f"{day_part}.{month_part}.{year_part}"
+                            else:
+                                date_display = data
+                        else:
+                            date_str = str(data)
+                            date_display = str(data)
+
+                    # Formatowanie czasu
+                    time_from = data_od.strftime('%H:%M') if hasattr(data_od, 'strftime') else data_od
+                    time_to = data_do.strftime('%H:%M') if hasattr(data_do, 'strftime') else data_do
+
+                    # Tworzenie obiektu zdarzenia jako słownik
+                    event = {
+                        'type': event_type,
+                        'id': event_id,
+                        'topic': temat,
+                        'name': nazwa,
+                        'user_id': uzytkownik,
+                        'date': date_display,
+                        'date_key': date_str,
+                        'time_from': time_from,
+                        'time_to': time_to,
+                        'status': status
+                    }
+
+                    events_dicts.append(event)
+
+                # Zapisz słowniki w cache'u
+                self.cache[dict_cache_key] = events_dicts
+
+                # Dodaj budowanie indeksu PRZED zwróceniem wyniku
+                if build_index and events_dicts:
+                    self.events_index.build_from_events(events_dicts)
+                    print(f"Zbudowano indeks zdarzeń z {len(events_dicts)} elementów")
+
+                return events_dicts if as_dict else events_data
+
+            return events_data
+        except Exception as e:
+            print(f"Błąd podczas pobierania danych zdarzeń: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+
+
+    def get_users_data(self, year, month, use_cache=True):
+        """
+        Pobiera dane użytkowników dla określonego roku i miesiąca.
+        Wyniki są cache'owane w pamięci.
+
+        Args:
+            year: Rok
+            month: Miesiąc
+            use_cache: Czy używać cache'u (domyślnie True)
+
+        Returns:
+            list: Dane użytkowników
+        """
+        cache_key = self._get_cache_key("users", year, month)
+
+        # Sprawdź, czy dane są już w cache'u
+        if use_cache and cache_key in self.cache:
+            print(f"Używam cache'owanych danych użytkowników dla {year}-{month}")
+            return self.cache[cache_key]
+
+        try:
+            query = """
+            SELECT Uzytkownik, WydzialGrafik, PrzelozonyDane, UzytkownikDane
+            FROM p_t_do_KonfiguracjaZatrudnienie
+            WHERE Rok = ? AND Miesiac = ? AND Flaga = 1
+            """
+
+            conn = self.db_connector.get_connection()
+            cursor = conn.cursor()
+            cursor.execute(query, (year, month))
+            users_data = cursor.fetchall()
+            conn.close()
+
+            # Zapisz dane w cache'u
+            self.cache[cache_key] = users_data
+
+            return users_data
+        except Exception as e:
+            print(f"Błąd podczas pobierania danych użytkowników: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+
+    def filter_data(self, year, month, wydzialy=None, przelozeni=None, uzytkownicy=None):
+        """
+        Filtruje dane grafiku lokalnie w pamięci.
+        Pobiera wszystkie dane raz i filtruje je lokalnie dla większej wydajności.
+
+        Args:
+            year: Rok
+            month: Miesiąc
+            wydzialy: Lista wydziałów
+            przelozeni: Lista przełożonych
+            uzytkownicy: Lista użytkowników
+
+        Returns:
+            list: Przefiltrowane dane grafiku
+        """
+        # Pobierz wszystkie dane do pamięci (używając cache'u jeśli dostępne)
+        all_data = self.get_schedule_data(year, month)
+
+        # Jeśli nie ma filtrów, zwróć wszystkie dane
+        if not (wydzialy or przelozeni or uzytkownicy):
+            return all_data
+
+        # Filtruj dane lokalnie
+        filtered_data = []
+        for row in all_data:
+            # Rozpakuj dane potrzebne do filtrowania
+            wydzial, przelozony, uzytkownik_dane = row[0], row[1], row[2]
+
+            # Sprawdź filtry
+            passes_filter = True
+
+            # Filtr wydziału
+            if wydzialy and wydzial not in wydzialy:
+                passes_filter = False
+
+            # Filtr przełożonego
+            if przelozeni and przelozony not in przelozeni:
+                passes_filter = False
+
+            # Filtr użytkownika
+            if uzytkownicy and uzytkownik_dane not in uzytkownicy:
+                passes_filter = False
+
+            # Jeśli wiersz przeszedł wszystkie filtry, dodaj go do wyników
+            if passes_filter:
+                filtered_data.append(row)
+
+        return filtered_data
+
+    def filter_events(self, year, month, date_from=None, date_to=None,
+                      allowed_types=None, topic=None, name=None, user_ids=None):
+        """
+        Filtruje zdarzenia lokalnie w pamięci.
+
+        Args:
+            year: Rok
+            month: Miesiąc
+            date_from: Data początkowa
+            date_to: Data końcowa
+            allowed_types: Dozwolone typy zdarzeń
+            topic: Filtr tematu
+            name: Filtr nazwy
+            user_ids: Lista ID użytkowników
+
+        Returns:
+            list: Przefiltrowane zdarzenia
+        """
+        # Pobierz wszystkie zdarzenia do pamięci - jako krotki, nie słowniki
+        all_events = self.get_events_data(year, month, as_dict=False)
+
+        # Jeśli nie ma filtrów, zwróć wszystkie zdarzenia
+        if not (date_from or date_to or allowed_types or topic or name or user_ids):
+            return all_events
+
+        # Filtruj zdarzenia lokalnie
+        filtered_events = []
+        for event in all_events:
+            event_type, event_id, temat, nazwa, uzytkownik, data, data_od, data_do, status = event
+
+            # Konwertuj datę do formatu string dla porównań
+            if hasattr(data, 'strftime'):
+                date_str = data.strftime('%Y-%m-%d')
+            else:
+                # Obsługa różnych formatów daty
+                if isinstance(data, str):
+                    if ' ' in data:
+                        date_str = data.split(' ')[0]  # Format 'YYYY-MM-DD HH:MM:SS'
+                    else:
+                        date_str = data  # Format 'YYYY-MM-DD'
+                else:
+                    date_str = str(data)
+
+            # Sprawdź wszystkie filtry
+            passes_filter = True
+
+            # Filtr zakresu dat
+            if date_from and date_str < date_from:
+                passes_filter = False
+
+            if date_to and date_str > date_to:
+                passes_filter = False
+
+            # Filtr typów zdarzeń
+            if allowed_types and event_type not in allowed_types:
+                passes_filter = False
+
+            # Filtr tematu
+            if topic and topic.lower() not in str(temat).lower():
+                passes_filter = False
+
+            # Filtr nazwy
+            if name and name.lower() not in str(nazwa).lower():
+                passes_filter = False
+
+            # Filtr użytkowników
+            if user_ids and str(uzytkownik) not in [str(uid) for uid in user_ids]:
+                passes_filter = False
+
+            # Jeśli zdarzenie przeszło wszystkie filtry, dodaj je do wyników
+            if passes_filter:
+                filtered_events.append(event)
+
+        return filtered_events
+
+    def get_events_for_user_date_pairs(self, user_date_pairs, allowed_types=None, as_dict=False):
+        """
+        Pobiera zdarzenia dla listy par (użytkownik, data).
+        Wykorzystuje lokalne filtrowanie na cache'owanych danych.
+
+        Args:
+            user_date_pairs: Lista krotek (user_id, date_str) gdzie date_str jest w formacie 'YYYY-MM-DD'
+            allowed_types: Lista dozwolonych typów zdarzeń (np. ['Spotkanie', 'Szkolenie'])
+            as_dict: Czy zwracać zdarzenia jako słowniki (domyślnie False)
+
+        Returns:
+            list: Lista zdarzeń pasujących do podanych par (użytkownik, data)
+        """
+        print(f"get_events_for_user_date_pairs: otrzymano {len(user_date_pairs)} par (użytkownik, data)")
+        if len(user_date_pairs) > 0:
+            print(f"Przykład pary: {user_date_pairs[0]}")
+
+        if not user_date_pairs:
+            return []
+
+        try:
+            # Pogrupuj daty według roku i miesiąca
+            year_month_groups = {}
+            for user_id, date_str in user_date_pairs:
+                if date_str and len(date_str) >= 7:  # Format YYYY-MM-DD
+                    year, month = date_str.split('-')[:2]
+                    key = (int(year), int(month))
+                    if key not in year_month_groups:
+                        year_month_groups[key] = []
+                    year_month_groups[key].append((user_id, date_str))
+
+            # Pobierz zdarzenia dla każdego miesiąca i filtruj lokalnie
+            all_events = []
+
+            # Zbuduj set par (użytkownik, data) dla szybkiego wyszukiwania
+            user_date_set = set()
+            for user_id, date_str in user_date_pairs:
+                user_date_set.add((str(user_id), date_str))
+
+            # Dla każdego miesiąca
+            for (year, month), _ in year_month_groups.items():
+                # Pobierz wszystkie zdarzenia za miesiąc (z cache'u, jeśli dostępne)
+                # Używaj as_dict=False, bo będziemy konwertować tylko potrzebne zdarzenia
+                month_events = self.get_events_data(year, month, as_dict=False)
+
+                # Filtruj lokalnie
+                for event in month_events:
+                    event_type, event_id, temat, nazwa, uzytkownik, data, data_od, data_do, status = event
+
+                    # Konwertuj datę do formatu string YYYY-MM-DD
+                    if hasattr(data, 'strftime'):
+                        date_str = data.strftime('%Y-%m-%d')
+                    else:
+                        # Obsługa różnych formatów daty
+                        if isinstance(data, str):
+                            if ' ' in data:
+                                date_str = data.split(' ')[0]  # Format 'YYYY-MM-DD HH:MM:SS'
+                            else:
+                                date_str = data  # Format 'YYYY-MM-DD'
+                        else:
+                            date_str = str(data)
+
+                    # Sprawdź czy para (użytkownik, data) jest na liście
+                    if (str(uzytkownik), date_str) in user_date_set:
+                        # Sprawdź typ zdarzenia jeśli podano listę dozwolonych typów
+                        if allowed_types is None or event_type in allowed_types:
+                            if as_dict:
+                                # Konwertuj na słownik tylko zdarzenia, które przeszły filtrowanie
+                                # Formatowanie daty
+                                if hasattr(data, 'strftime'):
+                                    date_display = data.strftime('%d.%m.%Y')
+                                else:
+                                    # Konwertuj format daty z YYYY-MM-DD na DD.MM.YYYY
+                                    if isinstance(date_str, str) and len(date_str.split('-')) == 3:
+                                        year_part, month_part, day_part = date_str.split('-')
+                                        date_display = f"{day_part}.{month_part}.{year_part}"
+                                    else:
+                                        date_display = date_str
+
+                                # Formatowanie czasu
+                                time_from = data_od.strftime('%H:%M') if hasattr(data_od, 'strftime') else data_od
+                                time_to = data_do.strftime('%H:%M') if hasattr(data_do, 'strftime') else data_do
+
+                                # Tworzenie obiektu zdarzenia
+                                event_dict = {
+                                    'type': event_type,
+                                    'id': event_id,
+                                    'topic': temat,
+                                    'name': nazwa,
+                                    'user_id': uzytkownik,
+                                    'date': date_display,
+                                    'date_key': date_str,
+                                    'time_from': time_from,
+                                    'time_to': time_to,
+                                    'status': status
+                                }
+                                all_events.append(event_dict)
+                            else:
+                                # Dodaj krotkę bezpośrednio
+                                all_events.append(event)
+
+            print(f"Znaleziono {len(all_events)} zdarzeń dla podanych par (użytkownik, data)")
+            return all_events
+
+        except Exception as e:
+            print(f"Błąd podczas pobierania zdarzeń dla par (użytkownik, data): {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+
+    def clear_cache(self):
+        """Czyści cały cache danych"""
+        self.cache.clear()
+        print("Cache został wyczyszczony")
+
+    def refresh_data(self, year, month):
+        """
+        Odświeża dane w cache'u dla określonego roku i miesiąca i indeksie zdarzeń.
+        Pobiera dane ponownie z bazy danych, ignorując cache.
+
+        Args:
+            year: Rok
+            month: Miesiąc
+        """
+        print(f"Odświeżam dane dla {year}-{month}")
+
+        # Usuń dane z cache'u
+        schedule_key = self._get_cache_key("schedule", year, month)
+        events_key = self._get_cache_key("events", year, month)
+        dict_events_key = f"{events_key}_as_dict"
+        users_key = self._get_cache_key("users", year, month)
+
+        if schedule_key in self.cache:
+            del self.cache[schedule_key]
+
+        if events_key in self.cache:
+            del self.cache[events_key]
+
+        if dict_events_key in self.cache:
+            del self.cache[dict_events_key]
+
+        if users_key in self.cache:
+            del self.cache[users_key]
+
+        # Pobierz dane ponownie
+        schedule_data = self.get_schedule_data(year, month, use_cache=False)
+        events_data = self.get_events_data(year, month, use_cache=False, build_index=True)  # Przebuduj indeks
+        users_data = self.get_users_data(year, month, use_cache=False)
+
+        # Wyemituj sygnały o zmianie danych
+        self.data_changed.emit("schedule", year, month)
+        self.data_changed.emit("events", year, month)
+        self.data_changed.emit("users", year, month)
+
+    def get_events_for_user_date(self, user_id, date_str):
+        """
+        Pobiera zdarzenia dla konkretnego użytkownika i daty.
+
+        Args:
+            user_id (str): ID użytkownika
+            date_str (str): Data w formacie 'YYYY-MM-DD'
+
+        Returns:
+            list: Lista zdarzeń
+        """
+        # Sprawdź najpierw, czy indeks jest pusty - jeśli tak, załaduj dane
+        if not self.events_index.all_events:
+            year, month = date_str.split('-')[:2]
+            # Pobierz dane do indeksu, upewniając się, że indeks jest budowany
+            self.get_events_data(int(year), int(month), as_dict=True, build_index=True)
+
+        # Teraz wywołaj metodę events_index
+        return self.events_index.get_events_for_user_date(user_id, date_str)
+
+    def delete_event_from_index(self, event_id, event_type=None):
+        """
+        Usuwa zdarzenie z indeksu.
+
+        Args:
+            event_id: ID zdarzenia
+            event_type: Typ zdarzenia (opcjonalnie)
+
+        Returns:
+            bool: True jeśli znaleziono i usunięto, False w przeciwnym wypadku
+        """
+        return self.events_index.delete_event(event_id, event_type)
+
+    def get_event_by_id(self, event_id):
+        """
+        Zwraca zdarzenie o określonym ID
+
+        Args:
+            event_id: ID zdarzenia
+
+        Returns:
+            dict: Zdarzenie lub None jeśli nie znaleziono
+        """
+        return self.events_index.get_event_by_id(event_id)
