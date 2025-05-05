@@ -4167,78 +4167,108 @@ class WorkScheduleWindow(QMainWindow):
 
         # Pobierz zaznaczone komórki, aby ustalić dzień i użytkownika
         selected_ranges = self.table.selectedRanges()
+
+        # NOWE: Sprawdź liczbę zaznaczonych komórek
+        selected_cells_count = 0
+        for range_item in selected_ranges:
+            selected_cells_count += (range_item.rowCount() * range_item.columnCount())
+
+        # NOWE: Jeśli nie zaznaczono komórki lub zaznaczono więcej niż jedną, wyświetl komunikat i zakończ
+        if selected_cells_count == 0:
+            QMessageBox.warning(
+                self,
+                "Brak zaznaczenia",
+                "Nie zaznaczono żadnej komórki. Zaznacz dokładnie jedną komórkę, aby dodać nadgodziny.",
+                QMessageBox.Ok
+            )
+            return
+        elif selected_cells_count > 1:
+            QMessageBox.warning(
+                self,
+                "Zbyt wiele zaznaczonych komórek",
+                "Zaznaczono zbyt wiele komórek. Zaznacz dokładnie jedną komórkę, aby dodać nadgodziny.",
+                QMessageBox.Ok
+            )
+            return
+
+        # Pobierz dane zaznaczonej komórki
+        selected_cells = self.get_selected_schedule_cells()
+
+        if not selected_cells or len(selected_cells) != 1:
+            QMessageBox.warning(
+                self,
+                "Błąd",
+                "Nie można określić zaznaczonej komórki. Zaznacz dokładnie jedną komórkę w grafiku.",
+                QMessageBox.Ok
+            )
+            return
+
+        # Dalsza część metody pozostaje bez zmian - pracujemy na pierwszej (i jedynej) zaznaczonej komórce
         selected_user_id = None
         selected_user_name = None
         nr_kadrowy = None
         selected_date = None
         start_hour = 8  # Domyślna godzina rozpoczęcia
         hours_worked = 8  # Domyślna liczba godzin pracy
+        current_location = 'h'  # Domyślna lokalizacja (home office)
 
-        if selected_ranges:
-            # Pobierz dane z zaznaczonych komórek
-            selected_cells = self.get_selected_schedule_cells()
+        # Bierzemy dane z zaznaczonej komórki
+        first_cell = selected_cells[0]
+        selected_user_id = first_cell.get('user_id')
 
-            if selected_cells:
-                # Bierzemy dane z pierwszej zaznaczonej komórki
-                first_cell = selected_cells[0]
-                selected_user_id = first_cell.get('user_id')
+        # Szukamy nazwy użytkownika w danych
+        for key in self.processed_data.keys():
+            _, _, user_name, user_id = key
+            if str(user_id) == str(selected_user_id):
+                selected_user_name = user_name
+                break
 
-                # Szukamy nazwy użytkownika w danych
-                for key in self.processed_data.keys():
-                    _, _, user_name, user_id = key
-                    if str(user_id) == str(selected_user_id):
-                        selected_user_name = user_name
-                        break
+        # Pobieramy nr_kadrowy bezpośrednio z danych komórki
+        nr_kadrowy = first_cell.get('nr_kadrowy')
 
-                # Pobieramy nr_kadrowy bezpośrednio z danych komórki
-                nr_kadrowy = first_cell.get('nr_kadrowy')
+        # Ustawiamy datę
+        date_str = first_cell.get('date')
+        if date_str:
+            try:
+                year_part, month_part, day_part = date_str.split('-')
+                selected_date = QDate(int(year_part), int(month_part), int(day_part))
+            except:
+                pass
 
-                # Ustawiamy datę
-                date_str = first_cell.get('date')
-                if date_str:
-                    try:
-                        year_part, month_part, day_part = date_str.split('-')
-                        selected_date = QDate(int(year_part), int(month_part), int(day_part))
-                    except:
-                        pass
+        # Pobierz godzinę rozpoczęcia i liczbę godzin pracy z danych komórki
+        start_hour = first_cell.get('start_hour')
+        if start_hour is None:
+            start_hour = 8  # Domyślna godzina, jeśli nie znaleziono
 
-                # Pobierz godzinę rozpoczęcia i liczbę godzin pracy z danych komórki
-                day_data = first_cell.get('day_data', {})
-                start_hour = first_cell.get('start_hour')
-                if start_hour is None:
-                    start_hour = 8  # Domyślna godzina, jeśli nie znaleziono
+        # Pobierz lokalizację z symbolu w komórce
+        current_symbol = first_cell.get('current_symbol', '')
+        if current_symbol and ';' in current_symbol:
+            parts = current_symbol.split(';')
+            if parts[0] in ['h', 'p', 's']:
+                current_location = parts[0]
 
-                # Oblicz koniec zmiany na podstawie godziny rozpoczęcia i liczby godzin
-                day = first_cell.get('day')
-                key = None
-                for k in self.processed_data.keys():
-                    _, _, _, uid = k
-                    if str(uid) == str(selected_user_id):
-                        key = k
-                        break
+        # Oblicz koniec zmiany na podstawie godziny rozpoczęcia i liczby godzin
+        day = first_cell.get('day')
+        key = None
+        for k in self.processed_data.keys():
+            _, _, _, uid = k
+            if str(uid) == str(selected_user_id):
+                key = k
+                break
 
-                if key and day:
-                    day_data = self.processed_data[key]['days'].get(day, {})
-                    symbol = day_data.get('symbol', '')
+        if key and day:
+            day_data = self.processed_data[key]['days'].get(day, {})
+            symbol = day_data.get('symbol', '')
 
-                    # Próba wyciągnięcia liczby godzin z symbolu
-                    if symbol and ';' in symbol:
-                        parts = symbol.split(';')
-                        if len(parts) >= 3 and parts[2].isdigit():
-                            hours_worked = int(parts[2])
+            # Próba wyciągnięcia liczby godzin z symbolu
+            if symbol and ';' in symbol:
+                parts = symbol.split(';')
+                if len(parts) >= 3 and parts[2].isdigit():
+                    hours_worked = int(parts[2])
 
-                    # Jeśli nie udało się wyciągnąć z symbolu, sprawdź czy mamy godziny pracy w danych dnia
-                    if hours_worked == 8 and 'hours' in day_data:
-                        hours_worked = day_data.get('hours', 8)
-
-        # Jeśli nie ma zaznaczenia, użyj dzisiejszej daty i bieżącego użytkownika
-        if selected_date is None:
-            selected_date = QDate.currentDate()
-            # Pobierz domyślny numer kadrowy bieżącego użytkownika tylko jeśli nie mamy nr_kadrowy
-            if nr_kadrowy is None:
-                nr_kadrowy, user_app_id, _ = get_modifier_id()
-                selected_user_name = user_app_id  # Domyślnie używamy ID aplikacji jako nazwy
-                print(f"Używam domyślnego numeru kadrowego bieżącego użytkownika: {nr_kadrowy}")
+            # Jeśli nie udało się wyciągnąć z symbolu, sprawdź czy mamy godziny pracy w danych dnia
+            if hours_worked == 8 and 'hours' in day_data:
+                hours_worked = day_data.get('hours', 8)
 
         # Utwórz okno dialogowe
         dialog = QDialog(self)
@@ -4327,6 +4357,14 @@ class WorkScheduleWindow(QMainWindow):
         ld_combo.addItem("p", "p")  # Praca zdalna
         ld_combo.addItem("s", "s")  # Stacjonarna
 
+        # NOWE: Ustaw domyślną lokalizację na podstawie komórki
+        if current_location == 'h':
+            ld_combo.setCurrentIndex(0)
+        elif current_location == 'p':
+            ld_combo.setCurrentIndex(1)
+        elif current_location == 's':
+            ld_combo.setCurrentIndex(2)
+
         # Czy zaległe
         overdue_combo = QComboBox()
         overdue_combo.addItem("nie", 0)
@@ -4366,7 +4404,6 @@ class WorkScheduleWindow(QMainWindow):
                 settlement_date_str = f"{settlement_year}-{settlement_month:02d}-01"
 
                 # Wywołaj procedurę składowaną z poprawnie zmapowanymi parametrami
-                # Używamy nr_kadrowy z danych komórki zamiast domyślnej wartości
                 result = self.call_add_overtime_procedure(
                     selected_user_id,
                     selected_date.year(),
@@ -4378,21 +4415,17 @@ class WorkScheduleWindow(QMainWindow):
                     is_overdue,
                     overtime_type,
                     location,
-                    nr_kadrowy  # Przekazujemy nr_kadrowy do procedury
+                    nr_kadrowy
                 )
 
                 # Obsłuż wynik
                 if result["success"]:
                     QMessageBox.information(dialog, "Sukces", result["message"], QMessageBox.Ok)
                     dialog.accept()  # Zamknij dialog po sukcesie
-
-                    # Odśwież DataProvider dla bieżącego miesiąca
-                    current_data = self.date_combo.currentData()
-                    if current_data:
-                        year, month = current_data
-                        self.data_provider.refresh_data(year, month)
                 else:
+                    # W przypadku błędu pokazujemy oryginalny komunikat z procedury
                     QMessageBox.warning(dialog, "Błąd", result["message"], QMessageBox.Ok)
+                    # Nie zamykamy okna dialogowego w przypadku błędu
 
             except Exception as e:
                 QMessageBox.critical(dialog, "Błąd", f"Wystąpił błąd: {str(e)}", QMessageBox.Ok)
@@ -4403,187 +4436,410 @@ class WorkScheduleWindow(QMainWindow):
         # Pokaż dialog
         dialog.exec()
 
-def call_add_overtime_procedure(self, user_id, year, month, date_str, start_time, hours, settlement_date,
-                                is_overdue, overtime_type, location, nr_kadrowy):
-    """
-    Wywołuje procedurę składowaną p_P_ZZ_NadgodzinyWstawienie_v3 z poprawnym mapowaniem parametrów
+    def call_add_overtime_procedure(self, user_id, year, month, date_str, start_time, hours, settlement_date,
+                                    is_overdue, overtime_type, location, nr_kadrowy):
+        """
+        Wywołuje procedurę składowaną p_P_ZZ_NadgodzinyWstawienie_v3 z poprawnym mapowaniem parametrów
+        """
+        try:
+            # Mapowanie lokalizacji na wartości liczbowe: h - 1, p - 2, s - 3
+            location_map = {'h': 1, 'p': 2, 's': 3}
+            location_value = location_map.get(location, 1)  # Domyślnie 1 (h)
 
-    Args:
-        user_id (str): ID użytkownika
-        year (int): Rok
-        month (int): Miesiąc
-        date_str (str): Data w formacie 'YYYY-MM-DD'
-        start_time (str): Czas rozpoczęcia w formacie 'HH:MM'
-        hours (float): Liczba godzin
-        settlement_date (str): Data rozliczenia w formacie 'YYYY-MM-DD'
-        is_overdue (int): Czy zaległe (0/1)
-        overtime_type (str): Typ nadgodzin (wypłata/odbiór/odpracowanie)
-        location (str): Lokalizacja (h, p, s)
-        nr_kadrowy (str, optional): Numer kadrowy użytkownika
+            # Mapowanie typu nadgodzin: wypłata i odbiór - NULL, odpracowanie - 1
+            param_value = None
+            if overtime_type == 'odpracowanie':
+                param_value = 1
 
-    Returns:
-        dict: Wynik operacji z kluczami 'success' i 'message'
-    """
-    try:
+            # Określenie wartości @odebrane: 1 dla typu "odbiór", 0 dla pozostałych
+            odebrane_value = 1 if overtime_type == 'odbiór' else 0
 
-        # Mapowanie lokalizacji na wartości liczbowe:
-        # h - 1, p - 2, s - 3
-        location_map = {'h': 1, 'p': 2, 's': 3}
-        location_value = location_map.get(location, 1)  # Domyślnie 1 (h)
+            # Oblicz datę i czas zakończenia
+            start_datetime = datetime.strptime(f"{date_str} {start_time}", "%Y-%m-%d %H:%M")
+            end_datetime = start_datetime + timedelta(hours=hours)
+            end_time = end_datetime.strftime("%H:%M")
 
-        # Mapowanie typu nadgodzin:
-        # wypłata i odbiór - NULL (nie przekazujemy), odpracowanie - 1
-        param_value = None
-        if overtime_type == 'odpracowanie':
-            param_value = 1
+            # Utwórz połączenie do bazy danych
+            conn = DatabaseConnector.get_connection()
+            cursor = conn.cursor()
 
-        # Określenie wartości @odebrane:
-        # 1 dla typu "odbiór", 0 dla pozostałych
-        odebrane_value = 1 if overtime_type == 'odbiór' else 0
+            # Przygotuj parametry dla procedury składowanej
+            params = [
+                nr_kadrowy,  # @Nr_Kadrowy - używamy pobranego numeru kadrowego
+                year,  # @Rok
+                month,  # @Miesiac
+                date_str,  # @Data
+                start_time,  # @DataOd
+                end_time,  # @DataDo
+                settlement_date,  # @MiesiacRozliczenia
+                is_overdue,  # @Zalegle
+                odebrane_value,  # @Odebrane - 1 dla odbioru, 0 dla innych
+                location_value,  # @lokalizacja - zmapowana wartość (1, 2, 3)
+            ]
 
-        # Oblicz datę i czas zakończenia
-        start_datetime = datetime.strptime(f"{date_str} {start_time}", "%Y-%m-%d %H:%M")
-        end_datetime = start_datetime + timedelta(hours=hours)
-        end_time = end_datetime.strftime("%H:%M")
-
-        # Utwórz połączenie do bazy danych
-        conn = DatabaseConnector.get_connection()
-        cursor = conn.cursor()
-
-        # Przygotuj parametry dla procedury składowanej
-        params = [
-            nr_kadrowy,  # @Nr_Kadrowy - używamy pobranego numeru kadrowego
-            year,  # @Rok
-            month,  # @Miesiac
-            date_str,  # @Data
-            start_time,  # @DataOd
-            end_time,  # @DataDo
-            settlement_date,  # @MiesiacRozliczenia
-            is_overdue,  # @Zalegle
-            odebrane_value,  # @Odebrane - 1 dla odbioru, 0 dla innych
-            location_value,  # @lokalizacja - zmapowana wartość (1, 2, 3)
-        ]
-
-        # Dodaj parametr @Parametr tylko dla odpracowania, w przeciwnym razie użyj NULL
-        if param_value is not None:
-            params.append(param_value)  # @Parametr - tylko dla odpracowania (wartość 1)
-        else:
-            params.append(None)  # Dla wypłaty i odbioru - NULL
-
-        # Przygotuj wywołanie procedury składowanej z odpowiednią liczbą parametrów
-        placeholders = ", ".join(["?"] * len(params))
-        sql = f"{{CALL [dbo].[p_P_ZZ_NadgodzinyWstawienie_v3] ({placeholders})}}"
-
-        # Wywołaj procedurę składowaną
-        cursor.execute(sql, params)
-
-        # Pobierz wyniki z instrukcji SELECT zwróconej przez procedurę
-        result_sets = []
-
-        # Procedura może zwrócić więcej niż jeden zestaw wyników (jeśli ma wiele SELECT)
-        while True:
-            try:
-                rows = cursor.fetchall()
-                if rows:
-                    result_sets.append(rows)
-
-                # Sprawdź, czy są kolejne zestawy wyników
-                if not cursor.nextset():
-                    break
-            except:
-                break
-
-        # Domyślny komunikat, jeśli nie otrzymamy żadnego
-        success = False
-        message = "Nieznany wynik operacji."
-
-        # ID nowo dodanego rekordu, jeśli dostępne
-        new_id = None
-
-        # Sprawdź wyniki - zwykle pierwszy zestaw wyników (jeśli jest)
-        # zawiera informację o sukcesie/porażce i komunikat
-        if result_sets and result_sets[0]:
-            first_result = result_sets[0][0]  # Pobierz pierwszy wiersz z pierwszego zestawu wyników
-
-            # Pobierz komunikat z wyników
-            message = str(first_result[0]) if first_result and len(first_result) > 0 else "Operacja zakończona."
-
-            # ZMIANA: Procedura zwraca "0" lub pusty string jako sukces
-            if message == "0" or message == "":
-                success = True
-                message = "Nadgodziny zostały pomyślnie dodane."
+            # Dodaj parametr @Parametr tylko dla odpracowania, w przeciwnym razie użyj NULL
+            if param_value is not None:
+                params.append(param_value)  # @Parametr - tylko dla odpracowania (wartość 1)
             else:
-                # Niepusty komunikat różny od "0" oznacza błąd
-                success = False
+                params.append(None)  # Dla wypłaty i odbioru - NULL
 
-            # Sprawdź, czy mamy ID nowego rekordu (może być zwrócone w drugim zestawie wyników)
-            if len(result_sets) > 1 and result_sets[1]:
-                try:
-                    new_id = result_sets[1][0][0]  # Pierwszy wiersz, pierwsza kolumna drugiego zestawu wyników
-                except:
-                    pass
+            # Przygotuj wywołanie procedury składowanej z odpowiednią liczbą parametrów
+            placeholders = ", ".join(["?"] * len(params))
+            sql = f"{{CALL [dbo].[p_P_ZZ_NadgodzinyWstawienie_v3] ({placeholders})}}"
 
-        # Zatwierdź transakcję i zamknij połączenie
-        conn.commit()
-        conn.close()
+            # Wywołaj procedurę składowaną
+            cursor.execute(sql, params)
 
-        if success:
+            # Pobierz wynik z procedury
+            result = None
+            rows = cursor.fetchall()
+            if rows and len(rows) > 0 and len(rows[0]) > 0:
+                result = rows[0][0]
+
+            # Konwertuj wynik do stringa dla porównania
+            result_str = str(result) if result is not None else ""
+
+            # Sprawdź czy wynik jest "0" lub liczbą większą niż 100 (sukces)
             try:
-                # Pobierz najnowszą datę modyfikacji po wykonaniu zmian
-                query = """
-                        SELECT MAX(DataModyfikacji) as DataModyfikacji FROM p_v_zz_GrafikiPracy
-                    """
-                conn = DatabaseConnector.get_connection()
-                cursor = conn.cursor()
-                cursor.execute(query)
-                result = cursor.fetchone()
-                conn.close()
+                result_int = int(result_str)
+                success = result_int == 0 or result_int >= 100
+                # Jeśli result_int >= 100, to jest to ID dodanego wpisu
+                new_id = result_int if result_int >= 100 else None
+            except (ValueError, TypeError):
+                # Jeśli nie można przekonwertować na liczbę całkowitą
+                success = result_str == "0" or result_str == ""
+                new_id = None
 
-                if result and result[0]:
-                    # Zapisz tę datę jako własną modyfikację
-                    self.last_self_modification_date = result[0]
-                    self.last_modification_date = result[0]  # Aktualizuj również ostatnią znaną modyfikację
-                    print(f"Zarejestrowano własną modyfikację z datą: {self.last_self_modification_date}")
-            except Exception as e:
-                print(f"Błąd podczas rejestrowania własnej modyfikacji: {e}")
+            # Ustal końcowy komunikat
+            if success:
+                if new_id:
+                    display_message = f"Nadgodziny zostały pomyślnie dodane (ID: {new_id})."
+                else:
+                    display_message = "Nadgodziny zostały pomyślnie dodane."
+            else:
+                display_message = result_str or "Wystąpił nieznany błąd podczas dodawania nadgodzin."
 
-            # Jeśli dodanie się powiodło i znamy ID, pobierz dodane nadgodziny i dodaj do indeksu
+            # Zatwierdź transakcję i zamknij połączenie
+            conn.commit()
+            conn.close()
+
             if success and new_id:
-                self.update_overtime_in_index(new_id, user_id, date_str, start_time, end_time)
-                
-                # DODANE: Odśwież tabelę zdarzeń po dodaniu nadgodzin
-                current_data = self.date_combo.currentData()
-                if current_data:
-                    year, month = current_data
-                    # Odśwież dane w DataProvider
-                    self.data_provider.refresh_data(year, month)
-                    
-                    # Aktualizuj ikony w komórce grafiku po dodaniu nadgodzin
-                    self.update_table_icons_after_event_addition(user_id, date_str, "Nadgodziny")
-                    
-                    # Wymuś odświeżenie tabeli grafiku
-                    self.table.viewport().update()
-                    
-                    # Odśwież tabelę zdarzeń, ale zachowaj zaznaczenie
-                    selected_ranges = self.table.selectedRanges()
-                    self.on_selection_changed()  # To odświeży tabelę zdarzeń
-                    
-                    # Przywróć zaznaczenie
-                    for range_item in selected_ranges:
-                        self.table.setRangeSelected(range_item, True)
+                # Formatowanie daty do wyświetlenia (zamień YYYY-MM-DD na DD.MM.YYYY)
+                display_date = ".".join(reversed(date_str.split("-")))
+
+                # Pobierz informacje o użytkowniku
+                user_info = self.user_info_map.get(user_id, {
+                    'wydzial': 'Nieznany',
+                    'przelozony': 'Nieznany',
+                    'uzytkownik_dane': f"{user_id}"
+                })
+                user_name = user_info.get('uzytkownik_dane', f"{user_id}")
+
+                # Utwórz obiekt nadgodzin bezpośrednio z danych przekazanych do procedury
+                new_overtime = {
+                    'type': 'Nadgodziny',
+                    'topic': 'Nadgodziny',
+                    'name': 'Nadgodziny',
+                    'user_id': user_id,
+                    'user_name': user_name,
+                    'date': display_date,
+                    'date_key': date_str,
+                    'time_from': start_time,
+                    'time_to': end_time,
+                    'status': 'Aktywne',
+                    'id': new_id
+                }
+
+                # Dodaj do all_events_data jeśli istnieje
+                if hasattr(self, 'all_events_data'):
+                    # Sprawdź czy już istnieje
+                    exists = False
+                    for event in self.all_events_data:
+                        if event.get('id') == new_id and event.get('type') == 'Nadgodziny':
+                            exists = True
+                            break
+
+                    if not exists:
+                        self.all_events_data.append(new_overtime)
+                        print(f"Dodano nadgodziny do all_events_data")
+
+                # Dodaj do indeksu zdarzeń w DataProvider
+                if hasattr(self.data_provider, 'events_index'):
+                    # Sprawdź czy już istnieje
+                    event = self.data_provider.events_index.get_event_by_id(new_id)
+                    if not event:
+                        self.data_provider.events_index.add_event(new_overtime)
+                        print(f"Dodano nadgodziny (ID: {new_id}) do indeksu zdarzeń")
+                    else:
+                        print(f"Nadgodziny (ID: {new_id}) już istnieją w indeksie zdarzeń")
+
+                # NOWE: Wyczyść cache zdarzeń w DataProvider dla tego miesiąca
+                event_date = datetime.strptime(date_str, "%Y-%m-%d")
+                event_year = event_date.year
+                event_month = event_date.month
+
+                # Wyczyść cache danych zdarzeń dla tego miesiąca
+                cache_key = self.data_provider._get_cache_key("events", event_year, event_month)
+                dict_cache_key = f"{cache_key}_as_dict"
+
+                if cache_key in self.data_provider.cache:
+                    del self.data_provider.cache[cache_key]
+                    print(f"Wyczyszczono cache zdarzeń (krotki) dla {event_year}-{event_month}")
+
+                if dict_cache_key in self.data_provider.cache:
+                    del self.data_provider.cache[dict_cache_key]
+                    print(f"Wyczyszczono cache zdarzeń (słowniki) dla {event_year}-{event_month}")
+
+                # Aktualizuj ikony w komórce grafiku
+                self.update_table_icons_after_event_addition(user_id, date_str, "Nadgodziny")
+
+                # Sprawdź, czy zdarzenie zostało poprawnie dodane do indeksu
+                in_index = self.debug_check_event_in_index(new_id, 'Nadgodziny')
+
+                # Dodaj do bieżących danych zdarzeń
+                if hasattr(self, 'events_data'):
+                    # Sprawdź czy już istnieje
+                    exists = False
+                    for event in self.events_data:
+                        if event.get('id') == new_id and event.get('type') == 'Nadgodziny':
+                            exists = True
+                            break
+
+                    if not exists:
+                        self.events_data.append(new_overtime)
+                        print(f"Dodano nadgodziny do events_data")
+
+                # Aktualizuj tabelę zdarzeń bezpośrednio
+                if hasattr(self, 'events_table'):
+                    # Sprawdź czy wpis już istnieje w tabeli
+                    found = False
+                    for row in range(self.events_table.rowCount()):
+                        id_item = self.events_table.item(row, 0)
+                        if id_item and id_item.data(Qt.UserRole) == new_id:
+                            found = True
+                            break
+
+                    if not found:
+                        row = self.events_table.rowCount()
+                        self.events_table.insertRow(row)
+
+                        # Id zdarzenia
+                        id_item = QTableWidgetItem(str(new_id))
+                        id_item.setData(Qt.UserRole, new_id)
+                        self.events_table.setItem(row, 0, id_item)
+
+                        # Typ
+                        type_item = QTableWidgetItem("Nadgodziny")
+                        type_item.setData(Qt.UserRole, new_id)
+                        type_item.setBackground(QColor(255, 165, 0))  # Orange for Overtime
+                        self.events_table.setItem(row, 1, type_item)
+
+                        # Temat
+                        topic_item = QTableWidgetItem("Nadgodziny")
+                        topic_item.setData(Qt.UserRole, new_id)
+                        self.events_table.setItem(row, 2, topic_item)
+
+                        # Nazwa
+                        name_item = QTableWidgetItem("Nadgodziny")
+                        name_item.setData(Qt.UserRole, new_id)
+                        self.events_table.setItem(row, 3, name_item)
+
+                        # Użytkownik
+                        user_item = QTableWidgetItem(user_name)
+                        user_item.setData(Qt.UserRole, new_id)
+                        user_item.setData(Qt.UserRole + 1, user_id)
+                        self.events_table.setItem(row, 4, user_item)
+
+                        # Data
+                        date_item = QTableWidgetItem(display_date)
+                        date_item.setData(Qt.UserRole, new_id)
+                        self.events_table.setItem(row, 5, date_item)
+
+                        # Od
+                        time_from_item = QTableWidgetItem(start_time)
+                        time_from_item.setData(Qt.UserRole, new_id)
+                        self.events_table.setItem(row, 6, time_from_item)
+
+                        # Do
+                        time_to_item = QTableWidgetItem(end_time)
+                        time_to_item.setData(Qt.UserRole, new_id)
+                        self.events_table.setItem(row, 7, time_to_item)
+
+                        # Status
+                        status_item = QTableWidgetItem("Aktywne")
+                        status_item.setData(Qt.UserRole, new_id)
+                        self.events_table.setItem(row, 8, status_item)
+
+                        # Przycisk usunięcia
+                        delete_button = QPushButton("Usuń")
+                        delete_button.setStyleSheet("""
+                            background-color: #e74c3c;
+                            color: white;
+                            border-radius: 3px;
+                            padding: 3px;
+                            font-weight: bold;
+                        """)
+
+                        # Użyj closure, aby zachować aktualną wartość event_id i event_type
+                        def create_delete_handler(eid, etype):
+                            return lambda: self.delete_event(eid, etype)
+
+                        delete_button.clicked.connect(create_delete_handler(new_id, "Nadgodziny"))
+                        self.events_table.setCellWidget(row, 9, delete_button)
+
+                        # Dopasuj wysokość wiersza
+                        self.events_table.resizeRowToContents(row)
+
+                        print(f"Dodano wiersz do tabeli zdarzeń")
+
+                # Wymuś odświeżenie tabeli grafiku
+                self.table.viewport().update()
+
+                # Zachowaj zaznaczenie
+                selected_ranges = self.table.selectedRanges()
+                for range_item in selected_ranges:
+                    self.table.setRangeSelected(range_item, True)
 
             return {
                 "success": success,
-                "message": message,
+                "message": display_message,
                 "new_id": new_id
             }
 
         except Exception as e:
             print(f"Błąd podczas dodawania nadgodzin: {e}")
+            import traceback
+            traceback.print_exc()
             return {
                 "success": False,
                 "message": f"Wystąpił błąd: {str(e)}"
             }
+
+    def debug_check_event_in_index(self, event_id, event_type='Nadgodziny'):
+        """
+        Sprawdza, czy zdarzenie o podanym ID istnieje w indeksie zdarzeń
+        i wyświetla informacje diagnostyczne.
+
+        Args:
+            event_id: ID zdarzenia
+            event_type: Typ zdarzenia (domyślnie 'Nadgodziny')
+
+        Returns:
+            bool: True jeśli znaleziono zdarzenie, False w przeciwnym wypadku
+        """
+        print(f"\n--- DIAGNOSTYKA INDEKSU ZDARZEŃ ---")
+        print(f"Szukam zdarzenia o ID {event_id} i typie {event_type}")
+
+        # Sprawdź w indeksie zdarzeń DataProvider
+        if hasattr(self.data_provider, 'events_index'):
+            # Sprawdź bezpośrednio przez indeks ID
+            event = self.data_provider.events_index.get_event_by_id(event_id)
+            if event:
+                print(f"ZNALEZIONO w indeksie ID: {event}")
+                return True
+
+            # Alternatywnie, przeszukaj wszystkie zdarzenia
+            found_in_all = False
+            for e in self.data_provider.events_index.all_events:
+                if e.get('id') == event_id and e.get('type') == event_type:
+                    print(f"ZNALEZIONO w all_events: {e}")
+                    found_in_all = True
+
+            # Przeszukaj indeks typów
+            found_in_type_index = False
+            type_events = self.data_provider.events_index.type_index.get(event_type, [])
+            for e in type_events:
+                if e.get('id') == event_id:
+                    print(f"ZNALEZIONO w type_index: {e}")
+                    found_in_type_index = True
+
+            if not found_in_all and not found_in_type_index:
+                print("NIE ZNALEZIONO w indeksie zdarzeń")
+                return False
+
+            return found_in_all or found_in_type_index
+        else:
+            print("BRAK indeksu zdarzeń w data_provider")
+            return False
+
+    def update_table_icons_after_event_addition(self, user_id, date_str, added_event_type=None):
+        """
+        Aktualizuje ikonki w komórkach grafiku po dodaniu zdarzenia
+
+        Args:
+            user_id: ID użytkownika
+            date_str: Data w formacie 'YYYY-MM-DD'
+            added_event_type: Typ dodanego zdarzenia
+        """
+        try:
+            print(f"Aktualizacja ikon dla użytkownika {user_id}, data {date_str}, typ {added_event_type}")
+
+            # Standardyzuj format daty (użyj metody z DataProvider)
+            date_str = date_str.split(' ')[0] if ' ' in date_str else date_str  # Usuń czas
+
+            # Upewnij się, że mamy datę w formacie YYYY-MM-DD
+            if not date_str or date_str.count('-') != 2:
+                print(f"Nieprawidłowy format daty: {date_str}")
+                return
+
+            year, month, day = date_str.split('-')
+            day = int(day)
+            month = int(month)
+            year = int(year)
+
+            # Sprawdź, jakie zdarzenia są dla tej pary (użytkownik, data)
+            user_events = self.data_provider.get_events_for_user_date(user_id, date_str)
+            print(f"Znaleziono {len(user_events)} zdarzeń dla użytkownika {user_id} na dzień {date_str}")
+
+            # Sprawdź typy zdarzeń
+            has_meeting = any(e.get('type') == 'Spotkanie' for e in user_events)
+            has_training = any(e.get('type') == 'Szkolenie' for e in user_events)
+            has_overtime = any(e.get('type') == 'Nadgodziny' for e in user_events)
+
+            print(f"Status ikon: spotkania={has_meeting}, szkolenia={has_training}, nadgodziny={has_overtime}")
+
+            # Znajdź odpowiednią komórkę w tabeli
+            found = False
+            for row in range(self.table.rowCount()):
+                # Znajdź kolumnę z odpowiednim dniem
+                col = 2 + day  # Pierwsza kolumna dnia ma indeks 3 (0-bazowany) = 2 + 1
+
+                # Pobierz dane użytkownika z kolumny "Pracownik" (indeks 2)
+                pracownik_item = self.table.item(row, 2)
+                if not pracownik_item:
+                    continue
+
+                # Znajdź odpowiednią komórkę
+                cell_item = self.table.item(row, col)
+                if not cell_item:
+                    continue
+
+                # Znajdź klucz pasujący do użytkownika
+                for key in self.processed_data.keys():
+                    _, _, user_name, uid = key
+                    if user_name == pracownik_item.text() and str(uid) == str(user_id):
+                        # Znaleźliśmy właściwą komórkę
+                        print(f"Znaleziono komórkę ({row}, {col}) dla użytkownika {user_id}")
+
+                        # Zaktualizuj dane komórki
+                        cell_item.setData(Qt.UserRole, has_overtime)  # Informacja o nadgodzinach
+                        cell_item.setData(Qt.UserRole + 1,
+                                          has_meeting or has_training)  # Informacja o spotkaniach/szkoleniach
+
+                        found = True
+                        break
+
+                if found:
+                    break
+
+            if not found:
+                print(f"Nie znaleziono komórki dla użytkownika {user_id} i dnia {day}")
+
+        except Exception as e:
+            print(f"Błąd podczas aktualizacji ikonek w komórkach grafiku: {str(e)}")
+            import traceback
+            traceback.print_exc()
+
     # Nowa metoda do aktualizacji indeksu zdarzeń po dodaniu nadgodzin
     def update_overtime_in_index(self, overtime_id, user_id, date_str, start_time, end_time):
         try:
