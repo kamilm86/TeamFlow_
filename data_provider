@@ -277,17 +277,6 @@ class EventsIndex:
 
         return True
 
-    def filter_events_with_index(self, **kwargs):
-        """
-        Filtruje zdarzenia używając indeksu.
-
-        Args:
-            **kwargs: Kryteria filtrowania (user_id, date_from, date_to, type, etc.)
-
-        Returns:
-            list: Lista przefiltrowanych zdarzeń
-        """
-        return self.events_index.filter_events(**kwargs)
 
     def filter_events(self, **kwargs):
         """
