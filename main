@@ -2437,12 +2437,8 @@ class WorkScheduleWindow(QMainWindow):
 
         for row in data:
             try:
-                # Sprawdź liczbę kolumn w wierszu i dostosuj rozpakowanie
-                if len(row) >= 12:  # Jeśli mamy nową kolumnę start_hour
-                    wydzial, przelozony, uzytkownik_dane, uzytkownik, data_str, symbol, godziny_pracy, id_wpisu, spotkania, szkolenia, nadgodziny, start_hour = row
-                else:  # Zachowaj kompatybilność ze starym formatem (11 kolumn)
-                    wydzial, przelozony, uzytkownik_dane, uzytkownik, data_str, symbol, godziny_pracy, id_wpisu, spotkania, szkolenia, nadgodziny = row
-                    start_hour = None  # Ustaw wartość domyślną
+                # Stała liczba kolumn z nr_kadrowy i start_hour
+                wydzial, przelozony, uzytkownik_dane, uzytkownik, data_str, symbol, godziny_pracy, id_wpisu, spotkania, szkolenia, nadgodziny, start_hour, nr_kadrowy = row
 
                 # Klucz dla grupy (wydział, przełożony, użytkownik)
                 key = (wydzial, przelozony, uzytkownik_dane, uzytkownik)
@@ -2461,7 +2457,8 @@ class WorkScheduleWindow(QMainWindow):
                         'spotkania': spotkania if spotkania is not None else 0,
                         'szkolenia': szkolenia if szkolenia is not None else 0,
                         'nadgodziny': nadgodziny if nadgodziny is not None else 0,
-                        'start_hour': start_hour  # Dodaj godzinę rozpoczęcia
+                        'start_hour': start_hour,  # Dodaj godzinę rozpoczęcia
+                        'nr_kadrowy': nr_kadrowy  # Dodaj numer kadrowy
                     }
 
                     # Sumuj godziny pracy
