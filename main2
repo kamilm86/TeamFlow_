@@ -430,24 +430,45 @@ class WorkScheduleWindow(QMainWindow):
                 border-radius: 3px;
             """)
 
-        # Dodanie opcji dla 3 miesięcy wstecz i 1 miesiąca do przodu od bieżącego
-        current_date = datetime.now()
-        months_to_show = []
+            # Dodanie opcji dla 3 miesięcy wstecz i 1 miesiąca do przodu od bieżącego
+            current_date = datetime.now()
+            months_to_show = []
 
-        # Generowanie listy miesięcy (3 wstecz, bieżący, 1 do przodu)
-        for i in range(-3, 2):
-            date = current_date.replace(day=1)
-            date = date + timedelta(days=32 * i)
-            date = date.replace(day=1)  # Pierwszy dzień miesiąca
-            months_to_show.append((date.year, date.month))
+            # Zacznij od 3 miesięcy wstecz
+            year = current_date.year
+            month = current_date.month
 
-        # Dodanie miesięcy do comboboxa w formacie YYYY-MM
-        for year, month in months_to_show:
-            self.date_combo.addItem(f"{year}-{month:02d}", (year, month))
+            # Generowanie 3 miesięcy wstecz
+            for i in range(3, 0, -1):
+                # Oblicz rok i miesiąc dla i miesięcy wstecz
+                prev_month = month - i
+                prev_year = year
 
-        # Ustawienie bieżącego miesiąca
-        current_month_idx = 3  # Indeks bieżącego miesiąca w liście (4. element)
-        self.date_combo.setCurrentIndex(current_month_idx)
+                # Dostosuj rok, jeśli trzeba
+                while prev_month <= 0:
+                    prev_month += 12
+                    prev_year -= 1
+
+                months_to_show.append((prev_year, prev_month))
+
+            # Dodaj bieżący miesiąc
+            months_to_show.append((year, month))
+
+            # Dodaj 1 miesiąc do przodu
+            next_month = month + 1
+            next_year = year
+            if next_month > 12:
+                next_month = 1
+                next_year += 1
+            months_to_show.append((next_year, next_month))
+
+            # Dodanie miesięcy do comboboxa w formacie YYYY-MM
+            self.date_combo.clear()  # Wyczyść poprzednie pozycje
+            for year, month in months_to_show:
+                self.date_combo.addItem(f"{year}-{month:02d}", (year, month))
+
+            # Ustawienie bieżącego miesiąca (czwarty element, indeks 3)
+            self.date_combo.setCurrentIndex(3)
 
         # Podłącz sygnał zmiany comboboxa daty
         self.date_combo.currentIndexChanged.connect(self.on_date_combo_changed)
@@ -906,6 +927,10 @@ class WorkScheduleWindow(QMainWindow):
             """)
         self.add_overtime_button.clicked.connect(self.show_add_overtime_dialog)
 
+        # Pokaż przycisk tylko dla roli "Pracownik WPR"
+        if hasattr(self, 'current_user_role') and self.current_user_role == "Pracownik WPR":
+            symbol_button_layout.addWidget(self.add_overtime_button)
+
         # Dodaj przyciski do layoutu
         symbol_button_layout.addWidget(self.insert_symbol_button)
         symbol_button_layout.addWidget(self.cancel_delegation_button)
@@ -1154,34 +1179,7 @@ class WorkScheduleWindow(QMainWindow):
         print(
             f"Tabela grafiku: Sortowanie po kolumnie {logical_index}, kolejność: {'rosnąco' if order == Qt.AscendingOrder else 'malejąco'}")
 
-        # Ważne: Aktualizuj mapowanie visible_rows po sortowaniu
-        self.update_visible_rows_after_sorting()
 
-    # Nowa metoda aktualizująca mapowanie po sortowaniu
-    def update_visible_rows_after_sorting(self):
-        """Aktualizuje mapowanie visible_rows po operacji sortowania"""
-        # Pobierz aktualny widok tabeli (po sortowaniu)
-        sorted_rows = []
-        for i in range(self.table.rowCount()):
-            # Pobierz tekst z kolumny, po której sortowano (np. Wydział, Pracownik)
-            # i znajdź odpowiadający mu wiersz w oryginalnych danych
-            # Uwaga: Trzeba dostosować do konkretnych kolumn używanych w aplikacji
-
-            # Przykładowo, dla kolumny "Pracownik" (indeks 2)
-            item = self.table.item(i, 2)
-            if item:
-                user_name = item.text()
-                # Szukaj wiersza z tym pracownikiem w oryginalnych danych
-                for j, key in enumerate(self.processed_data.keys()):
-                    _, _, orig_user_name, _ = key
-                    if orig_user_name == user_name:
-                        sorted_rows.append(j)
-                        break
-
-        # Aktualizuj visible_rows nowym mapowaniem
-        if sorted_rows:
-            self.visible_rows = sorted_rows
-            print(f"Zaktualizowano visible_rows po sortowaniu: {len(sorted_rows)} wierszy")
 
     def on_events_sort_changed(self, logical_index, order):
         """Obsługuje zmianę sortowania w tabeli zdarzeń"""
@@ -1256,11 +1254,7 @@ class WorkScheduleWindow(QMainWindow):
             # Ścieżka do folderu z ikonami
             icons_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'icons')
 
-            # Sprawdź czy folder z ikonami istnieje
-            if not os.path.exists(icons_path):
-                print(f"Katalog ikon nie istnieje: {icons_path}")
-                self.initialize_fallback_icons()
-                return False
+
 
             # Szukamy ikony dla spotkań/szkoleń - spróbuj kilka możliwych nazw plików
             event_icon_paths = [
@@ -1286,22 +1280,10 @@ class WorkScheduleWindow(QMainWindow):
                         print(f"Załadowano ikonę: {icon_path}")
                         break
 
-                # Jeśli nie znaleziono żadnej ikony, utwórz zastępczą
-            if not icon_loaded:
-                print("Nie znaleziono odpowiedniej ikony PNG, tworzę zastępczą")
-                self.initialize_fallback_icons(size=12)  # Podaj rozmiar dla zastępczych ikon
 
             return icon_loaded
 
-        except Exception as e:
-            print(f"Błąd podczas ładowania ikony PNG: {e}")
-            self.initialize_fallback_icons()
-            return False
 
-        except Exception as e:
-            print(f"Błąd podczas ładowania ikon: {e}")
-            self.initialize_fallback_icons()
-            return False
 
         except Exception as e:
             print(f"Błąd podczas ładowania ikon: {e}")
@@ -1322,65 +1304,6 @@ class WorkScheduleWindow(QMainWindow):
 
             return False
 
-    # Prosta metoda do tworzenia zastępczej ikony
-    def initialize_fallback_icons(self):
-        """Tworzy prostą ikonę zastępczą"""
-        from PySide6.QtGui import QPixmap, QColor, QIcon, QPainter, QBrush, QPen
-
-        try:
-            pixmap = QPixmap(16, 16)
-            pixmap.fill(Qt.transparent)  # Przezroczyste tło
-
-            painter = QPainter(pixmap)
-            painter.setRenderHint(QPainter.Antialiasing)  # Wygładzanie krawędzi
-
-            # Narysuj niebieskie koło
-            painter.setBrush(QBrush(QColor(100, 149, 237)))  # Cornflower Blue
-            painter.setPen(QPen(Qt.black, 1))
-            painter.drawEllipse(2, 2, 12, 12)
-
-            painter.end()
-
-            self.icons = {'event': QIcon(pixmap)}
-            print("Utworzono zastępczą ikonę")
-            return True
-
-        except Exception as e:
-            print(f"Błąd podczas tworzenia zastępczej ikony: {e}")
-            # Utwórz pustą ikonę jako zabezpieczenie
-            self.icons = {'event': QIcon()}
-            return False
-
-    def check_events_for_cell(self, uzytkownik_id, date_str):
-        """
-        Metoda pozostawiona dla kompatybilności, ale nie jest już używana.
-        Informacje o zdarzeniach są teraz pobierane bezpośrednio z bazy danych.
-        """
-        return {
-            'meeting': False,
-            'training': False,
-            'overtime': False
-        }
-
-    def initialize_fallback_icons(self):
-        """Tworzy podstawowe pixmapy dla ikon w przypadku gdy nie udało się ich załadować"""
-        from PySide6.QtGui import QPixmap, QColor, QIcon
-
-        self.icons = {}
-
-        meeting_pixmap = QPixmap(16, 16)
-        meeting_pixmap.fill(QColor(100, 149, 237))  # Kolor Cornflower Blue dla spotkań
-        self.icons['meeting'] = QIcon(meeting_pixmap)
-
-        training_pixmap = QPixmap(16, 16)
-        training_pixmap.fill(QColor(144, 238, 144))  # Kolor Light Green dla szkoleń
-        self.icons['training'] = QIcon(training_pixmap)
-
-        overtime_pixmap = QPixmap(16, 16)
-        overtime_pixmap.fill(QColor(255, 165, 0))  # Kolor Orange dla nadgodzin
-        self.icons['overtime'] = QIcon(overtime_pixmap)
-
-        print("Utworzono zastępcze ikony")
 
     def show_insert_symbol_dialog(self):
         """Pokazuje okno dialogowe do wstawiania symbolu"""
@@ -1614,7 +1537,7 @@ class WorkScheduleWindow(QMainWindow):
             self.update_filter_dates()
 
     def get_selected_schedule_cells(self):
-        """Zwraca listę zaznaczonych komórek z grafikiem"""
+        """Zwraca listę zaznaczonych komórek z siatki grafiku"""
         selected_cells = []
         selected_ranges = self.table.selectedRanges()
 
@@ -1624,22 +1547,11 @@ class WorkScheduleWindow(QMainWindow):
             return selected_cells
         year, month_idx = current_data
 
-        # Określ liczbę dni w miesiącu
-        if month_idx in [4, 6, 9, 11]:
-            days_in_month = 30
-        elif month_idx == 2:
-            if (year % 4 == 0 and year % 100 != 0) or (year % 400 == 0):
-                days_in_month = 29
-            else:
-                days_in_month = 28
-        else:
-            days_in_month = 31
-
         for range_item in selected_ranges:
             for table_row in range(range_item.topRow(), range_item.bottomRow() + 1):
                 for col in range(range_item.leftColumn(), range_item.rightColumn() + 1):
-                    # Sprawdź, czy to komórka z grafikiem
-                    if col >= 3 and col < 3 + days_in_month:
+                    # Sprawdź czy to komórka z grafikiem
+                    if col >= 3:
                         if table_row < len(self.visible_rows):
                             data_row = self.visible_rows[table_row]
                             if data_row < len(self.processed_data):
@@ -1647,13 +1559,22 @@ class WorkScheduleWindow(QMainWindow):
                                 wydzial, przelozony, uzytkownik_dane, uzytkownik = key
                                 day = col - 2
                                 day_data = self.processed_data[key]['days'].get(day)
-                                if day_data and day_data.get('id'):
+
+                                if day_data:
+                                    # Format daty jako YYYY-MM-DD
+                                    date_str = f"{year}-{month_idx:02d}-{day:02d}"
+
+                                    # Ważne: pobieramy nr_kadrowy z day_data
+                                    nr_kadrowy = day_data.get('nr_kadrowy')
+
                                     selected_cells.append({
                                         'user_id': uzytkownik,
                                         'day': day,
-                                        'date': QDate(year, month_idx, day).toString('yyyy-MM-dd'),
-                                        'id': day_data['id'],
-                                        'current_symbol': day_data.get('symbol', '')
+                                        'date': date_str,
+                                        'id': day_data.get('id'),
+                                        'current_symbol': day_data.get('symbol', ''),
+                                        'start_hour': day_data.get('start_hour'),
+                                        'nr_kadrowy': nr_kadrowy  # Dodajemy nr_kadrowy do danych komórki
                                     })
         return selected_cells
 
@@ -1972,113 +1893,7 @@ class WorkScheduleWindow(QMainWindow):
             # Ładuj zdarzenia dla wybranych komórek
             self.load_events_for_selection(selected_cells)
 
-    def load_all_events_to_buffer(self, year, month):
-        """Pobiera wszystkie zdarzenia dla wybranego miesiąca i zapisuje je w buforze - zoptymalizowana wersja"""
-        try:
-            conn = DatabaseConnector.get_connection()
-            cursor = conn.cursor()
 
-            # Zoptymalizowane zapytanie z UNION ALL dla wszystkich typów zdarzeń
-            unified_query = """
-            SELECT 'Spotkanie' as Typ, Temat, Nazwa, Uzytkownik, Data, DataOd, DataDo, StatusNazwa, Id
-            FROM p_v_zz_Spotkania
-            WHERE Rok = ? AND Miesiac = ? AND Status = 1
-            UNION ALL
-            SELECT 'Szkolenie' as Typ, Temat, Nazwa, Uzytkownik, Data, DataOd, DataDo, StatusNazwa, Id
-            FROM p_v_zz_Szkolenia
-            WHERE Rok = ? AND Miesiac = ? AND Status = 1
-            UNION ALL
-            SELECT 'Nadgodziny' as Typ, 'Nadgodziny' as Temat, 'Nadgodziny' as Nazwa, Uzytkownik, Data, DataOd, DataDo, 'Wstawione' as StatusNazwa, Id
-            FROM p_t_zz_Nadgodziny
-            WHERE Rok = ? AND Miesiac = ? AND [StatusRozliczenia] = 1
-            """
-
-            # Przygotowanie parametrów (rok, miesiąc dla każdego zapytania w UNION)
-            params = (year, month, year, month, year, month)
-
-            # Wykonanie zapytania
-            cursor.execute(unified_query, params)
-            all_events = cursor.fetchall()
-
-            # Pobierz dane wszystkich użytkowników (wydział, przełożony, nazwa) w jednym zapytaniu
-            users_query = """
-            SELECT Uzytkownik, WydzialGrafik as Wydzial, PrzelozonyDane as Przelozony, UzytkownikDane
-            FROM p_t_do_KonfiguracjaZatrudnienie
-            WHERE Rok = ? AND Miesiac = ? AND Flaga = 1
-            """
-            cursor.execute(users_query, (year, month))
-            users_data = cursor.fetchall()
-
-            conn.close()
-
-            # Przygotowanie mapy użytkowników - tylko raz
-            self.user_info_map = {}
-            for user_data in users_data:
-                user_id, wydzial, przelozony, uzytkownik_dane = user_data
-                self.user_info_map[user_id] = {
-                    'wydzial': wydzial or 'Nieznany',
-                    'przelozony': przelozony or 'Nieznany',
-                    'uzytkownik_dane': uzytkownik_dane or f"{user_id}"
-                }
-
-            # Przetwórz zdarzenia i zapisz w buforze
-            self.all_events_data = []
-            for event_data in all_events:
-                event_type, topic, name, event_user_id, event_date, time_from, time_to, status, event_id = event_data
-
-                # Pobierz dane użytkownika (z przygotowanej wcześniej mapy)
-                user_info = self.user_info_map.get(event_user_id, {
-                    'wydzial': 'Nieznany',
-                    'przelozony': 'Nieznany',
-                    'uzytkownik_dane': f"{event_user_id}"
-                })
-                user_name = user_info['uzytkownik_dane']
-
-                # Formatuj daty
-                if event_date:
-                    if isinstance(event_date, str):
-                        date_obj = event_date.split(' ')[0]  # Pobierz tylko część daty (bez czasu)
-                    else:
-                        date_obj = event_date.strftime('%d.%m.%Y')
-
-                    date_key = event_date  # Zachowaj oryginalną datę do filtrowania
-                else:
-                    # Jeśli brak daty, użyj pierwszego dnia miesiąca
-                    date_obj = f"01.{month:02d}.{year}"
-                    date_key = f"{year}-{month:02d}-01"
-
-                # Formatuj czas
-                time_from_obj = time_from.strftime('%H:%M') if time_from else "00:00"
-                time_to_obj = time_to.strftime('%H:%M') if time_to else "00:00"
-
-                self.all_events_data.append({
-                    'type': event_type,
-                    'topic': topic,
-                    'name': name,
-                    'user_id': event_user_id,
-                    'user_name': user_name,
-                    'date': date_obj,
-                    'date_key': date_key,  # Do filtrowania po dacie
-                    'time_from': time_from_obj,
-                    'time_to': time_to_obj,
-                    'status': status,
-                    'id': event_id
-                })
-
-            # Po załadowaniu do bufora, załaduj zdarzenia dla bieżącego zaznaczenia (lub wszystkie)
-            self.on_selection_changed()
-
-        except Exception as e:
-            # Pokaż komunikat błędu
-            QMessageBox.critical(
-                self,
-                "Błąd",
-                f"Wystąpił błąd podczas ładowania zdarzeń: {str(e)}",
-                QMessageBox.StandardButton.Ok
-            )
-            self.all_events_data = []
-            self.user_info_map = {}
-            self.events_table.setRowCount(0)
 
     # Metoda do aktualizacji danych
     def update_data(self, year, month):
@@ -2529,19 +2344,6 @@ class WorkScheduleWindow(QMainWindow):
             )
 
 
-
-    def handle_data_error(self, message):
-        """Bezpieczna obsługa błędów"""
-        try:
-            QMessageBox.critical(
-                self,
-                "Błąd",
-                message,
-                QMessageBox.StandardButton.Ok
-            )
-        except:
-            print(f"Nie można wyświetlić komunikatu błędu: {message}")
-
     def get_selected_items(self, list_widget):
         """Zwraca teksty zaznaczonych elementów z listy"""
         selected = []
@@ -2877,7 +2679,7 @@ class WorkScheduleWindow(QMainWindow):
     def get_cell_color_by_time(self, hour):
         """
         Zwraca kolor tła komórki na podstawie godziny rozpoczęcia.
-        Godziny są mapowane na kolory zgodnie z paletą kolorów widoczną na zdjęciach.
+        Godziny są mapowane na kolory w bardziej czytelnej palecie.
 
         Args:
             hour (int): Godzina rozpoczęcia zmiany (0-23)
@@ -2885,53 +2687,53 @@ class WorkScheduleWindow(QMainWindow):
         Returns:
             QColor: Kolor tła komórki
         """
-        # Domyślny kolor (biały/przezroczysty) gdy godzina nie jest zdefiniowana
+        # Domyślny kolor (przezroczysty) gdy godzina nie jest zdefiniowana
         if hour is None or hour < 0 or hour > 23:
             return QColor(255, 255, 255, 0)  # Przezroczysty
 
-        # Mapowanie godzin na kolory
+        # Mapowanie godzin na kolory - zharmonizowana paleta
         if hour == 5:
-            return QColor(173, 216, 230)  # Jasnoniebieski (Light Blue)
+            return QColor(204, 255, 255)  # Jasny błękit (bardzo jasny cyjan)
         elif hour == 6:
-            return QColor(135, 206, 235)  # Niebieski (Sky Blue)
+            return QColor(204, 255, 255)  # Jasny błękit (bardzo jasny cyjan)
         elif hour == 7:
-            return QColor(0, 191, 255)  # Głęboko niebieski (Deep Sky Blue)
+            return QColor(0, 255, 255)  # Cyjan (akwamaryna)
         elif hour == 8:
-            return QColor(0, 206, 209)  # Turkusowy (Turquoise)
+            return QColor(0, 204, 255)  # Jasny błękit (niebieskozielony)
         elif hour == 9:
-            return QColor(64, 224, 208)  # Turkusowy (Medium Turquoise)
+            return QColor(0, 255, 0)  # Limonkowy (czysty zielony)
         elif hour == 10:
-            return QColor(127, 255, 212)  # Akwamaryna (Aquamarine)
+            return QColor(153, 204, 0)  # Oliwkowy (żółtozielony)
         elif hour == 11:
-            return QColor(152, 251, 152)  # Jasnozielony (Pale Green)
+            return QColor(204, 255, 204)  # Bardzo jasny zielony (miętowy)
         elif hour == 12:
-            return QColor(50, 205, 50)  # Zielony (Lime Green)
+            return QColor(255, 255, 153)  # Bardzo jasny żółty (kremowy)
         elif hour == 13:
-            return QColor(144, 238, 144)  # Jasnozielony (Light Green)
+            return QColor(255, 204, 153)  # Jasny łososiowy (brzoskwiniowy)
         elif hour == 14:
-            return QColor(173, 255, 47)  # Żółtozielony (Green Yellow)
+            return QColor(255, 153, 0)  # Ciemny pomarańczowy
         elif hour == 15:
-            return QColor(255, 255, 0)  # Żółty (Yellow)
+            return QColor(255, 0, 255)  # Magenta (fuksja)
         elif hour == 16:
-            return QColor(255, 215, 0)  # Złoty (Gold)
+            return QColor(204, 0, 0)  # Ciemnoczerwony
         elif hour == 17:
-            return QColor(255, 165, 0)  # Pomarańczowy (Orange)
+            return QColor(150, 150, 150)  # Średni szary
         elif hour == 18:
-            return QColor(255, 99, 71)  # Pomarańczowoczerwony (Tomato)
+            return QColor(150, 150, 150)  # Średni szary
         elif hour == 19:
-            return QColor(255, 0, 255)  # Fuksja (Magenta)
+            return QColor(150, 150, 150)  # Średni szary
         elif hour == 20:
-            return QColor(220, 20, 60)  # Karmazynowy (Crimson)
+            return QColor(150, 150, 150)  # Średni szary
         elif hour == 21:
-            return QColor(105, 105, 105)  # Ciemnoszary (Dim Gray)
+            return QColor(150, 150, 150)  # Średni szary
         elif hour == 22:
-            return QColor(128, 128, 128)  # Szary (Gray)
+            return QColor(51, 51, 51)  # Ciemny szary
         elif hour == 23:
-            return QColor(169, 169, 169)  # Ciemnoszary (Dark Gray)
+            return QColor(51, 51, 51)  # Ciemny szary
         elif hour == 0:
-            return QColor(192, 192, 192)  # Srebrzysty (Silver)
+            return QColor(51, 51, 51)  # Ciemny szary
         elif hour in [1, 2, 3, 4]:
-            return QColor(0, 0, 0)  # Czarny (Black)
+            return QColor(51, 51, 51)  # Ciemny szary
 
         # Domyślny kolor dla innych wartości
         return QColor(255, 255, 255, 0)  # Przezroczysty
@@ -3025,6 +2827,8 @@ class WorkScheduleWindow(QMainWindow):
             self.load_events_for_selection(selected_cells)
 
         self.log_time("Obsługa zmiany zaznaczenia", start_time)
+
+
 
     def load_all_events_for_month(self, year, month):
         """Ładuje wszystkie zdarzenia dla wybranego miesiąca"""
@@ -3121,14 +2925,19 @@ class WorkScheduleWindow(QMainWindow):
 
         self.log_time(f"Ładowanie zdarzeń dla {len(selected_cells)} komórek", start_time)
 
-
-
     def filter_events_table(self):
         """Filtruje tabelę zdarzeń na podstawie zaznaczonych filtrów i zakresów dat"""
         try:
+            start_time = time.time()
             # Wyświetl informacje o aktualnych danych zdarzeń
             print(
                 f"filter_events_table: liczba wszystkich zdarzeń: {len(self.events_data) if hasattr(self, 'events_data') and isinstance(self.events_data, list) else 'brak'}")
+
+            # Szybkie sprawdzenie czy jest co filtrować
+            if not hasattr(self, 'events_data') or not isinstance(self.events_data, list) or not self.events_data:
+                print("Brak danych zdarzeń do filtrowania")
+                self.events_table.setRowCount(0)  # Wyczyść tabelę
+                return
 
             # Pobierz zaznaczone typy zdarzeń
             allowed_types = []
@@ -3140,12 +2949,6 @@ class WorkScheduleWindow(QMainWindow):
                 allowed_types.append('Nadgodziny')
 
             print(f"Dozwolone typy zdarzeń: {allowed_types}")
-
-            # Sprawdź czy self.events_data istnieje i jest listą
-            if not hasattr(self, 'events_data') or not isinstance(self.events_data, list):
-                print("Brak danych zdarzeń do filtrowania")
-                self.events_table.setRowCount(0)  # Wyczyść tabelę
-                return
 
             # DODANE: Pobierz daty z kontrolek i przekształć na format YYYY-MM-DD
             date_from_str = self.date_from.date().toString('yyyy-MM-dd') if hasattr(self, 'date_from') else None
@@ -3159,10 +2962,15 @@ class WorkScheduleWindow(QMainWindow):
                 filter_params['allowed_types'] = allowed_types
 
             # Dodaj filtry tematu i nazwy
-            if hasattr(self, 'topic_filter') and self.topic_filter.text():
-                filter_params['topic'] = self.topic_filter.text().lower()
-            if hasattr(self, 'name_filter') and self.name_filter.text():
-                filter_params['name'] = self.name_filter.text().lower()
+            topic_filter = self.topic_filter.text().lower() if hasattr(self,
+                                                                       'topic_filter') and self.topic_filter.text() else None
+            name_filter = self.name_filter.text().lower() if hasattr(self,
+                                                                     'name_filter') and self.name_filter.text() else None
+
+            if topic_filter:
+                filter_params['topic'] = topic_filter
+            if name_filter:
+                filter_params['name'] = name_filter
 
             # DODANE: Dodaj filtry zakresu dat
             if date_from_str:
@@ -3172,65 +2980,42 @@ class WorkScheduleWindow(QMainWindow):
 
             print(f"Parametry filtrowania: {filter_params}")
 
-            # Filtruj dane
+            # Zoptymalizowane filtrowanie - tylko jeden przebieg przez dane
             filtered_data = []
 
-            # Filtrowanie na podstawie bieżących zdarzeń
-            for event in self.events_data:
-                # Wypisz informacje o zdarzeniu dla debugowania
-                print(f"Sprawdzam zdarzenie: {event.get('type', '')} {event.get('id', '')} {event.get('topic', '')}")
+            # OPTYMALIZACJA: Używamy list comprehension zamiast pętli for dla szybszego filtrowania
+            events_to_filter = self.events_data.copy()
 
-                # Sprawdź typ zdarzenia
-                event_type = event.get('type', '')
-                if allowed_types and event_type not in allowed_types:
-                    print(f"Pomijam zdarzenie - niezgodny typ: {event_type}")
-                    continue
+            # Filtruj po typie (jeśli podano)
+            if 'allowed_types' in filter_params:
+                events_to_filter = [e for e in events_to_filter if e.get('type', '') in filter_params['allowed_types']]
 
-                # Sprawdź filtry tekstu
-                if 'topic' in filter_params:
-                    event_topic = str(event.get('topic', '')).lower()
-                    if filter_params['topic'] not in event_topic:
-                        print(f"Pomijam zdarzenie - niezgodny temat: {event_topic}")
-                        continue
+            # Filtruj po temacie (jeśli podano)
+            if 'topic' in filter_params:
+                events_to_filter = [e for e in events_to_filter if
+                                    filter_params['topic'] in str(e.get('topic', '')).lower()]
 
-                if 'name' in filter_params:
-                    event_name = str(event.get('name', '')).lower()
-                    if filter_params['name'] not in event_name:
-                        print(f"Pomijam zdarzenie - niezgodna nazwa: {event_name}")
-                        continue
+            # Filtruj po nazwie (jeśli podano)
+            if 'name' in filter_params:
+                events_to_filter = [e for e in events_to_filter if
+                                    filter_params['name'] in str(e.get('name', '')).lower()]
 
-                # DODANE: Sprawdź filtry daty
-                if 'date_from' in filter_params or 'date_to' in filter_params:
-                    # Pobierz datę zdarzenia w formacie YYYY-MM-DD
-                    event_date = event.get('date_key', '')
-                    if isinstance(event_date, str):
-                        # Standardyzuj format daty do YYYY-MM-DD
-                        if 'T' in event_date:  # Format ISO 'YYYY-MM-DDThh:mm:ss'
-                            event_date = event_date.split('T')[0]
-                        elif ' ' in event_date:  # Format 'YYYY-MM-DD hh:mm:ss'
-                            event_date = event_date.split(' ')[0]
-                    elif hasattr(event_date, 'strftime'):
-                        event_date = event_date.strftime('%Y-%m-%d')
-                    else:
-                        # Jeśli nie można określić formatu, konwertuj na string
-                        event_date = str(event_date)
+            # Filtruj po dacie od (jeśli podano)
+            if 'date_from' in filter_params:
+                events_to_filter = [e for e in events_to_filter if
+                                    self.standardize_date(e.get('date_key', '')) >= filter_params['date_from']]
 
-                    # Sprawdź filtr daty początkowej
-                    if 'date_from' in filter_params and event_date < filter_params['date_from']:
-                        print(f"Pomijam zdarzenie - data {event_date} wcześniejsza niż {filter_params['date_from']}")
-                        continue
+            # Filtruj po dacie do (jeśli podano)
+            if 'date_to' in filter_params:
+                events_to_filter = [e for e in events_to_filter if
+                                    self.standardize_date(e.get('date_key', '')) <= filter_params['date_to']]
 
-                    # Sprawdź filtr daty końcowej
-                    if 'date_to' in filter_params and event_date > filter_params['date_to']:
-                        print(f"Pomijam zdarzenie - data {event_date} późniejsza niż {filter_params['date_to']}")
-                        continue
-
-                filtered_data.append(event)
-                print(f"Akceptuję zdarzenie: {event.get('type', '')} {event.get('id', '')}")
+            filtered_data = events_to_filter
 
             print(f"Po filtrowaniu pozostało {len(filtered_data)} zdarzeń")
+            filtering_time = self.log_time("Filtrowanie zdarzeń", start_time)
 
-            # Aktualizuj tabelę
+            # Aktualizuj tabelę używając zoptymalizowanej metody
             self.update_events_table(filtered_data)
 
         except Exception as e:
@@ -3239,6 +3024,38 @@ class WorkScheduleWindow(QMainWindow):
             traceback.print_exc()
             # Wyczyść tabelę w przypadku błędu
             self.events_table.setRowCount(0)
+
+    def standardize_date(self, date_obj):
+        """
+        Standaryzuje format daty do 'YYYY-MM-DD' dla porównań
+
+        Args:
+            date_obj: Data w dowolnym formacie (string, datetime, itp.)
+
+        Returns:
+            str: Data w formacie 'YYYY-MM-DD'
+        """
+        if not date_obj:
+            return ''
+
+        # Jeśli to już string, wyciągnij tylko datę
+        if isinstance(date_obj, str):
+            # Obsługa różnych formatów
+            if 'T' in date_obj:  # Format ISO 'YYYY-MM-DDThh:mm:ss'
+                return date_obj.split('T')[0]
+            elif ' ' in date_obj:  # Format 'YYYY-MM-DD hh:mm:ss'
+                return date_obj.split(' ')[0]
+            elif len(date_obj) == 10 and date_obj.count('-') == 2:  # Format 'YYYY-MM-DD'
+                return date_obj
+            # Jeśli nie dopasowano do żadnego formatu, zwróć oryginalny string
+            return date_obj
+
+        # Jeśli to obiekt datetime, skonwertuj na string
+        if hasattr(date_obj, 'strftime'):
+            return date_obj.strftime('%Y-%m-%d')
+
+        # W przypadku nieznanego typu, zwróć pusty string
+        return ''
 
     def update_events_table(self, filtered_data):
         """
@@ -3459,8 +3276,8 @@ class WorkScheduleWindow(QMainWindow):
                         'type': event_type,
                         'user_id': user_id,
                         'date': date_str,
-                        # WAŻNA ZMIANA: Zapisz pełne informacje o zdarzeniu
-                        'date_key': event.get('date_key'),  # Dodaj date_key z wydarzenia
+                        'date_key': event.get('date_key', date_str),
+                        'name': event.get('name', ''),
                     })
 
         # Jeśli nie znaleziono delegacji do odwołania, pokaż komunikat
@@ -3492,17 +3309,17 @@ class WorkScheduleWindow(QMainWindow):
         try:
             conn = DatabaseConnector.get_connection()
             cursor = conn.cursor()
-            successful_updates = 0
+            canceled_count = 0
+
+            # Lista identyfikatorów zdarzeń, które zostały anulowane
+            canceled_event_ids = []
 
             # Dla każdego zdarzenia do odwołania
             for event in events_to_cancel:
                 event_id = event['id']
                 event_type = event['type']
                 user_id = event['user_id']
-                date_str = event['date']
-
-                # WAŻNA ZMIANA: Użyj date_key z wydarzenia zamiast date_str z komórki
-                date_key = event.get('date_key', date_str)
+                date_key = event.get('date_key')
 
                 # Określ odpowiednią tabelę
                 table_name = "p_t_zz_Spotkania" if event_type == "Spotkanie" else "p_t_zz_Szkolenia"
@@ -3514,13 +3331,15 @@ class WorkScheduleWindow(QMainWindow):
                 WHERE Id = ?
                 """
                 cursor.execute(update_query, (user_app_id, event_id))
-                successful_updates += 1
+                canceled_count += 1
+
+                # Dodaj ID zdarzenia do listy anulowanych
+                canceled_event_ids.append(event_id)
 
                 # Usuń zdarzenie z indeksu zdarzeń
                 self.data_provider.delete_event_from_index(event_id, event_type)
 
-                # WAŻNA ZMIANA: Aktualizuj ikony dla każdego usuniętego zdarzenia, używając jego własnych danych
-                # Użyj dokładnych danych zdarzenia
+                # Aktualizuj ikony
                 self.update_table_icons_after_event_deletion(user_id, date_key, event_type)
 
             conn.commit()
@@ -3555,8 +3374,18 @@ class WorkScheduleWindow(QMainWindow):
                     range_item.rightColumn()
                 ))
 
-            # WAŻNA ZMIANA: Wymuś pełne odświeżenie całej tabeli zamiast indywidualnych komórek
+            # WAŻNA ZMIANA: Usuń anulowane zdarzenia z listy zdarzeń w pamięci
+            if canceled_event_ids:
+                self.events_data = [event for event in self.events_data
+                                    if event.get('id') not in canceled_event_ids]
+                print(
+                    f"Usunięto {len(canceled_event_ids)} zdarzeń z listy events_data. Pozostało {len(self.events_data)} zdarzeń.")
+
+            # Wymuś pełne odświeżenie całej tabeli
             self.table.viewport().update()
+
+            # Wymuś odświeżenie tabeli zdarzeń
+            self.filter_events_table()
 
             # Przywróć zaznaczenie
             for top, left, bottom, right in current_selection:
@@ -3566,13 +3395,11 @@ class WorkScheduleWindow(QMainWindow):
                 except Exception as e:
                     print(f"Błąd podczas przywracania zaznaczenia: {e}")
 
-            # Aktualizacja tabeli zdarzeń
-            self.on_selection_changed()
-
+            # Pokaż informację o odwołanych delegacjach
             QMessageBox.information(
                 self,
                 "Sukces",
-                f"Odwołano {successful_updates} delegacji z {len(events_to_cancel)} znalezionych.",
+                f"Odwołano {canceled_count} delegacji z {len(events_to_cancel)} znalezionych.",
                 QMessageBox.Ok
             )
 
@@ -3586,125 +3413,6 @@ class WorkScheduleWindow(QMainWindow):
                 f"Wystąpił błąd podczas odwoływania delegacji: {str(e)}",
                 QMessageBox.Ok
             )
-
-    def update_table_icons_after_event_deletion(self, user_id, date_str, deleted_event_type=None):
-        """
-        Aktualizuje ikonki w komórkach grafiku po usunięciu zdarzenia
-
-        Args:
-            user_id: ID użytkownika
-            date_str: Data w formacie 'YYYY-MM-DD'
-            deleted_event_type: Typ usuniętego zdarzenia
-        """
-        try:
-            print(f"Aktualizacja ikon dla użytkownika {user_id}, data {date_str}, typ {deleted_event_type}")
-
-            # Standardyzuj format daty (użyj metody z DataProvider)
-            date_str = date_str.split(' ')[0] if ' ' in date_str else date_str  # Usuń czas
-
-            # Upewnij się, że mamy datę w formacie YYYY-MM-DD
-            if not date_str or date_str.count('-') != 2:
-                print(f"Nieprawidłowy format daty: {date_str}")
-                return
-
-            year, month, day = date_str.split('-')
-            day = int(day)
-            month = int(month)
-            year = int(year)
-
-            # Sprawdź, jakie zdarzenia pozostały dla tej pary (użytkownik, data)
-            user_events = self.data_provider.get_events_for_user_date(user_id, date_str)
-            print(f"Znaleziono {len(user_events)} zdarzeń dla użytkownika {user_id} na dzień {date_str}")
-
-            # Sprawdź typy zdarzeń
-            has_meeting = any(e.get('type') == 'Spotkanie' for e in user_events)
-            has_training = any(e.get('type') == 'Szkolenie' for e in user_events)
-            has_overtime = any(e.get('type') == 'Nadgodziny' for e in user_events)
-
-            print(f"Status ikon: spotkania={has_meeting}, szkolenia={has_training}, nadgodziny={has_overtime}")
-
-            # Znajdź odpowiednią komórkę w tabeli
-            found = False
-            updated_cells = []
-
-            # Szukamy wszystkich komórek dla tego użytkownika i dnia
-            for row in range(self.table.rowCount()):
-                # Znajdź kolumnę z odpowiednim dniem
-                col = 2 + day  # Pierwsza kolumna dnia ma indeks 3 (0-bazowany) = 2 + 1
-
-                # Pobierz dane użytkownika z kolumny "Pracownik" (indeks 2)
-                pracownik_item = self.table.item(row, 2)
-                if not pracownik_item:
-                    continue
-
-                # Znajdź odpowiednią komórkę
-                cell_item = self.table.item(row, col)
-                if not cell_item:
-                    continue
-
-                # Znajdź klucz pasujący do użytkownika
-                for key in self.processed_data.keys():
-                    _, _, user_name, uid = key
-                    if user_name == pracownik_item.text() and str(uid) == str(user_id):
-                        # Znaleźliśmy właściwą komórkę
-                        print(f"Znaleziono komórkę ({row}, {col}) dla użytkownika {user_id}")
-
-                        # Zaktualizuj dane komórki
-                        cell_item.setData(Qt.UserRole, has_overtime)  # Informacja o nadgodzinach
-                        cell_item.setData(Qt.UserRole + 1,
-                                          has_meeting or has_training)  # Informacja o spotkaniach/szkoleniach
-
-                        # Zapamiętaj współrzędne komórki do odświeżenia
-                        updated_cells.append((row, col))
-                        found = True
-                        break
-
-            if found:
-                # Wymuś odświeżenie tylko tych komórek, które zostały zaktualizowane
-                for row, col in updated_cells:
-                    cell_rect = self.table.visualItemRect(self.table.item(row, col))
-                    self.table.viewport().update(cell_rect)
-
-                # Wymuś pełne odświeżenie widoku tabeli
-                self.table.viewport().update()
-            else:
-                print(f"Nie znaleziono komórki dla użytkownika {user_id} i dnia {day}")
-
-        except Exception as e:
-            print(f"Błąd podczas aktualizacji ikonek w komórkach grafiku: {str(e)}")
-            import traceback
-            traceback.print_exc()
-
-    def load_events_for_selected_cells(self, cell_list):
-        """
-        Ładuje zdarzenia dla listy par (użytkownik, data) bez odświeżania całego grafiku
-
-        Args:
-            cell_list: Lista par (user_id, date_str)
-        """
-        start_time = time.time()
-
-        # Czyść poprzednie dane
-        self.events_data = []
-
-        # Użyj indeksu zdarzeń do szybkiego wyszukiwania
-        for user_id, date_str in cell_list:
-            # Pobierz zdarzenia dla tej pary użytkownik-data z indeksu
-            user_events = self.data_provider.get_events_for_user_date(user_id, date_str)
-
-            # Dodaj znalezione zdarzenia do listy events_data (bez duplikatów)
-            for event in user_events:
-                # Sprawdź czy zdarzenie już jest na liście events_data (unikaj duplikatów)
-                event_id = event.get('id')
-                if not any(e.get('id') == event_id for e in self.events_data):
-                    self.events_data.append(event)
-
-        print(f"Znaleziono {len(self.events_data)} zdarzeń dla {len(cell_list)} komórek")
-
-        # Aktualizuj tabelę zdarzeń
-        self.filter_events_table()
-
-        self.log_time(f"Ładowanie zdarzeń dla {len(cell_list)} komórek", start_time)
 
     def delete_event(self, event_id, event_type):
         """Usuwa zdarzenie z bazy danych i z indeksu zdarzeń, a następnie aktualizuje ikonki w komórkach grafiku"""
@@ -3755,15 +3463,17 @@ class WorkScheduleWindow(QMainWindow):
                     range_item.rightColumn()
                 ))
 
-            # WAŻNA ZMIANA: Znajdź właściwe dane zdarzenia z listy events_data zamiast z indeksu
+            # Znajdź właściwe dane zdarzenia z listy events_data
             user_id = None
             date_key = None
+            event_to_remove = None
 
             # Szukaj w bieżących wydarzeniach (które są wyświetlane w tabeli)
             for event in self.events_data:
                 if event.get('id') == event_id and event.get('type') == event_type:
                     user_id = event.get('user_id')
                     date_key = event.get('date_key')
+                    event_to_remove = event
                     break
 
             # Jeśli nie znaleziono w events_data, spróbuj w indeksie (jako zapasowe)
@@ -3810,27 +3520,40 @@ class WorkScheduleWindow(QMainWindow):
             conn.commit()
             conn.close()
 
-            # Usuń zdarzenie z indeksu w DataProvider - przekazujemy również event_type!
-            if self.data_provider.delete_event_from_index(event_id, event_type):
-                print(f"Usunięto zdarzenie o ID {event_id} i typie {event_type} z indeksu")
+            # Usuń zdarzenie z indeksu w DataProvider
+            success_index_removal = False
+            if hasattr(self.data_provider, 'delete_event_from_index'):
+                success_index_removal = self.data_provider.delete_event_from_index(event_id, event_type)
+                if success_index_removal:
+                    print(f"Usunięto zdarzenie o ID {event_id} i typie {event_type} z indeksu")
 
-            # Usuń zdarzenie z bieżącej listy zdarzeń
-            self.events_data = [event for event in self.events_data if
-                                not (event.get('id') == event_id and event.get('type') == event_type)]
+            # WAŻNE: Usuń zdarzenie z bieżącej listy zdarzeń - to naprawia problem z aktualizacją tabeli
+            if event_to_remove:
+                self.events_data.remove(event_to_remove)
+                print(f"Usunięto zdarzenie z listy events_data. Pozostało {len(self.events_data)} zdarzeń.")
+            else:
+                # Alternatywnie, jeśli nie znaleziono konkretnego obiektu
+                self.events_data = [event for event in self.events_data if
+                                    not (event.get('id') == event_id and event.get('type') == event_type)]
+                print(f"Przefiltrowano events_data. Pozostało {len(self.events_data)} zdarzeń.")
 
-            # Aktualizuj ikonki w komórce grafiku - użyj prawidłowych danych zdarzenia
+            # Aktualizuj ikonki w komórce grafiku
             self.update_table_icons_after_event_deletion(user_id, date_key, event_type)
 
-            # Wymuś odświeżenie całej tabeli
+            # Wymuś odświeżenie całej tabeli grafiku
             self.table.viewport().update()
+
+            # Wymuś odświeżenie tabeli zdarzeń
+            self.filter_events_table()
 
             # Przywróć zaznaczenie tabeli
             for top_row, left_col, bottom_row, right_col in current_selection_data:
                 selection_range = QTableWidgetSelectionRange(top_row, left_col, bottom_row, right_col)
                 self.table.setRangeSelected(selection_range, True)
 
-            # Ponowne załadowanie zdarzeń dla aktualnego zaznaczenia
-            self.on_selection_changed()
+            # Ponowne załadowanie zdarzeń dla aktualnego zaznaczenia NIE JEST KONIECZNE
+            # ponieważ już usunęliśmy zdarzenie z events_data i odświeżyliśmy tabelę zdarzeń
+            # self.on_selection_changed()
 
             # Pokaż komunikat sukcesu
             QMessageBox.information(
@@ -4044,49 +3767,74 @@ class WorkScheduleWindow(QMainWindow):
         selected_user_name = None
         nr_kadrowy = None
         selected_date = None
+        start_hour = 8  # Domyślna godzina rozpoczęcia
+        hours_worked = 8  # Domyślna liczba godzin pracy
 
         if selected_ranges:
-            for range_item in selected_ranges:
-                for table_row in range(range_item.topRow(), range_item.bottomRow() + 1):
-                    for col in range(range_item.leftColumn(), range_item.rightColumn() + 1):
-                        if col >= 3:  # Kolumny z dniami (po Wydział, Przełożony, Pracownik)
-                            if table_row < len(self.visible_rows):
-                                data_row = self.visible_rows[table_row]
-                                if data_row < len(self.processed_data):
-                                    key = list(self.processed_data.keys())[data_row]
-                                    _, _, uzytkownik_dane, uzytkownik = key
-                                    day = col - 2
+            # Pobierz dane z zaznaczonych komórek
+            selected_cells = self.get_selected_schedule_cells()
 
-                                    # Zapamiętaj użytkownika i datę z pierwszej zaznaczonej komórki
-                                    if selected_user_id is None:
-                                        selected_user_id = uzytkownik
-                                        selected_user_name = uzytkownik_dane
+            if selected_cells:
+                # Bierzemy dane z pierwszej zaznaczonej komórki
+                first_cell = selected_cells[0]
+                selected_user_id = first_cell.get('user_id')
 
-                                        # Pobierz numer kadrowy z danych użytkownika
-                                        user_data = self.processed_data[key]
-                                        nr_kadrowy = user_data.get('nr_kadrowy')
-
-                                        # Jeśli nie znaleziono numeru kadrowego w danych, użyj wartości domyślnej
-                                        if nr_kadrowy is None:
-                                            # Fallback do pobierania nr_kadrowy z funkcji get_modifier_id
-                                            nr_kadrowy_default, _, _ = get_modifier_id()
-                                            nr_kadrowy = nr_kadrowy_default
-                                            print(f"Używam domyślnego numeru kadrowego: {nr_kadrowy}")
-                                        else:
-                                            print(f"Znaleziono numer kadrowy użytkownika: {nr_kadrowy}")
-
-                                        selected_date = QDate(year, month, day)
-                                    break  # Weź tylko pierwszą komórkę z zaznaczenia
-                                break
+                # Szukamy nazwy użytkownika w danych
+                for key in self.processed_data.keys():
+                    _, _, user_name, user_id = key
+                    if str(user_id) == str(selected_user_id):
+                        selected_user_name = user_name
                         break
+
+                # Pobieramy nr_kadrowy bezpośrednio z danych komórki
+                nr_kadrowy = first_cell.get('nr_kadrowy')
+
+                # Ustawiamy datę
+                date_str = first_cell.get('date')
+                if date_str:
+                    try:
+                        year_part, month_part, day_part = date_str.split('-')
+                        selected_date = QDate(int(year_part), int(month_part), int(day_part))
+                    except:
+                        pass
+
+                # Pobierz godzinę rozpoczęcia i liczbę godzin pracy z danych komórki
+                day_data = first_cell.get('day_data', {})
+                start_hour = first_cell.get('start_hour')
+                if start_hour is None:
+                    start_hour = 8  # Domyślna godzina, jeśli nie znaleziono
+
+                # Oblicz koniec zmiany na podstawie godziny rozpoczęcia i liczby godzin
+                day = first_cell.get('day')
+                key = None
+                for k in self.processed_data.keys():
+                    _, _, _, uid = k
+                    if str(uid) == str(selected_user_id):
+                        key = k
+                        break
+
+                if key and day:
+                    day_data = self.processed_data[key]['days'].get(day, {})
+                    symbol = day_data.get('symbol', '')
+
+                    # Próba wyciągnięcia liczby godzin z symbolu
+                    if symbol and ';' in symbol:
+                        parts = symbol.split(';')
+                        if len(parts) >= 3 and parts[2].isdigit():
+                            hours_worked = int(parts[2])
+
+                    # Jeśli nie udało się wyciągnąć z symbolu, sprawdź czy mamy godziny pracy w danych dnia
+                    if hours_worked == 8 and 'hours' in day_data:
+                        hours_worked = day_data.get('hours', 8)
 
         # Jeśli nie ma zaznaczenia, użyj dzisiejszej daty i bieżącego użytkownika
         if selected_date is None:
             selected_date = QDate.currentDate()
-            # Pobierz numer kadrowy bieżącego użytkownika
-            nr_kadrowy, user_app_id, _ = get_modifier_id()
-            selected_user_name = user_app_id  # Domyślnie używamy ID aplikacji jako nazwy
-            print(f"Używam domyślnego numeru kadrowego bieżącego użytkownika: {nr_kadrowy}")
+            # Pobierz domyślny numer kadrowy bieżącego użytkownika tylko jeśli nie mamy nr_kadrowy
+            if nr_kadrowy is None:
+                nr_kadrowy, user_app_id, _ = get_modifier_id()
+                selected_user_name = user_app_id  # Domyślnie używamy ID aplikacji jako nazwy
+                print(f"Używam domyślnego numeru kadrowego bieżącego użytkownika: {nr_kadrowy}")
 
         # Utwórz okno dialogowe
         dialog = QDialog(self)
@@ -4136,15 +3884,28 @@ class WorkScheduleWindow(QMainWindow):
         zalegle_label = QLabel("czy zaległe")
 
         # Kontrolki wprowadzania
-        # Combo z czasem co 30 minut
+        # Combo z czasem co 30 minut - ze zwiększoną szerokością
         time_combo = QComboBox()
+        time_combo.setMinimumWidth(60)  # Zwiększona szerokość
+
+        # Oblicz koniec zmiany (godzina rozpoczęcia + liczba godzin pracy)
+        end_hour = (start_hour + hours_worked) % 24
+
         for hour in range(0, 24):
             for minute in [0, 30]:
                 time_combo.addItem(f"{hour:02d}:{minute:02d}", f"{hour:02d}:{minute:02d}")
-        time_combo.setCurrentText("10:00")
+
+        # Ustaw czas rozpoczęcia nadgodzin na koniec zmiany (czyli godzinę rozpoczęcia + liczba godzin)
+        default_time = f"{end_hour:02d}:00"
+        index = time_combo.findText(default_time)
+        if index != -1:
+            time_combo.setCurrentIndex(index)
+        else:
+            time_combo.setCurrentText(default_time)
 
         # Combo z liczbą godzin do 13.0
         hours_combo = QComboBox()
+        hours_combo.setMinimumWidth(50)  # Zwiększona szerokość
         for hours in [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5, 7.0, 7.5, 8.0, 8.5, 9.0, 9.5,
                       10.0, 10.5, 11.0, 11.5, 12.0, 12.5, 13.0]:
             hours_combo.addItem(f"{hours:.1f}", hours)
@@ -4201,6 +3962,7 @@ class WorkScheduleWindow(QMainWindow):
                 settlement_date_str = f"{settlement_year}-{settlement_month:02d}-01"
 
                 # Wywołaj procedurę składowaną z poprawnie zmapowanymi parametrami
+                # Używamy nr_kadrowy z danych komórki zamiast domyślnej wartości
                 result = self.call_add_overtime_procedure(
                     selected_user_id,
                     selected_date.year(),
@@ -4212,7 +3974,7 @@ class WorkScheduleWindow(QMainWindow):
                     is_overdue,
                     overtime_type,
                     location,
-                    nr_kadrowy  # Przekaż nr_kadrowy do procedury
+                    nr_kadrowy  # Przekazujemy nr_kadrowy do procedury
                 )
 
                 # Obsłuż wynik
@@ -4238,7 +4000,7 @@ class WorkScheduleWindow(QMainWindow):
         dialog.exec()
 
     def call_add_overtime_procedure(self, user_id, year, month, date_str, start_time, hours, settlement_date,
-                                    is_overdue, overtime_type, location, nr_kadrowy=None):
+                                    is_overdue, overtime_type, location, nr_kadrowy):
         """
         Wywołuje procedurę składowaną p_P_ZZ_NadgodzinyWstawienie_v3 z poprawnym mapowaniem parametrów
 
@@ -4259,10 +4021,6 @@ class WorkScheduleWindow(QMainWindow):
             dict: Wynik operacji z kluczami 'success' i 'message'
         """
         try:
-            # Jeśli nie podano numeru kadrowego, pobierz domyślny
-            if nr_kadrowy is None:
-                nr_kadrowy, _, _ = get_modifier_id()
-                print(f"Używam domyślnego numeru kadrowego: {nr_kadrowy}")
 
             # Mapowanie lokalizacji na wartości liczbowe:
             # h - 1, p - 2, s - 3
@@ -4400,16 +4158,6 @@ class WorkScheduleWindow(QMainWindow):
 
     # Nowa metoda do aktualizacji indeksu zdarzeń po dodaniu nadgodzin
     def update_overtime_in_index(self, overtime_id, user_id, date_str, start_time, end_time):
-        """
-        Aktualizuje indeks zdarzeń po dodaniu nowych nadgodzin
-
-        Args:
-            overtime_id: ID nowo dodanych nadgodzin
-            user_id: ID użytkownika
-            date_str: Data w formacie 'YYYY-MM-DD'
-            start_time: Czas rozpoczęcia
-            end_time: Czas zakończenia
-        """
         try:
             # Pobierz informacje o użytkowniku
             user_info = self.user_info_map.get(user_id, {
@@ -4437,11 +4185,13 @@ class WorkScheduleWindow(QMainWindow):
                 'id': overtime_id
             }
 
-            # Dodaj nowe nadgodziny do indeksu
-            self.data_provider.add_event(new_overtime)
+            # Poprawne wywołanie - używamy events_index zamiast bezpośrednio data_provider
+            if hasattr(self.data_provider, 'events_index'):
+                self.data_provider.events_index.add_event(new_overtime)
 
             # Dodaj również do listy wszystkich zdarzeń
-            self.all_events_data.append(new_overtime)
+            if hasattr(self, 'all_events_data'):
+                self.all_events_data.append(new_overtime)
 
             print(f"Dodano nadgodziny (ID: {overtime_id}) do indeksu zdarzeń")
 
@@ -4467,10 +4217,7 @@ class WorkScheduleWindow(QMainWindow):
             # Zapisz ustawienia
             self.save_theme_settings(theme, font, font_size, save_settings)
 
-    def thread_finished(self):
-        """Metoda wywoływana po zakończeniu wątku"""
-        print("Wątek pobierania danych zakończony.")
-        # Tutaj można dodać dodatkową logikę jeśli potrzebna
+
 
     def save_theme_settings(self, theme, font_family, font_size, save_to_db):
         """Zapisuje ustawienia motywu trwale"""
