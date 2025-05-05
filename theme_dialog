@@ -262,11 +262,11 @@ class InsertSymbolDialog(QDialog):
         # Dodanie zakładek w zależności od roli
         if self.user_role == "Lider":
             # Lider widzi tylko Zwolnienia i Popularne symbole
-            self.add_tab_with_symbols(popularne_symbole, "Popularne symbole")
+            # self.add_tab_with_symbols(popularne_symbole, "Popularne symbole")
             self.add_tab_with_symbols(zwolnienia_symbole, "Zwolnienia")
         elif self.user_role == "Pracownik WPR":
             # Menadżer widzi wszystko
-            self.add_tab_with_symbols(popularne_symbole, "Popularne symbole")
+            # self.add_tab_with_symbols(popularne_symbole, "Popularne symbole")
             # self.add_tab_with_symbols(urlopy_symbole, "Urlopy")
             self.add_tab_with_symbols(zwolnienia_symbole, "Zwolnienia")
             # self.add_tab_with_symbols(delegacje_symbole, "Delegacje i praca zdalna")
