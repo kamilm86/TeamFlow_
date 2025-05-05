@@ -2426,51 +2426,44 @@ class WorkScheduleWindow(QMainWindow):
             if str(uzytkownik) in selected_uzytkownicy:
                 item.setSelected(True)
 
-    def process_data(self, data):
-        # Przetwarzamy dane do struktury:
-        self.processed_data = {}
+def process_data(self, data):
+    # Przetwarzamy dane do struktury:
 
-        for row in data:
-            try:
-                # Sprawdź liczbę kolumn w wierszu i dostosuj rozpakowanie
-                if len(row) >= 13:  # Jeśli mamy nową kolumnę NumerKadrowy
-                    wydzial, przelozony, uzytkownik_dane, uzytkownik, data_str, symbol, godziny_pracy, id_wpisu, spotkania, szkolenia, nadgodziny, start_hour, nr_kadrowy = row
-                elif len(row) >= 12:  # Jeśli mamy kolumnę start_hour, ale nie mamy nr_kadrowy
-                    wydzial, przelozony, uzytkownik_dane, uzytkownik, data_str, symbol, godziny_pracy, id_wpisu, spotkania, szkolenia, nadgodziny, start_hour = row
-                    nr_kadrowy = None  # Ustaw wartość domyślną
-                else:  # Zachowaj kompatybilność ze starym formatem (11 kolumn)
-                    wydzial, przelozony, uzytkownik_dane, uzytkownik, data_str, symbol, godziny_pracy, id_wpisu, spotkania, szkolenia, nadgodziny = row
-                    start_hour = None  # Ustaw wartość domyślną
-                    nr_kadrowy = None  # Ustaw wartość domyślną
+    self.processed_data = {}
 
-                # Klucz dla grupy (wydział, przełożony, użytkownik)
-                key = (wydzial, przelozony, uzytkownik_dane, uzytkownik)
+    for row in data:
+        try:
+            # Stała liczba kolumn z nr_kadrowy i start_hour
+            wydzial, przelozony, uzytkownik_dane, uzytkownik, data_str, symbol, godziny_pracy, id_wpisu, spotkania, szkolenia, nadgodziny, start_hour, nr_kadrowy = row
 
-                # Jeśli nie ma jeszcze wpisu dla tego klucza, utwórz go
-                if key not in self.processed_data:
-                    self.processed_data[key] = {'days': {}, 'total_hours': 0, 'nr_kadrowy': nr_kadrowy}
+            # Klucz dla grupy (wydział, przełożony, użytkownik)
+            key = (wydzial, przelozony, uzytkownik_dane, uzytkownik)
 
-                # Jeśli data_str nie jest None, dodaj symbol i godziny dla odpowiedniego dnia
-                if data_str:
-                    day = int(data_str.split('-')[2])  # Pobierz dzień z daty w formacie 'YYYY-MM-DD'
-                    self.processed_data[key]['days'][day] = {
-                        'symbol': symbol,
-                        'hours': godziny_pracy if godziny_pracy is not None else 0,
-                        'id': id_wpisu,
-                        'spotkania': spotkania if spotkania is not None else 0,
-                        'szkolenia': szkolenia if szkolenia is not None else 0,
-                        'nadgodziny': nadgodziny if nadgodziny is not None else 0,
-                        'start_hour': start_hour,  # Dodaj godzinę rozpoczęcia
-                        'nr_kadrowy': nr_kadrowy  # Dodaj numer kadrowy
-                    }
+            # Jeśli nie ma jeszcze wpisu dla tego klucza, utwórz go
+            if key not in self.processed_data:
+                self.processed_data[key] = {'days': {}, 'total_hours': 0}
 
-                    # Sumuj godziny pracy
-                    if godziny_pracy is not None:
-                        self.processed_data[key]['total_hours'] += godziny_pracy
-            except Exception as e:
-                print(f"Błąd podczas przetwarzania wiersza danych: {e}, liczba kolumn: {len(row)}")
-                print(f"Dane wiersza: {row}")
-                continue  # Kontynuuj z następnym wierszem w przypadku błędu
+            # Jeśli data_str nie jest None, dodaj symbol i godziny dla odpowiedniego dnia
+            if data_str:
+                day = int(data_str.split('-')[2])  # Pobierz dzień z daty w formacie 'YYYY-MM-DD'
+                self.processed_data[key]['days'][day] = {
+                    'symbol': symbol,
+                    'hours': godziny_pracy if godziny_pracy is not None else 0,
+                    'id': id_wpisu,
+                    'spotkania': spotkania if spotkania is not None else 0,
+                    'szkolenia': szkolenia if szkolenia is not None else 0,
+                    'nadgodziny': nadgodziny if nadgodziny is not None else 0,
+                    'start_hour': start_hour,  # Dodaj godzinę rozpoczęcia
+                    'nr_kadrowy': nr_kadrowy  # Dodaj numer kadrowy
+                }
+
+                # Sumuj godziny pracy
+                if godziny_pracy is not None:
+                    self.processed_data[key]['total_hours'] += godziny_pracy
+        except Exception as e:
+            print(f"Błąd podczas przetwarzania wiersza danych: {e}, liczba kolumn: {len(row)}")
+            print(f"Dane wiersza: {row}")
+            continue  # Kontynuuj z następnym wierszem w przypadku błędu
 
     def update_table_content(self):
         start_time = time.time()
