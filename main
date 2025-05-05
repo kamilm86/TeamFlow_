@@ -4403,149 +4403,174 @@ class WorkScheduleWindow(QMainWindow):
         # Pokaż dialog
         dialog.exec()
 
-    def call_add_overtime_procedure(self, user_id, year, month, date_str, start_time, hours, settlement_date,
-                                    is_overdue, overtime_type, location, nr_kadrowy):
-        """
-        Wywołuje procedurę składowaną p_P_ZZ_NadgodzinyWstawienie_v3 z poprawnym mapowaniem parametrów
+def call_add_overtime_procedure(self, user_id, year, month, date_str, start_time, hours, settlement_date,
+                                is_overdue, overtime_type, location, nr_kadrowy):
+    """
+    Wywołuje procedurę składowaną p_P_ZZ_NadgodzinyWstawienie_v3 z poprawnym mapowaniem parametrów
 
-        Args:
-            user_id (str): ID użytkownika
-            year (int): Rok
-            month (int): Miesiąc
-            date_str (str): Data w formacie 'YYYY-MM-DD'
-            start_time (str): Czas rozpoczęcia w formacie 'HH:MM'
-            hours (float): Liczba godzin
-            settlement_date (str): Data rozliczenia w formacie 'YYYY-MM-DD'
-            is_overdue (int): Czy zaległe (0/1)
-            overtime_type (str): Typ nadgodzin (wypłata/odbiór/odpracowanie)
-            location (str): Lokalizacja (h, p, s)
-            nr_kadrowy (str, optional): Numer kadrowy użytkownika
+    Args:
+        user_id (str): ID użytkownika
+        year (int): Rok
+        month (int): Miesiąc
+        date_str (str): Data w formacie 'YYYY-MM-DD'
+        start_time (str): Czas rozpoczęcia w formacie 'HH:MM'
+        hours (float): Liczba godzin
+        settlement_date (str): Data rozliczenia w formacie 'YYYY-MM-DD'
+        is_overdue (int): Czy zaległe (0/1)
+        overtime_type (str): Typ nadgodzin (wypłata/odbiór/odpracowanie)
+        location (str): Lokalizacja (h, p, s)
+        nr_kadrowy (str, optional): Numer kadrowy użytkownika
 
-        Returns:
-            dict: Wynik operacji z kluczami 'success' i 'message'
-        """
-        try:
+    Returns:
+        dict: Wynik operacji z kluczami 'success' i 'message'
+    """
+    try:
 
-            # Mapowanie lokalizacji na wartości liczbowe:
-            # h - 1, p - 2, s - 3
-            location_map = {'h': 1, 'p': 2, 's': 3}
-            location_value = location_map.get(location, 1)  # Domyślnie 1 (h)
+        # Mapowanie lokalizacji na wartości liczbowe:
+        # h - 1, p - 2, s - 3
+        location_map = {'h': 1, 'p': 2, 's': 3}
+        location_value = location_map.get(location, 1)  # Domyślnie 1 (h)
 
-            # Mapowanie typu nadgodzin:
-            # wypłata i odbiór - NULL (nie przekazujemy), odpracowanie - 1
-            param_value = None
-            if overtime_type == 'odpracowanie':
-                param_value = 1
+        # Mapowanie typu nadgodzin:
+        # wypłata i odbiór - NULL (nie przekazujemy), odpracowanie - 1
+        param_value = None
+        if overtime_type == 'odpracowanie':
+            param_value = 1
 
-            # Określenie wartości @odebrane:
-            # 1 dla typu "odbiór", 0 dla pozostałych
-            odebrane_value = 1 if overtime_type == 'odbiór' else 0
+        # Określenie wartości @odebrane:
+        # 1 dla typu "odbiór", 0 dla pozostałych
+        odebrane_value = 1 if overtime_type == 'odbiór' else 0
 
-            # Oblicz datę i czas zakończenia
-            start_datetime = datetime.strptime(f"{date_str} {start_time}", "%Y-%m-%d %H:%M")
-            end_datetime = start_datetime + timedelta(hours=hours)
-            end_time = end_datetime.strftime("%H:%M")
+        # Oblicz datę i czas zakończenia
+        start_datetime = datetime.strptime(f"{date_str} {start_time}", "%Y-%m-%d %H:%M")
+        end_datetime = start_datetime + timedelta(hours=hours)
+        end_time = end_datetime.strftime("%H:%M")
 
-            # Utwórz połączenie do bazy danych
-            conn = DatabaseConnector.get_connection()
-            cursor = conn.cursor()
+        # Utwórz połączenie do bazy danych
+        conn = DatabaseConnector.get_connection()
+        cursor = conn.cursor()
 
-            # Przygotuj parametry dla procedury składowanej
-            params = [
-                nr_kadrowy,  # @Nr_Kadrowy - używamy pobranego numeru kadrowego
-                year,  # @Rok
-                month,  # @Miesiac
-                date_str,  # @Data
-                start_time,  # @DataOd
-                end_time,  # @DataDo
-                settlement_date,  # @MiesiacRozliczenia
-                is_overdue,  # @Zalegle
-                odebrane_value,  # @Odebrane - 1 dla odbioru, 0 dla innych
-                location_value,  # @lokalizacja - zmapowana wartość (1, 2, 3)
-            ]
+        # Przygotuj parametry dla procedury składowanej
+        params = [
+            nr_kadrowy,  # @Nr_Kadrowy - używamy pobranego numeru kadrowego
+            year,  # @Rok
+            month,  # @Miesiac
+            date_str,  # @Data
+            start_time,  # @DataOd
+            end_time,  # @DataDo
+            settlement_date,  # @MiesiacRozliczenia
+            is_overdue,  # @Zalegle
+            odebrane_value,  # @Odebrane - 1 dla odbioru, 0 dla innych
+            location_value,  # @lokalizacja - zmapowana wartość (1, 2, 3)
+        ]
 
-            # Dodaj parametr @Parametr tylko dla odpracowania, w przeciwnym razie użyj NULL
-            if param_value is not None:
-                params.append(param_value)  # @Parametr - tylko dla odpracowania (wartość 1)
-            else:
-                params.append(None)  # Dla wypłaty i odbioru - NULL
+        # Dodaj parametr @Parametr tylko dla odpracowania, w przeciwnym razie użyj NULL
+        if param_value is not None:
+            params.append(param_value)  # @Parametr - tylko dla odpracowania (wartość 1)
+        else:
+            params.append(None)  # Dla wypłaty i odbioru - NULL
 
-            # Przygotuj wywołanie procedury składowanej z odpowiednią liczbą parametrów
-            placeholders = ", ".join(["?"] * len(params))
-            sql = f"{{CALL [dbo].[p_P_ZZ_NadgodzinyWstawienie_v3] ({placeholders})}}"
+        # Przygotuj wywołanie procedury składowanej z odpowiednią liczbą parametrów
+        placeholders = ", ".join(["?"] * len(params))
+        sql = f"{{CALL [dbo].[p_P_ZZ_NadgodzinyWstawienie_v3] ({placeholders})}}"
 
-            # Wywołaj procedurę składowaną
-            cursor.execute(sql, params)
+        # Wywołaj procedurę składowaną
+        cursor.execute(sql, params)
 
-            # Pobierz wyniki z instrukcji SELECT zwróconej przez procedurę
-            result_sets = []
+        # Pobierz wyniki z instrukcji SELECT zwróconej przez procedurę
+        result_sets = []
 
-            # Procedura może zwrócić więcej niż jeden zestaw wyników (jeśli ma wiele SELECT)
-            while True:
-                try:
-                    rows = cursor.fetchall()
-                    if rows:
-                        result_sets.append(rows)
+        # Procedura może zwrócić więcej niż jeden zestaw wyników (jeśli ma wiele SELECT)
+        while True:
+            try:
+                rows = cursor.fetchall()
+                if rows:
+                    result_sets.append(rows)
 
-                    # Sprawdź, czy są kolejne zestawy wyników
-                    if not cursor.nextset():
-                        break
-                except:
+                # Sprawdź, czy są kolejne zestawy wyników
+                if not cursor.nextset():
                     break
+            except:
+                break
 
-            # Domyślny komunikat, jeśli nie otrzymamy żadnego
-            success = False
-            message = "Nieznany wynik operacji."
+        # Domyślny komunikat, jeśli nie otrzymamy żadnego
+        success = False
+        message = "Nieznany wynik operacji."
 
-            # ID nowo dodanego rekordu, jeśli dostępne
-            new_id = None
+        # ID nowo dodanego rekordu, jeśli dostępne
+        new_id = None
 
-            # Sprawdź wyniki - zwykle pierwszy zestaw wyników (jeśli jest)
-            # zawiera informację o sukcesie/porażce i komunikat
-            if result_sets and result_sets[0]:
-                first_result = result_sets[0][0]  # Pobierz pierwszy wiersz z pierwszego zestawu wyników
+        # Sprawdź wyniki - zwykle pierwszy zestaw wyników (jeśli jest)
+        # zawiera informację o sukcesie/porażce i komunikat
+        if result_sets and result_sets[0]:
+            first_result = result_sets[0][0]  # Pobierz pierwszy wiersz z pierwszego zestawu wyników
 
-                # W przypadku gdy procedura zwraca tylko komunikat tekstowy
-                message = str(first_result[0]) if first_result and len(first_result) > 0 else "Operacja zakończona."
+            # Pobierz komunikat z wyników
+            message = str(first_result[0]) if first_result and len(first_result) > 0 else "Operacja zakończona."
 
-                # Określ sukces na podstawie treści komunikatu
-                success = not (
-                        "błąd" in message.lower() or "nieudany" in message.lower() or "niepowodzenie" in message.lower())
+            # ZMIANA: Procedura zwraca "0" lub pusty string jako sukces
+            if message == "0" or message == "":
+                success = True
+                message = "Nadgodziny zostały pomyślnie dodane."
+            else:
+                # Niepusty komunikat różny od "0" oznacza błąd
+                success = False
 
-                # Sprawdź, czy mamy ID nowego rekordu (może być zwrócone w drugim zestawie wyników)
-                if len(result_sets) > 1 and result_sets[1]:
-                    try:
-                        new_id = result_sets[1][0][0]  # Pierwszy wiersz, pierwsza kolumna drugiego zestawu wyników
-                    except:
-                        pass
-
-            # Zatwierdź transakcję i zamknij połączenie
-            conn.commit()
-            conn.close()
-
-            if success:
+            # Sprawdź, czy mamy ID nowego rekordu (może być zwrócone w drugim zestawie wyników)
+            if len(result_sets) > 1 and result_sets[1]:
                 try:
-                    # Pobierz najnowszą datę modyfikacji po wykonaniu zmian
-                    query = """
-                            SELECT MAX(DataModyfikacji) as DataModyfikacji FROM p_v_zz_GrafikiPracy
-                        """
-                    conn = DatabaseConnector.get_connection()
-                    cursor = conn.cursor()
-                    cursor.execute(query)
-                    result = cursor.fetchone()
-                    conn.close()
+                    new_id = result_sets[1][0][0]  # Pierwszy wiersz, pierwsza kolumna drugiego zestawu wyników
+                except:
+                    pass
 
-                    if result and result[0]:
-                        # Zapisz tę datę jako własną modyfikację
-                        self.last_self_modification_date = result[0]
-                        self.last_modification_date = result[0]  # Aktualizuj również ostatnią znaną modyfikację
-                        print(f"Zarejestrowano własną modyfikację z datą: {self.last_self_modification_date}")
-                except Exception as e:
-                    print(f"Błąd podczas rejestrowania własnej modyfikacji: {e}")
+        # Zatwierdź transakcję i zamknij połączenie
+        conn.commit()
+        conn.close()
+
+        if success:
+            try:
+                # Pobierz najnowszą datę modyfikacji po wykonaniu zmian
+                query = """
+                        SELECT MAX(DataModyfikacji) as DataModyfikacji FROM p_v_zz_GrafikiPracy
+                    """
+                conn = DatabaseConnector.get_connection()
+                cursor = conn.cursor()
+                cursor.execute(query)
+                result = cursor.fetchone()
+                conn.close()
+
+                if result and result[0]:
+                    # Zapisz tę datę jako własną modyfikację
+                    self.last_self_modification_date = result[0]
+                    self.last_modification_date = result[0]  # Aktualizuj również ostatnią znaną modyfikację
+                    print(f"Zarejestrowano własną modyfikację z datą: {self.last_self_modification_date}")
+            except Exception as e:
+                print(f"Błąd podczas rejestrowania własnej modyfikacji: {e}")
 
             # Jeśli dodanie się powiodło i znamy ID, pobierz dodane nadgodziny i dodaj do indeksu
             if success and new_id:
                 self.update_overtime_in_index(new_id, user_id, date_str, start_time, end_time)
+                
+                # DODANE: Odśwież tabelę zdarzeń po dodaniu nadgodzin
+                current_data = self.date_combo.currentData()
+                if current_data:
+                    year, month = current_data
+                    # Odśwież dane w DataProvider
+                    self.data_provider.refresh_data(year, month)
+                    
+                    # Aktualizuj ikony w komórce grafiku po dodaniu nadgodzin
+                    self.update_table_icons_after_event_addition(user_id, date_str, "Nadgodziny")
+                    
+                    # Wymuś odświeżenie tabeli grafiku
+                    self.table.viewport().update()
+                    
+                    # Odśwież tabelę zdarzeń, ale zachowaj zaznaczenie
+                    selected_ranges = self.table.selectedRanges()
+                    self.on_selection_changed()  # To odświeży tabelę zdarzeń
+                    
+                    # Przywróć zaznaczenie
+                    for range_item in selected_ranges:
+                        self.table.setRangeSelected(range_item, True)
 
             return {
                 "success": success,
@@ -4559,7 +4584,6 @@ class WorkScheduleWindow(QMainWindow):
                 "success": False,
                 "message": f"Wystąpił błąd: {str(e)}"
             }
-
     # Nowa metoda do aktualizacji indeksu zdarzeń po dodaniu nadgodzin
     def update_overtime_in_index(self, overtime_id, user_id, date_str, start_time, end_time):
         try:
