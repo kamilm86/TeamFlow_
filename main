@@ -4165,16 +4165,11 @@ class WorkScheduleWindow(QMainWindow):
 
         year, month = current_data
 
-        # Pobierz zaznaczone komórki, aby ustalić dzień i użytkownika
+        # Pobierz zaznaczone komórki
         selected_ranges = self.table.selectedRanges()
 
-        # NOWE: Sprawdź liczbę zaznaczonych komórek
-        selected_cells_count = 0
-        for range_item in selected_ranges:
-            selected_cells_count += (range_item.rowCount() * range_item.columnCount())
-
-        # NOWE: Jeśli nie zaznaczono komórki lub zaznaczono więcej niż jedną, wyświetl komunikat i zakończ
-        if selected_cells_count == 0:
+        # Sprawdź czy mamy jakieś zaznaczenie
+        if not selected_ranges:
             QMessageBox.warning(
                 self,
                 "Brak zaznaczenia",
@@ -4182,7 +4177,14 @@ class WorkScheduleWindow(QMainWindow):
                 QMessageBox.Ok
             )
             return
-        elif selected_cells_count > 1:
+
+        # Sprawdź liczbę zaznaczonych komórek
+        selected_cells_count = 0
+        for range_item in selected_ranges:
+            selected_cells_count += (range_item.rowCount() * range_item.columnCount())
+
+        # Jeśli zaznaczono więcej niż jedną komórkę, wyświetl komunikat i zakończ
+        if selected_cells_count > 1:
             QMessageBox.warning(
                 self,
                 "Zbyt wiele zaznaczonych komórek",
@@ -4191,84 +4193,88 @@ class WorkScheduleWindow(QMainWindow):
             )
             return
 
-        # Pobierz dane zaznaczonej komórki
-        selected_cells = self.get_selected_schedule_cells()
+        # Pobierz dane zaznaczonej komórki bezpośrednio z tabeli
+        range_item = selected_ranges[0]
+        row = range_item.topRow()
+        col = range_item.leftColumn()
 
-        if not selected_cells or len(selected_cells) != 1:
+        # Sprawdź czy kolumna jest poprawna (dni zaczynają się od kolumny 3)
+        if col < 3:
             QMessageBox.warning(
                 self,
                 "Błąd",
-                "Nie można określić zaznaczonej komórki. Zaznacz dokładnie jedną komórkę w grafiku.",
+                "Zaznacz komórkę z dniem miesiąca (nie z nagłówkiem).",
                 QMessageBox.Ok
             )
             return
 
-        # Dalsza część metody pozostaje bez zmian - pracujemy na pierwszej (i jedynej) zaznaczonej komórce
-        selected_user_id = None
-        selected_user_name = None
+        # Pobierz dane użytkownika z wiersza
+        if row >= len(self.visible_rows):
+            QMessageBox.warning(
+                self,
+                "Błąd",
+                "Nie można odczytać danych z zaznaczonego wiersza.",
+                QMessageBox.Ok
+            )
+            return
+
+        data_row = self.visible_rows[row]
+        if data_row >= len(self.processed_data):
+            QMessageBox.warning(
+                self,
+                "Błąd",
+                "Nie można odczytać danych dla zaznaczonego wiersza.",
+                QMessageBox.Ok
+            )
+            return
+
+        # Pobierz informacje o użytkowniku z klucza
+        key = list(self.processed_data.keys())[data_row]
+        wydzial, przelozony, selected_user_name, selected_user_id = key
+
+        # Pobierz dzień z kolumny
+        day = col - 2
+
+        # Utwórz datę
+        date_str = f"{year}-{month:02d}-{day:02d}"
+        selected_date = QDate(year, month, day)
+
+        # Sprawdź, czy mamy dane dla tego dnia
+        day_data = self.processed_data[key]['days'].get(day, {})
+
+        # Flaga określająca, czy to dzień wolny (brak danych lub pusty symbol)
+        is_day_off = False
+        current_symbol = day_data.get('symbol', '')
+
+        if not day_data or not current_symbol or current_symbol.strip() == '':
+            is_day_off = True
+
+        # Pobierz nr_kadrowy i godzinę rozpoczęcia
         nr_kadrowy = None
-        selected_date = None
-        start_hour = 8  # Domyślna godzina rozpoczęcia
-        hours_worked = 8  # Domyślna liczba godzin pracy
-        current_location = 'h'  # Domyślna lokalizacja (home office)
+        start_hour = None
 
-        # Bierzemy dane z zaznaczonej komórki
-        first_cell = selected_cells[0]
-        selected_user_id = first_cell.get('user_id')
+        # Jeśli mamy dane dla tego dnia, pobierz bezpośrednio z nich
+        if day_data:
+            nr_kadrowy = day_data.get('nr_kadrowy')
+            start_hour = day_data.get('start_hour')
 
-        # Szukamy nazwy użytkownika w danych
-        for key in self.processed_data.keys():
-            _, _, user_name, user_id = key
-            if str(user_id) == str(selected_user_id):
-                selected_user_name = user_name
-                break
+        # Jeśli nr_kadrowy jest None, spróbuj znaleźć w innych dniach
+        if nr_kadrowy is None:
+            for d, d_data in self.processed_data[key]['days'].items():
+                if 'nr_kadrowy' in d_data and d_data['nr_kadrowy']:
+                    nr_kadrowy = d_data['nr_kadrowy']
+                    break
 
-        # Pobieramy nr_kadrowy bezpośrednio z danych komórki
-        nr_kadrowy = first_cell.get('nr_kadrowy')
-
-        # Ustawiamy datę
-        date_str = first_cell.get('date')
-        if date_str:
-            try:
-                year_part, month_part, day_part = date_str.split('-')
-                selected_date = QDate(int(year_part), int(month_part), int(day_part))
-            except:
-                pass
-
-        # Pobierz godzinę rozpoczęcia i liczbę godzin pracy z danych komórki
-        start_hour = first_cell.get('start_hour')
+        # Ustaw domyślną godzinę rozpoczęcia
         if start_hour is None:
-            start_hour = 8  # Domyślna godzina, jeśli nie znaleziono
+            start_hour = 9 if is_day_off else 8
 
-        # Pobierz lokalizację z symbolu w komórce
-        current_symbol = first_cell.get('current_symbol', '')
+        # Pobierz lokalizację z symbolu
+        current_location = 'h'  # Domyślna lokalizacja (home office)
         if current_symbol and ';' in current_symbol:
             parts = current_symbol.split(';')
             if parts[0] in ['h', 'p', 's']:
                 current_location = parts[0]
-
-        # Oblicz koniec zmiany na podstawie godziny rozpoczęcia i liczby godzin
-        day = first_cell.get('day')
-        key = None
-        for k in self.processed_data.keys():
-            _, _, _, uid = k
-            if str(uid) == str(selected_user_id):
-                key = k
-                break
-
-        if key and day:
-            day_data = self.processed_data[key]['days'].get(day, {})
-            symbol = day_data.get('symbol', '')
-
-            # Próba wyciągnięcia liczby godzin z symbolu
-            if symbol and ';' in symbol:
-                parts = symbol.split(';')
-                if len(parts) >= 3 and parts[2].isdigit():
-                    hours_worked = int(parts[2])
-
-            # Jeśli nie udało się wyciągnąć z symbolu, sprawdź czy mamy godziny pracy w danych dnia
-            if hours_worked == 8 and 'hours' in day_data:
-                hours_worked = day_data.get('hours', 8)
 
         # Utwórz okno dialogowe
         dialog = QDialog(self)
@@ -4286,10 +4292,9 @@ class WorkScheduleWindow(QMainWindow):
         layout = QVBoxLayout(dialog)
 
         # Informacja o pracowniku
-        if selected_user_name:
-            user_info_label = QLabel(f"Pracownik: {selected_user_name}")
-            user_info_label.setStyleSheet("font-weight: bold; margin-bottom: 10px;")
-            layout.addWidget(user_info_label)
+        user_info_label = QLabel(f"Pracownik: {selected_user_name}")
+        user_info_label.setStyleSheet("font-weight: bold; margin-bottom: 10px;")
+        layout.addWidget(user_info_label)
 
         # Informacja o numerze kadrowym
         if nr_kadrowy:
@@ -4303,6 +4308,12 @@ class WorkScheduleWindow(QMainWindow):
         settlement_info = QLabel(f"Miesiąc rozliczenia: {settlement_month:02d}.{settlement_year}")
         settlement_info.setStyleSheet("margin-bottom: 10px;")
         layout.addWidget(settlement_info)
+
+        # Informacja o dniu wolnym (jeśli to dzień wolny)
+        if is_day_off:
+            day_off_info = QLabel("Zaznaczony dzień jest dniem wolnym pracownika.")
+            day_off_info.setStyleSheet("color: blue; font-weight: bold; margin-bottom: 10px;")
+            layout.addWidget(day_off_info)
 
         # Formularz wprowadzania
         form_frame = QFrame()
@@ -4318,19 +4329,23 @@ class WorkScheduleWindow(QMainWindow):
         zalegle_label = QLabel("czy zaległe")
 
         # Kontrolki wprowadzania
-        # Combo z czasem co 30 minut - ze zwiększoną szerokością
         time_combo = QComboBox()
         time_combo.setMinimumWidth(60)  # Zwiększona szerokość
 
-        # Oblicz koniec zmiany (godzina rozpoczęcia + liczba godzin pracy)
-        end_hour = (start_hour + hours_worked) % 24
+        # Ustal domyślny czas
+        if is_day_off:
+            default_time = "09:00"  # Dla dnia wolnego
+        else:
+            # Oblicz koniec zmiany (godzina rozpoczęcia + 8 godzin)
+            end_hour = (start_hour + 8) % 24
+            default_time = f"{end_hour:02d}:00"
 
+        # Dodaj opcje czasu
         for hour in range(0, 24):
             for minute in [0, 30]:
                 time_combo.addItem(f"{hour:02d}:{minute:02d}", f"{hour:02d}:{minute:02d}")
 
-        # Ustaw czas rozpoczęcia nadgodzin na koniec zmiany (czyli godzinę rozpoczęcia + liczba godzin)
-        default_time = f"{end_hour:02d}:00"
+        # Ustaw domyślny czas
         index = time_combo.findText(default_time)
         if index != -1:
             time_combo.setCurrentIndex(index)
@@ -4357,7 +4372,7 @@ class WorkScheduleWindow(QMainWindow):
         ld_combo.addItem("p", "p")  # Praca zdalna
         ld_combo.addItem("s", "s")  # Stacjonarna
 
-        # NOWE: Ustaw domyślną lokalizację na podstawie komórki
+        # Ustaw domyślną lokalizację
         if current_location == 'h':
             ld_combo.setCurrentIndex(0)
         elif current_location == 'p':
