@@ -17,6 +17,7 @@ from db_connector import DatabaseConnector, get_modifier_id
 from theme_dialog import ThemeSettingsDialog, InsertSymbolDialog, ScheduleChangeDialog
 from settings_db import SettingsDatabase
 from data_provider import DataProvider
+from styles import AppStyles
 
 # Globalny przełącznik dla trybu debug
 DEBUG_MODE = False
@@ -340,61 +341,885 @@ class WorkScheduleWindow(QMainWindow):
         debug_print(f"[CZAS] {label}: {elapsed:.3f} sekundy")
         return end_time
 
+    # def setup_ui(self):
+    #     # Główny widget i layout
+    #     central_widget = QWidget()
+    #     main_layout = QVBoxLayout(central_widget)
+    #     main_layout.setContentsMargins(10, 10, 10, 10)
+    #     main_layout.setSpacing(10)
+    #
+    #     # ------------ CZĘŚĆ 1: GÓRNY PASEK ------------
+    #     top_bar_frame = QFrame()
+    #     top_bar_frame.setFrameShape(QFrame.StyledPanel)
+    #     top_bar_frame.setFrameShadow(QFrame.Raised)
+    #     top_bar_layout = QHBoxLayout(top_bar_frame)
+    #     top_bar_layout.setContentsMargins(5, 5, 5, 5)
+    #
+    #     # Dodaj przycisk menu (burger)
+    #     self.toggle_menu_button = QPushButton()
+    #     self.toggle_menu_button.setFixedSize(32, 32)
+    #     # Używamy znaku Unicode dla "burger menu"
+    #     self.toggle_menu_button.setText("☰")
+    #     self.toggle_menu_button.setToolTip("Pokaż/ukryj panel filtrów")
+    #
+    #     # Ustaw styl przycisku
+    #     if self.is_dark_theme:
+    #         self.toggle_menu_button.setStyleSheet("""
+    #                 QPushButton {
+    #                     background-color: #2c2c2c;
+    #                     color: white;
+    #                     border: 1px solid #3a3a3a;
+    #                     border-radius: 4px;
+    #                     font-size: 18px;
+    #                     font-weight: bold;
+    #                 }
+    #                 QPushButton:hover {
+    #                     background-color: #3a3a3a;
+    #                 }
+    #             """)
+    #     else:
+    #         self.toggle_menu_button.setStyleSheet("""
+    #                 QPushButton {
+    #                     background-color: #e0e0e0;
+    #                     color: black;
+    #                     border: 1px solid #cccccc;
+    #                     border-radius: 4px;
+    #                     font-size: 18px;
+    #                     font-weight: bold;
+    #                 }
+    #                 QPushButton:hover {
+    #                     background-color: #d0d0d0;
+    #                 }
+    #             """)
+    #
+    #     # Podłącz funkcję do przycisku
+    #     self.toggle_menu_button.clicked.connect(self.toggle_left_panel)
+    #
+    #     # Dodaj przycisk menu na początku górnego paska
+    #     top_bar_layout.addWidget(self.toggle_menu_button)
+    #
+    #     # Dodaj skrót klawiszowy Ctrl+D dla diagnostyki zaznaczonej komórki
+    #     debug_shortcut = QShortcut(QKeySequence("Ctrl+G"), self)
+    #     debug_shortcut.activated.connect(self.debug_selected_cell)
+    #
+    #     # Przycisk zmiany motywu
+    #     self.theme_button = QPushButton("Zmień motyw")
+    #     self.theme_button.clicked.connect(self.show_theme_settings)
+    #     # Zastosuj bazowy styl zgodny z motywem
+    #     if self.is_dark_theme:
+    #         self.theme_button.setStyleSheet("""
+    #             background-color: #2c2c2c;
+    #             color: white;
+    #             border: 1px solid #3a3a3a;
+    #             padding: 5px;
+    #             border-radius: 3px;
+    #         """)
+    #     else:
+    #         self.theme_button.setStyleSheet("""
+    #             background-color: #e0e0e0;
+    #             color: black;
+    #             border: 1px solid #cccccc;
+    #             padding: 5px;
+    #             border-radius: 3px;
+    #         """)
+    #
+    #     # Etykieta i combobox na rok-miesiąc
+    #     date_label = QLabel("Miesiąc:")
+    #     self.date_combo = QComboBox()
+    #
+    #     # Zastosuj styl zgodny z motywem dla comboboxa
+    #     if self.is_dark_theme:
+    #         self.date_combo.setStyleSheet("""
+    #             background-color: #2c2c2c;
+    #             color: white;
+    #             border: 1px solid #3a3a3a;
+    #             padding: 5px;
+    #             border-radius: 3px;
+    #         """)
+    #     else:
+    #         self.date_combo.setStyleSheet("""
+    #             background-color: white;
+    #             color: black;
+    #             border: 1px solid #cccccc;
+    #             padding: 5px;
+    #             border-radius: 3px;
+    #         """)
+    #
+    #     # Dodanie opcji dla 3 miesięcy wstecz i 1 miesiąca do przodu od bieżącego
+    #     current_date = datetime.now()
+    #     months_to_show = []
+    #
+    #     # Zacznij od 3 miesięcy wstecz
+    #     year = current_date.year
+    #     month = current_date.month
+    #
+    #     # Generowanie 3 miesięcy wstecz
+    #     for i in range(3, 0, -1):
+    #         # Oblicz rok i miesiąc dla i miesięcy wstecz
+    #         prev_month = month - i
+    #         prev_year = year
+    #
+    #         # Dostosuj rok, jeśli trzeba
+    #         while prev_month <= 0:
+    #             prev_month += 12
+    #             prev_year -= 1
+    #
+    #         months_to_show.append((prev_year, prev_month))
+    #
+    #     # Dodaj bieżący miesiąc
+    #     months_to_show.append((year, month))
+    #
+    #     # Dodaj 1 miesiąc do przodu
+    #     next_month = month + 1
+    #     next_year = year
+    #     if next_month > 12:
+    #         next_month = 1
+    #         next_year += 1
+    #     months_to_show.append((next_year, next_month))
+    #
+    #     # Dodanie miesięcy do comboboxa w formacie YYYY-MM
+    #     self.date_combo.clear()  # Wyczyść poprzednie pozycje
+    #     for year, month in months_to_show:
+    #         self.date_combo.addItem(f"{year}-{month:02d}", (year, month))
+    #
+    #     # Ustawienie bieżącego miesiąca (czwarty element, indeks 3)
+    #     self.date_combo.setCurrentIndex(3)
+    #
+    #     # Podłącz sygnał zmiany comboboxa daty
+    #     self.date_combo.currentIndexChanged.connect(self.on_date_combo_changed)
+    #
+    #     # Przycisk odświeżania
+    #     self.refresh_button = QPushButton("Odśwież dane")
+    #     self.refresh_button.clicked.connect(self.refresh_data)
+    #     # Zastosuj bazowy styl zgodny z motywem
+    #     if self.is_dark_theme:
+    #         self.refresh_button.setStyleSheet("""
+    #             background-color: #2c2c2c;
+    #             color: white;
+    #             border: 1px solid #3a3a3a;
+    #             padding: 5px;
+    #             border-radius: 3px;
+    #         """)
+    #     else:
+    #         self.refresh_button.setStyleSheet("""
+    #             background-color: #e0e0e0;
+    #             color: black;
+    #             border: 1px solid #cccccc;
+    #             padding: 5px;
+    #             border-radius: 3px;
+    #         """)
+    #
+    #     # Dodanie widgetów do layoutu górnego paska
+    #     top_bar_layout.addWidget(self.theme_button)
+    #     top_bar_layout.addWidget(date_label)
+    #     top_bar_layout.addWidget(self.date_combo)
+    #     top_bar_layout.addWidget(self.refresh_button)
+    #     top_bar_layout.addStretch()
+    #
+    #     # Dodaj górny pasek do głównego layoutu
+    #     main_layout.addWidget(top_bar_frame)
+    #
+    #     # ------------ CZĘŚĆ 2 i 3: ŚRODKOWA CZĘŚĆ ------------
+    #     # Główny kontener na środkową część (filtry po lewej, tabela po prawej)
+    #     main_splitter = QSplitter(Qt.Horizontal)
+    #     middle_container = QWidget()
+    #     middle_layout = QHBoxLayout(middle_container)
+    #     middle_layout.setContentsMargins(0, 0, 0, 0)
+    #     middle_layout.setSpacing(10)
+    #
+    #     # ------------ CZĘŚĆ 2: LEWY PANEL FILTRÓW ------------
+    #     self._left_panel = QWidget()
+    #
+    #     if self.is_dark_theme:
+    #         self._left_panel.setStyleSheet("background-color: #1e1e1e; color: white;")
+    #     else:
+    #         self._left_panel.setStyleSheet("background-color: #f0f0f0; color: black;")
+    #
+    #     filters_layout = QVBoxLayout(self._left_panel)
+    #     filters_layout.setContentsMargins(10, 10, 10, 10)
+    #
+    #     # Tytuł filtrów
+    #     filters_title = QLabel("Filtry")
+    #     if self.is_dark_theme:
+    #         filters_title.setStyleSheet("font-size: 16px; font-weight: bold; color: white;")
+    #     else:
+    #         filters_title.setStyleSheet("font-size: 16px; font-weight: bold; color: black;")
+    #     filters_layout.addWidget(filters_title)
+    #
+    #     # Filtr wydziału
+    #     wydzial_label = QLabel("Wydział:")
+    #     if self.is_dark_theme:
+    #         wydzial_label.setStyleSheet("color: #3498db;")
+    #     else:
+    #         wydzial_label.setStyleSheet("color: #2980b9;")
+    #     filters_layout.addWidget(wydzial_label)
+    #
+    #     # Lista wydziałów
+    #     self.wydzial_list = QListWidget()
+    #     self.wydzial_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+    #     if self.is_dark_theme:
+    #         self.wydzial_list.setStyleSheet("""
+    #             QListWidget {
+    #                 background-color: #2c2c2c;
+    #                 color: white;
+    #                 border: 1px solid #3a3a3a;
+    #                 border-radius: 3px;
+    #             }
+    #             QListWidget::item {
+    #                 padding: 3px;
+    #             }
+    #             QListWidget::item:selected {
+    #                 background-color: #3498db;
+    #             }
+    #         """)
+    #     else:
+    #         self.wydzial_list.setStyleSheet("""
+    #             QListWidget {
+    #                 background-color: white;
+    #                 color: black;
+    #                 border: 1px solid #cccccc;
+    #                 border-radius: 3px;
+    #             }
+    #             QListWidget::item {
+    #                 padding: 3px;
+    #             }
+    #             QListWidget::item:selected {
+    #                 background-color: #3498db;
+    #                 color: white;
+    #             }
+    #         """)
+    #     self.wydzial_list.setFixedHeight(120)
+    #
+    #     # Dodaj pole wyszukiwania dla wydziałów
+    #     self.wydzial_filter = QLineEdit()
+    #     self.wydzial_filter.setPlaceholderText("Filtruj wydział...")
+    #     if self.is_dark_theme:
+    #         self.wydzial_filter.setStyleSheet("""
+    #             QLineEdit {
+    #                 background-color: #2c2c2c;
+    #                 color: white;
+    #                 border: 1px solid #3a3a3a;
+    #                 padding: 5px;
+    #                 border-radius: 3px;
+    #             }
+    #         """)
+    #     else:
+    #         self.wydzial_filter.setStyleSheet("""
+    #             QLineEdit {
+    #                 background-color: white;
+    #                 color: black;
+    #                 border: 1px solid #cccccc;
+    #                 padding: 5px;
+    #                 border-radius: 3px;
+    #             }
+    #         """)
+    #     self.wydzial_filter.textChanged.connect(self.filter_wydzial_list)
+    #
+    #     filters_layout.addWidget(self.wydzial_filter)
+    #     filters_layout.addWidget(self.wydzial_list)
+    #
+    #     # Filtr przełożonego
+    #     przelozony_label = QLabel("Przełożony:")
+    #     if self.is_dark_theme:
+    #         przelozony_label.setStyleSheet("color: #3498db;")
+    #     else:
+    #         przelozony_label.setStyleSheet("color: #2980b9;")
+    #     filters_layout.addWidget(przelozony_label)
+    #
+    #     # Lista przełożonych
+    #     self.przelozony_list = QListWidget()
+    #     self.przelozony_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+    #     if self.is_dark_theme:
+    #         self.przelozony_list.setStyleSheet("""
+    #             QListWidget {
+    #                 background-color: #2c2c2c;
+    #                 color: white;
+    #                 border: 1px solid #3a3a3a;
+    #                 border-radius: 3px;
+    #             }
+    #             QListWidget::item {
+    #                 padding: 3px;
+    #             }
+    #             QListWidget::item:selected {
+    #                 background-color: #3498db;
+    #             }
+    #         """)
+    #     else:
+    #         self.przelozony_list.setStyleSheet("""
+    #             QListWidget {
+    #                 background-color: white;
+    #                 color: black;
+    #                 border: 1px solid #cccccc;
+    #                 border-radius: 3px;
+    #             }
+    #             QListWidget::item {
+    #                 padding: 3px;
+    #             }
+    #             QListWidget::item:selected {
+    #                 background-color: #3498db;
+    #                 color: white;
+    #             }
+    #         """)
+    #     self.przelozony_list.setFixedHeight(150)
+    #
+    #     # Dodaj pole wyszukiwania dla przełożonych
+    #     self.przelozony_filter = QLineEdit()
+    #     self.przelozony_filter.setPlaceholderText("Filtruj przełożonych...")
+    #     if self.is_dark_theme:
+    #         self.przelozony_filter.setStyleSheet("""
+    #             QLineEdit {
+    #                 background-color: #2c2c2c;
+    #                 color: white;
+    #                 border: 1px solid #3a3a3a;
+    #                 padding: 5px;
+    #                 border-radius: 3px;
+    #             }
+    #         """)
+    #     else:
+    #         self.przelozony_filter.setStyleSheet("""
+    #             QLineEdit {
+    #                 background-color: white;
+    #                 color: black;
+    #                 border: 1px solid #cccccc;
+    #                 padding: 5px;
+    #                 border-radius: 3px;
+    #             }
+    #         """)
+    #     self.przelozony_filter.textChanged.connect(self.filter_przelozony_list)
+    #
+    #     filters_layout.addWidget(self.przelozony_filter)
+    #     filters_layout.addWidget(self.przelozony_list)
+    #
+    #     # Filtr użytkownika
+    #     uzytkownik_label = QLabel("Użytkownik:")
+    #     if self.is_dark_theme:
+    #         uzytkownik_label.setStyleSheet("color: #3498db;")
+    #     else:
+    #         uzytkownik_label.setStyleSheet("color: #2980b9;")
+    #     filters_layout.addWidget(uzytkownik_label)
+    #
+    #     # Lista użytkowników
+    #     self.uzytkownik_list = QListWidget()
+    #     self.uzytkownik_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+    #     if self.is_dark_theme:
+    #         self.uzytkownik_list.setStyleSheet("""
+    #             QListWidget {
+    #                 background-color: #2c2c2c;
+    #                 color: white;
+    #                 border: 1px solid #3a3a3a;
+    #                 border-radius: 3px;
+    #             }
+    #             QListWidget::item {
+    #                 padding: 3px;
+    #             }
+    #             QListWidget::item:selected {
+    #                 background-color: #3498db;
+    #             }
+    #         """)
+    #     else:
+    #         self.uzytkownik_list.setStyleSheet("""
+    #             QListWidget {
+    #                 background-color: white;
+    #                 color: black;
+    #                 border: 1px solid #cccccc;
+    #                 border-radius: 3px;
+    #             }
+    #             QListWidget::item {
+    #                 padding: 3px;
+    #             }
+    #             QListWidget::item:selected {
+    #                 background-color: #3498db;
+    #                 color: white;
+    #             }
+    #         """)
+    #     self.uzytkownik_list.setFixedHeight(180)
+    #
+    #     # Dodaj pole wyszukiwania dla użytkowników
+    #     self.uzytkownik_filter = QLineEdit()
+    #     self.uzytkownik_filter.setPlaceholderText("Filtruj użytkowników...")
+    #     if self.is_dark_theme:
+    #         self.uzytkownik_filter.setStyleSheet("""
+    #             QLineEdit {
+    #                 background-color: #2c2c2c;
+    #                 color: white;
+    #                 border: 1px solid #3a3a3a;
+    #                 padding: 5px;
+    #                 border-radius: 3px;
+    #             }
+    #         """)
+    #     else:
+    #         self.uzytkownik_filter.setStyleSheet("""
+    #             QLineEdit {
+    #                 background-color: white;
+    #                 color: black;
+    #                 border: 1px solid #cccccc;
+    #                 padding: 5px;
+    #                 border-radius: 3px;
+    #             }
+    #         """)
+    #     self.uzytkownik_filter.textChanged.connect(self.filter_uzytkownik_list)
+    #
+    #     filters_layout.addWidget(self.uzytkownik_filter)
+    #     filters_layout.addWidget(self.uzytkownik_list)
+    #
+    #     # Przycisk wyczyść filtry
+    #     clear_filters_button = QPushButton("Wyczyść filtry")
+    #     # Zastosuj bazowy styl zgodny z motywem (taki sam jak inne przyciski)
+    #     if self.is_dark_theme:
+    #         clear_filters_button.setStyleSheet("""
+    #             background-color: #2c2c2c;
+    #             color: white;
+    #             border: 1px solid #3a3a3a;
+    #             padding: 5px;
+    #             border-radius: 3px;
+    #         """)
+    #     else:
+    #         clear_filters_button.setStyleSheet("""
+    #             background-color: #e0e0e0;
+    #             color: black;
+    #             border: 1px solid #cccccc;
+    #             padding: 5px;
+    #             border-radius: 3px;
+    #         """)
+    #     clear_filters_button.clicked.connect(self.clear_filters)
+    #     filters_layout.addStretch()
+    #     filters_layout.addWidget(clear_filters_button)
+    #
+    #     # Zapamiętaj standardową szerokość lewego panelu
+    #     self._left_panel.setMinimumWidth(150)
+    #     self._left_panel.setMaximumWidth(250)
+    #     self.left_panel_visible = True  # Dodaj zmienną do śledzenia stanu widoczności
+    #     self.left_panel_width = 200  # Zapamiętaj szerokość panelu
+    #
+    #     # Zapisz referencję do przycisku "Wyczyść filtry", aby móc go stylizować w apply_theme_settings
+    #     self.clear_filters_button = clear_filters_button
+    #
+    #     # Podłączenie sygnałów zmiany filtrów
+    #     self.wydzial_list.itemSelectionChanged.connect(self.filter_data)
+    #     self.przelozony_list.itemSelectionChanged.connect(self.filter_data)
+    #     self.uzytkownik_list.itemSelectionChanged.connect(self.filter_data)
+    #
+    #     # ------------ CZĘŚĆ 3: PRAWY PANEL Z TABELAMI ------------
+    #     right_panel = QWidget()
+    #     right_layout = QVBoxLayout(right_panel)
+    #     right_layout.setContentsMargins(0, 0, 0, 0)
+    #     right_layout.setSpacing(10)
+    #
+    #     # Splitter pionowy dla prawego panelu (grafik | zdarzenia)
+    #     right_splitter = QSplitter(Qt.Vertical)
+    #
+    #     # ------------ Tabela z grafikiem (Górna część prawego panelu) ------------
+    #     schedule_frame = QFrame()
+    #     schedule_frame.setFrameShape(QFrame.StyledPanel)
+    #     schedule_frame.setFrameShadow(QFrame.Raised)
+    #     schedule_layout = QVBoxLayout(schedule_frame)
+    #     schedule_layout.setContentsMargins(5, 5, 5, 5)
+    #
+    #     # Tabela z grafikiem
+    #     self.table = QTableWidget()
+    #     self.table.setSelectionMode(QAbstractItemView.ExtendedSelection)  # Umożliwia zaznaczanie wielu komórek
+    #     self.table.setSelectionBehavior(QAbstractItemView.SelectItems)  # Zaznaczanie pojedynczych komórek
+    #     self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+    #     self.table.itemSelectionChanged.connect(self.on_selection_changed)
+    #
+    #
+    #     # Zastąp standardowy nagłówek poziomy niestandardowym
+    #     self.table.setHorizontalHeader(WeekendAwareHeaderView(Qt.Horizontal, self.table))
+    #
+    #     # Dodaj tabelę do layoutu
+    #     schedule_layout.addWidget(self.table)
+    #
+    #     # Ustaw domyślną wysokość wierszy
+    #     self.table.verticalHeader().setDefaultSectionSize(15)
+    #
+    #     # Wyłącz automatyczne dostosowywanie wysokości wierszy
+    #     self.table.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
+    #
+    #     # Dodaj przyciski "Wstaw nieobecność" i "Odwołaj delegacje" po prawej stronie
+    #     symbol_button_frame = QFrame()
+    #     symbol_button_layout = QHBoxLayout(symbol_button_frame)
+    #     symbol_button_layout.setContentsMargins(0, 0, 0, 0)
+    #
+    #     # Dodaj elastyczny odstęp po lewej stronie, aby przyciski były po prawej
+    #     symbol_button_layout.addStretch()
+    #
+    #     # Dodaj przycisk "Wstaw zmianę" obok istniejących przycisków
+    #     self.insert_change_button = QPushButton("Wstaw zmianę")
+    #     self.insert_change_button.setShortcut("Ctrl+Z")  # Skrót klawiszowy
+    #     self.insert_change_button.setToolTip("Wstaw zmianę grafiku (Ctrl+Z)")
+    #
+    #     # Zastosuj styl zgodny z motywem
+    #     if self.is_dark_theme:
+    #         self.insert_change_button.setStyleSheet("""
+    #             background-color: #2c2c2c;
+    #             color: white;
+    #             border: 1px solid #3a3a3a;
+    #             padding: 5px;
+    #             border-radius: 3px;
+    #         """)
+    #     else:
+    #         self.insert_change_button.setStyleSheet("""
+    #             background-color: #e0e0e0;
+    #             color: black;
+    #             border: 1px solid #cccccc;
+    #             padding: 5px;
+    #             border-radius: 3px;
+    #         """)
+    #     self.insert_change_button.clicked.connect(self.show_insert_change_dialog)
+    #
+    #     # Dodaj przycisk do układu (symbol_button_layout)
+    #     symbol_button_layout.addWidget(self.insert_change_button)
+    #
+    #     # Przycisk "Wstaw nieobecność" (dawny "Wstaw symbol")
+    #     self.insert_symbol_button = QPushButton("Wstaw nieobecność")
+    #     self.insert_symbol_button.setShortcut("Ctrl+I")  # Skrót klawiszowy Ctrl+I
+    #     self.insert_symbol_button.setToolTip("Wstaw nieobecność (Ctrl+I)")  # Podpowiedź z informacją o skrócie
+    #
+    #     # Zastosuj bazowy styl zgodny z motywem
+    #     if self.is_dark_theme:
+    #         self.insert_symbol_button.setStyleSheet("""
+    #             background-color: #2c2c2c;
+    #             color: white;
+    #             border: 1px solid #3a3a3a;
+    #             padding: 5px;
+    #             border-radius: 3px;
+    #         """)
+    #     else:
+    #         self.insert_symbol_button.setStyleSheet("""
+    #             background-color: #e0e0e0;
+    #             color: black;
+    #             border: 1px solid #cccccc;
+    #             padding: 5px;
+    #             border-radius: 3px;
+    #         """)
+    #     self.insert_symbol_button.clicked.connect(self.show_insert_symbol_dialog)
+    #
+    #     # Przycisk "Odwołaj delegacje"
+    #     self.cancel_delegation_button = QPushButton("Odwołaj delegacje")
+    #     self.cancel_delegation_button.setShortcut("Ctrl+D")  # Skrót klawiszowy Ctrl+D
+    #     self.cancel_delegation_button.setToolTip("Odwołaj delegacje dla zaznaczonych komórek (Ctrl+D)")
+    #
+    #     # Zastosuj bazowy styl zgodny z motywem
+    #     if self.is_dark_theme:
+    #         self.cancel_delegation_button.setStyleSheet("""
+    #             background-color: #2c2c2c;
+    #             color: white;
+    #             border: 1px solid #3a3a3a;
+    #             padding: 5px;
+    #             border-radius: 3px;
+    #         """)
+    #     else:
+    #         self.cancel_delegation_button.setStyleSheet("""
+    #             background-color: #e0e0e0;
+    #             color: black;
+    #             border: 1px solid #cccccc;
+    #             padding: 5px;
+    #             border-radius: 3px;
+    #         """)
+    #     self.cancel_delegation_button.clicked.connect(self.cancel_delegations)
+    #
+    #     # Przycisk "Dodaj nadgodziny"
+    #     self.add_overtime_button = QPushButton("Dodaj nadgodziny")
+    #     self.add_overtime_button.setShortcut("Ctrl+N")  # Skrót klawiszowy Ctrl+N
+    #     self.add_overtime_button.setToolTip("Dodaj nadgodziny dla zaznaczonych komórek (Ctrl+N)")
+    #
+    #     # Zastosuj bazowy styl zgodny z motywem
+    #     if self.is_dark_theme:
+    #         self.add_overtime_button.setStyleSheet("""
+    #             background-color: #2c2c2c;
+    #             color: white;
+    #             border: 1px solid #3a3a3a;
+    #             padding: 5px;
+    #             border-radius: 3px;
+    #         """)
+    #     else:
+    #         self.add_overtime_button.setStyleSheet("""
+    #             background-color: #e0e0e0;
+    #             color: black;
+    #             border: 1px solid #cccccc;
+    #             padding: 5px;
+    #             border-radius: 3px;
+    #         """)
+    #     self.add_overtime_button.clicked.connect(self.show_add_overtime_dialog)
+    #
+    #     # Pokaż przycisk tylko dla roli "Pracownik WPR"
+    #     if hasattr(self, 'current_user_role') and self.current_user_role == "Pracownik WPR":
+    #         symbol_button_layout.addWidget(self.add_overtime_button)
+    #
+    #     # Dodaj przyciski do layoutu
+    #     symbol_button_layout.addWidget(self.insert_symbol_button)
+    #     symbol_button_layout.addWidget(self.cancel_delegation_button)
+    #     symbol_button_layout.addWidget(self.add_overtime_button)
+    #
+    #     schedule_layout.addWidget(symbol_button_frame)
+    #
+    #     # Dodaj panel grafiku do prawego panelu
+    #     right_layout.addWidget(schedule_frame)
+    #
+    #     separator_top = QFrame()
+    #     separator_top.setFrameShape(QFrame.HLine)
+    #     separator_top.setFrameShadow(QFrame.Sunken)
+    #     separator_top.setStyleSheet("background-color: transparent;")  # Ukryj górny separator
+    #     self.separator_top = separator_top
+    #     right_layout.addWidget(separator_top)
+    #
+    #     # ------------ CZĘŚĆ 4: PANEL ZDARZEŃ ------------
+    #     events_frame = QFrame()
+    #     events_frame.setFrameShape(QFrame.StyledPanel)
+    #     events_frame.setFrameShadow(QFrame.Raised)
+    #     events_layout = QVBoxLayout(events_frame)
+    #     events_layout.setContentsMargins(5, 5, 5, 5)
+    #
+    #     # Tworzenie kontrolek filtrów dla tabeli zdarzeń
+    #     events_filter_frame = QFrame()
+    #     events_filter_layout = QHBoxLayout(events_filter_frame)
+    #     events_filter_layout.setContentsMargins(0, 0, 0, 0)
+    #
+    #     # Filtry daty od-do
+    #     date_from_label = QLabel("Data od:")
+    #     self.date_from = QDateEdit()
+    #     self.date_from.setDisplayFormat("dd.MM.yyyy")
+    #     self.date_from.setDate(QDate.currentDate().addDays(-30))
+    #     self.date_from.setCalendarPopup(True)
+    #
+    #     date_to_label = QLabel("Data do:")
+    #     self.date_to = QDateEdit()
+    #     self.date_to.setDisplayFormat("dd.MM.yyyy")
+    #     self.date_to.setDate(QDate.currentDate())
+    #     self.date_to.setCalendarPopup(True)
+    #
+    #     # Filtr tematu
+    #     topic_label = QLabel("Temat:")
+    #     self.topic_filter = QLineEdit()
+    #     self.topic_filter.setPlaceholderText("Filtruj po temacie...")
+    #
+    #     # Filtr nazwy
+    #     name_label = QLabel("Nazwa:")
+    #     self.name_filter = QLineEdit()
+    #     self.name_filter.setPlaceholderText("Filtruj po nazwie...")
+    #
+    #     # Checkbox do filtrowania spotkań
+    #     self.meetings_checkbox = QCheckBox("Spotkania")
+    #     self.meetings_checkbox.setChecked(True)
+    #     self.meetings_checkbox.stateChanged.connect(self.filter_events_table)
+    #
+    #     # Checkbox do filtrowania szkoleń
+    #     self.trainings_checkbox = QCheckBox("Szkolenia")
+    #     self.trainings_checkbox.setChecked(True)
+    #     self.trainings_checkbox.stateChanged.connect(self.filter_events_table)
+    #
+    #     # Checkbox do filtrowania nadgodzin
+    #     self.overtime_checkbox = QCheckBox("Nadgodziny")
+    #     self.overtime_checkbox.setChecked(True)
+    #     self.overtime_checkbox.stateChanged.connect(self.filter_events_table)
+    #
+    #     # podłącz sygnały zmiany daty bezpośrednio do filtrowania
+    #     self.date_from.dateChanged.connect(self.filter_events_table)
+    #     self.date_to.dateChanged.connect(self.filter_events_table)
+    #
+    #     # Dodaj kontrolki do layoutu filtrów zdarzeń
+    #     events_filter_layout.addWidget(date_from_label)
+    #     events_filter_layout.addWidget(self.date_from)
+    #     events_filter_layout.addWidget(date_to_label)
+    #     events_filter_layout.addWidget(self.date_to)
+    #     events_filter_layout.addWidget(topic_label)
+    #     events_filter_layout.addWidget(self.topic_filter)
+    #     events_filter_layout.addWidget(name_label)
+    #     events_filter_layout.addWidget(self.name_filter)
+    #     events_filter_layout.addWidget(self.meetings_checkbox)
+    #     events_filter_layout.addWidget(self.trainings_checkbox)
+    #     events_filter_layout.addWidget(self.overtime_checkbox)
+    #     events_filter_layout.addStretch()
+    #
+    #     # Dodaj panel filtrów zdarzeń do layoutu panelu zdarzeń
+    #     events_layout.addWidget(events_filter_frame)
+    #
+    #     # Tworzenie tabeli zdarzeń
+    #     self.events_table = QTableWidget()
+    #     self.events_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
+    #     self.events_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+    #     self.events_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+    #
+    #     # Ustawienie kolumn dla tabeli zdarzeń
+    #     self.events_table.setColumnCount(10)
+    #     self.events_table.setHorizontalHeaderLabels([
+    #         "Id", "Typ", "Temat", "Nazwa", "Użytkownik", "Data", "Od", "Do", "Status", "Akcje"
+    #     ])
+    #
+    #     # Ustaw szerokość kolumn
+    #     self.events_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Id
+    #     self.events_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Typ
+    #     self.events_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)  # Temat
+    #     self.events_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)  # Nazwa
+    #     self.events_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)  # Użytkownik
+    #     self.events_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents)  # Data
+    #     self.events_table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeToContents)  # Od
+    #     self.events_table.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeToContents)  # Do
+    #     self.events_table.horizontalHeader().setSectionResizeMode(8, QHeaderView.ResizeToContents)  # Status
+    #     self.events_table.horizontalHeader().setSectionResizeMode(9, QHeaderView.ResizeToContents)  # Akcje
+    #
+    #     # Aplikuj styl do tabeli zdarzeń
+    #     if self.is_dark_theme:
+    #         self.events_table.setStyleSheet("""
+    #             QTableWidget {
+    #                 background-color: #2c2c2c;
+    #                 color: white;
+    #                 gridline-color: #3a3a3a;
+    #                 border: 1px solid #3a3a3a;
+    #             }
+    #             QTableWidget::item {
+    #                 color: white;
+    #             }
+    #             QTableWidget::item:selected {
+    #                 background-color: #3498db;
+    #             }
+    #         """)
+    #     else:
+    #         self.events_table.setStyleSheet("""
+    #             QTableWidget {
+    #                 background-color: white;
+    #                 color: black;
+    #                 gridline-color: #cccccc;
+    #                 border: 1px solid #cccccc;
+    #             }
+    #             QTableWidget::item {
+    #
+    #             }
+    #             QTableWidget::item:selected {
+    #                 background-color: #3498db;
+    #                 color: white;
+    #             }
+    #         """)
+    #
+    #     # Dodaj tabelę zdarzeń do panelu zdarzeń
+    #     events_layout.addWidget(self.events_table)
+    #
+    #     # Dodaj panel zdarzeń do prawego panelu
+    #     right_layout.addWidget(events_frame)
+    #
+    #     # Inicjalizacja danych w tabeli zdarzeń
+    #     self.events_data = []  # Lista słowników z danymi o zdarzeniach
+    #
+    #     # Podłącz sygnały do filtrów
+    #     self.topic_filter.textChanged.connect(self.filter_events_table)
+    #     self.name_filter.textChanged.connect(self.filter_events_table)
+    #
+    #     # Dodaj lewy i prawy panel do środkowego kontenera
+    #     middle_layout.addWidget(self._left_panel)
+    #     middle_layout.addWidget(right_panel, 1)  # Dodaj wagę, aby prawy panel zajmował więcej miejsca
+    #
+    #     # Możesz ustawić minimalną szerokość, aby panel nie znikał
+    #     self._left_panel.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+    #     self._left_panel.setMinimumWidth(150)  # Ustaw minimalną szerokość
+    #     self._left_panel.setMaximumWidth(250)  # Ustaw maksymalną szerokość (taka sama jak minimalna)
+    #
+    #     # Dodaj środkowy kontener do głównego layoutu
+    #     main_layout.addWidget(middle_container, 0)  # Dodaj wagę, aby środkowy kontener rozciągał się
+    #
+    #     # Dodaj panele do pionowego splittera
+    #     right_splitter.addWidget(schedule_frame)
+    #     right_splitter.addWidget(events_frame)
+    #
+    #     # Ustaw początkowe proporcje dla pionowego splittera (np. 60% grafik, 40% zdarzenia)
+    #     right_splitter.setSizes([600, 400])
+    #
+    #     # Dodaj pionowy splitter do layoutu prawego panelu
+    #     right_layout.addWidget(right_splitter)
+    #
+    #     # Dodaj panele do głównego splittera
+    #     main_splitter.addWidget(self._left_panel)
+    #     main_splitter.addWidget(right_panel)
+    #
+    #     # Ustaw początkowe proporcje dla głównego splittera (np. 25% lewy panel, 75% prawy panel)
+    #     main_splitter.setSizes([250, 950])
+    #
+    #     # Dodaj główny splitter do głównego layoutu
+    #     main_layout.addWidget(main_splitter, 1)  # Waga 1 zapewnia rozciąganie
+    #
+    #     # Zapisz referencję do splittera
+    #     self.main_splitter = main_splitter
+    #
+    #     # Dodaj główny splitter do głównego layoutu
+    #     main_layout.addWidget(main_splitter, 1)  # Waga 1 zapewnia rozciąganie
+    #
+    #     # Ustawienie głównego widgetu
+    #     self.setCentralWidget(central_widget)
+    #
+    #     # Ukryj nagłówek pionowy (numery wierszy)
+    #     self.table.verticalHeader().setVisible(True)
+    #     self.events_table.verticalHeader().setVisible(True)
+    #
+    #     self.table.setSortingEnabled(True)
+    #     self.events_table.setSortingEnabled(True)
+    #
+    #     # Domyślnie sortuj po pierwszej kolumnie (Wydział)
+    #     self.table.sortByColumn(0, Qt.AscendingOrder)
+    #     self.events_table.sortByColumn(0, Qt.AscendingOrder)
+    #
+    #     # Możemy także zachować informację o ostatnim sortowaniu
+    #     self.last_sort_column = 0
+    #     self.last_sort_order = Qt.AscendingOrder
+    #
+    #     # Podłącz sygnał sortowania (opcjonalnie, jeśli chcesz wykonać dodatkowe działania przy sortowaniu)
+    #     self.table.horizontalHeader().sortIndicatorChanged.connect(self.on_sort_changed)
+    #     self.events_table.horizontalHeader().sortIndicatorChanged.connect(self.on_events_sort_changed)
+    #
+    # def toggle_left_panel(self):
+    #     """Przełącza widoczność lewego panelu filtrów"""
+    #     if self.left_panel_visible:
+    #         # Ukryj panel
+    #         self.left_panel_width = self._left_panel.width()  # Zapamiętaj bieżącą szerokość
+    #         self._left_panel.setFixedWidth(0)
+    #         self.left_panel_visible = False
+    #         self.toggle_menu_button.setText("☲")  # Zmień ikonę na "pokaż menu"
+    #         self.toggle_menu_button.setToolTip("Pokaż panel filtrów")
+    #     else:
+    #         # Pokaż panel
+    #         self._left_panel.setMinimumWidth(150)
+    #         self._left_panel.setMaximumWidth(250)
+    #         main_splitter_sizes = self.main_splitter.sizes()
+    #         # Przywróć zapamiętaną szerokość
+    #         self.main_splitter.setSizes([self.left_panel_width, main_splitter_sizes[1]])
+    #         self.left_panel_visible = True
+    #         self.toggle_menu_button.setText("☰")  # Przywróć ikonę "burger menu"
+    #         self.toggle_menu_button.setToolTip("Ukryj panel filtrów")
+    #
+    #     # Dostosuj widoczność głównego splittera
+    #     self.main_splitter.refresh()
+
     def setup_ui(self):
+        """Ustawia interfejs użytkownika"""
         # Główny widget i layout
         central_widget = QWidget()
         main_layout = QVBoxLayout(central_widget)
         main_layout.setContentsMargins(10, 10, 10, 10)
         main_layout.setSpacing(10)
 
-        # ------------ CZĘŚĆ 1: GÓRNY PASEK ------------
+        # Tworzenie poszczególnych części interfejsu
+        self.setup_top_bar(main_layout)
+        middle_splitter = self.setup_middle_section(main_layout)
+
+        # Ustawienie głównego widgetu
+        self.setCentralWidget(central_widget)
+
+        # Dodatkowe konfiguracje
+        self.setup_table_properties()
+
+    def setup_top_bar(self, main_layout):
+        """Tworzy górny pasek z przyciskami i kontrolkami"""
         top_bar_frame = QFrame()
         top_bar_frame.setFrameShape(QFrame.StyledPanel)
         top_bar_frame.setFrameShadow(QFrame.Raised)
         top_bar_layout = QHBoxLayout(top_bar_frame)
         top_bar_layout.setContentsMargins(5, 5, 5, 5)
 
-        # Dodaj przycisk menu (burger)
+        # Przycisk menu (burger)
         self.toggle_menu_button = QPushButton()
         self.toggle_menu_button.setFixedSize(32, 32)
-        # Używamy znaku Unicode dla "burger menu"
         self.toggle_menu_button.setText("☰")
         self.toggle_menu_button.setToolTip("Pokaż/ukryj panel filtrów")
-
-        # Ustaw styl przycisku
-        if self.is_dark_theme:
-            self.toggle_menu_button.setStyleSheet("""
-                    QPushButton {
-                        background-color: #2c2c2c;
-                        color: white;
-                        border: 1px solid #3a3a3a;
-                        border-radius: 4px;
-                        font-size: 18px;
-                        font-weight: bold;
-                    }
-                    QPushButton:hover {
-                        background-color: #3a3a3a;
-                    }
-                """)
-        else:
-            self.toggle_menu_button.setStyleSheet("""
-                    QPushButton {
-                        background-color: #e0e0e0;
-                        color: black;
-                        border: 1px solid #cccccc;
-                        border-radius: 4px;
-                        font-size: 18px;
-                        font-weight: bold;
-                    }
-                    QPushButton:hover {
-                        background-color: #d0d0d0;
-                    }
-                """)
-
-        # Podłącz funkcję do przycisku
+        self.toggle_menu_button.setStyleSheet(AppStyles.get_button_style("dark" if self.is_dark_theme else "light"))
         self.toggle_menu_button.clicked.connect(self.toggle_left_panel)
-
-        # Dodaj przycisk menu na początku górnego paska
         top_bar_layout.addWidget(self.toggle_menu_button)
 
         # Dodaj skrót klawiszowy Ctrl+D dla diagnostyki zaznaczonej komórki
@@ -404,46 +1229,38 @@ class WorkScheduleWindow(QMainWindow):
         # Przycisk zmiany motywu
         self.theme_button = QPushButton("Zmień motyw")
         self.theme_button.clicked.connect(self.show_theme_settings)
-        # Zastosuj bazowy styl zgodny z motywem
-        if self.is_dark_theme:
-            self.theme_button.setStyleSheet("""
-                background-color: #2c2c2c;
-                color: white;
-                border: 1px solid #3a3a3a;
-                padding: 5px;
-                border-radius: 3px;
-            """)
-        else:
-            self.theme_button.setStyleSheet("""
-                background-color: #e0e0e0;
-                color: black;
-                border: 1px solid #cccccc;
-                padding: 5px;
-                border-radius: 3px;
-            """)
+        self.theme_button.setStyleSheet(AppStyles.get_button_style("dark" if self.is_dark_theme else "light"))
 
         # Etykieta i combobox na rok-miesiąc
         date_label = QLabel("Miesiąc:")
         self.date_combo = QComboBox()
+        self.date_combo.setStyleSheet(AppStyles.get_combobox_style("dark" if self.is_dark_theme else "light"))
 
-        # Zastosuj styl zgodny z motywem dla comboboxa
-        if self.is_dark_theme:
-            self.date_combo.setStyleSheet("""
-                background-color: #2c2c2c;
-                color: white;
-                border: 1px solid #3a3a3a;
-                padding: 5px;
-                border-radius: 3px;
-            """)
-        else:
-            self.date_combo.setStyleSheet("""
-                background-color: white;
-                color: black;
-                border: 1px solid #cccccc;
-                padding: 5px;
-                border-radius: 3px;
-            """)
+        # Skonfiguruj zawartość comboboxa dat
+        self.setup_date_combo()
 
+        # Podłącz sygnał zmiany comboboxa daty
+        self.date_combo.currentIndexChanged.connect(self.on_date_combo_changed)
+
+        # Przycisk odświeżania
+        self.refresh_button = QPushButton("Odśwież dane")
+        self.refresh_button.clicked.connect(self.refresh_data)
+        self.refresh_button.setStyleSheet(AppStyles.get_button_style("dark" if self.is_dark_theme else "light"))
+
+        # Dodanie widgetów do layoutu górnego paska
+        top_bar_layout.addWidget(self.theme_button)
+        top_bar_layout.addWidget(date_label)
+        top_bar_layout.addWidget(self.date_combo)
+        top_bar_layout.addWidget(self.refresh_button)
+        top_bar_layout.addStretch()
+
+        # Dodaj górny pasek do głównego layoutu
+        main_layout.addWidget(top_bar_frame)
+
+        return top_bar_frame
+
+    def setup_date_combo(self):
+        """Konfiguruje combobox z datami"""
         # Dodanie opcji dla 3 miesięcy wstecz i 1 miesiąca do przodu od bieżącego
         current_date = datetime.now()
         months_to_show = []
@@ -484,41 +1301,8 @@ class WorkScheduleWindow(QMainWindow):
         # Ustawienie bieżącego miesiąca (czwarty element, indeks 3)
         self.date_combo.setCurrentIndex(3)
 
-        # Podłącz sygnał zmiany comboboxa daty
-        self.date_combo.currentIndexChanged.connect(self.on_date_combo_changed)
-
-        # Przycisk odświeżania
-        self.refresh_button = QPushButton("Odśwież dane")
-        self.refresh_button.clicked.connect(self.refresh_data)
-        # Zastosuj bazowy styl zgodny z motywem
-        if self.is_dark_theme:
-            self.refresh_button.setStyleSheet("""
-                background-color: #2c2c2c;
-                color: white;
-                border: 1px solid #3a3a3a;
-                padding: 5px;
-                border-radius: 3px;
-            """)
-        else:
-            self.refresh_button.setStyleSheet("""
-                background-color: #e0e0e0;
-                color: black;
-                border: 1px solid #cccccc;
-                padding: 5px;
-                border-radius: 3px;
-            """)
-
-        # Dodanie widgetów do layoutu górnego paska
-        top_bar_layout.addWidget(self.theme_button)
-        top_bar_layout.addWidget(date_label)
-        top_bar_layout.addWidget(self.date_combo)
-        top_bar_layout.addWidget(self.refresh_button)
-        top_bar_layout.addStretch()
-
-        # Dodaj górny pasek do głównego layoutu
-        main_layout.addWidget(top_bar_frame)
-
-        # ------------ CZĘŚĆ 2 i 3: ŚRODKOWA CZĘŚĆ ------------
+    def setup_middle_section(self, main_layout):
+        """Tworzy środkową sekcję z filtrem i tabelami"""
         # Główny kontener na środkową część (filtry po lewej, tabela po prawej)
         main_splitter = QSplitter(Qt.Horizontal)
         middle_container = QWidget()
@@ -526,279 +1310,145 @@ class WorkScheduleWindow(QMainWindow):
         middle_layout.setContentsMargins(0, 0, 0, 0)
         middle_layout.setSpacing(10)
 
-        # ------------ CZĘŚĆ 2: LEWY PANEL FILTRÓW ------------
-        self._left_panel = QWidget()
+        # Tworzenie lewego panelu filtrów
+        self.setup_left_panel()
 
-        if self.is_dark_theme:
-            self._left_panel.setStyleSheet("background-color: #1e1e1e; color: white;")
-        else:
-            self._left_panel.setStyleSheet("background-color: #f0f0f0; color: black;")
+        # Tworzenie prawego panelu z tabelami
+        right_panel = self.setup_right_panel()
+
+        # Dodaj lewy i prawy panel do środkowego kontenera
+        middle_layout.addWidget(self._left_panel)
+        middle_layout.addWidget(right_panel, 1)  # Dodaj wagę, aby prawy panel zajmował więcej miejsca
+
+        # Ustaw minimalną szerokość, aby panel nie znikał
+        self._left_panel.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        self._left_panel.setMinimumWidth(150)  # Ustaw minimalną szerokość
+        self._left_panel.setMaximumWidth(250)  # Ustaw maksymalną szerokość
+
+        # Zapamiętaj standardową szerokość lewego panelu
+        self.left_panel_width = 200  # Zapamiętaj szerokość panelu
+        self.left_panel_visible = True  # Dodaj zmienną do śledzenia stanu widoczności
+
+        # Dodaj środkowy kontener do głównego layoutu
+        main_layout.addWidget(middle_container, 1)  # Waga 1 zapewnia rozciąganie
+
+        # Dodaj panele do głównego splittera
+        main_splitter.addWidget(self._left_panel)
+        main_splitter.addWidget(right_panel)
+
+        # Ustaw początkowe proporcje dla głównego splittera (np. 25% lewy panel, 75% prawy panel)
+        main_splitter.setSizes([250, 950])
+
+        # Zapisz referencję do splittera
+        self.main_splitter = main_splitter
+
+        # Dodaj główny splitter do głównego layoutu
+        main_layout.addWidget(main_splitter, 1)
+
+        return main_splitter
+
+    def setup_left_panel(self):
+        """Tworzy lewy panel z filtrami"""
+        self._left_panel = QWidget()
+        self._left_panel.setStyleSheet(AppStyles.get_left_panel_style("dark" if self.is_dark_theme else "light"))
 
         filters_layout = QVBoxLayout(self._left_panel)
         filters_layout.setContentsMargins(10, 10, 10, 10)
 
         # Tytuł filtrów
         filters_title = QLabel("Filtry")
-        if self.is_dark_theme:
-            filters_title.setStyleSheet("font-size: 16px; font-weight: bold; color: white;")
-        else:
-            filters_title.setStyleSheet("font-size: 16px; font-weight: bold; color: black;")
+        filters_title.setStyleSheet(AppStyles.get_label_style("dark" if self.is_dark_theme else "light", is_title=True))
         filters_layout.addWidget(filters_title)
 
+        # Dodaj filtry
+        self.setup_filter_wydzial(filters_layout)
+        self.setup_filter_przelozony(filters_layout)
+        self.setup_filter_uzytkownik(filters_layout)
+
+        # Przycisk wyczyść filtry
+        self.clear_filters_button = QPushButton("Wyczyść filtry")
+        self.clear_filters_button.setStyleSheet(AppStyles.get_button_style("dark" if self.is_dark_theme else "light"))
+        self.clear_filters_button.clicked.connect(self.clear_filters)
+        filters_layout.addStretch()
+        filters_layout.addWidget(self.clear_filters_button)
+
+    def setup_filter_wydzial(self, parent_layout):
+        """Konfiguruje filtr wydziału"""
         # Filtr wydziału
         wydzial_label = QLabel("Wydział:")
-        if self.is_dark_theme:
-            wydzial_label.setStyleSheet("color: #3498db;")
-        else:
-            wydzial_label.setStyleSheet("color: #2980b9;")
-        filters_layout.addWidget(wydzial_label)
+        wydzial_label.setStyleSheet(AppStyles.get_label_style("dark" if self.is_dark_theme else "light"))
+        parent_layout.addWidget(wydzial_label)
 
         # Lista wydziałów
         self.wydzial_list = QListWidget()
         self.wydzial_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        if self.is_dark_theme:
-            self.wydzial_list.setStyleSheet("""
-                QListWidget {
-                    background-color: #2c2c2c;
-                    color: white;
-                    border: 1px solid #3a3a3a;
-                    border-radius: 3px;
-                }
-                QListWidget::item {
-                    padding: 3px;
-                }
-                QListWidget::item:selected {
-                    background-color: #3498db;
-                }
-            """)
-        else:
-            self.wydzial_list.setStyleSheet("""
-                QListWidget {
-                    background-color: white;
-                    color: black;
-                    border: 1px solid #cccccc;
-                    border-radius: 3px;
-                }
-                QListWidget::item {
-                    padding: 3px;
-                }
-                QListWidget::item:selected {
-                    background-color: #3498db;
-                    color: white;
-                }
-            """)
+        self.wydzial_list.setStyleSheet(AppStyles.get_list_style("dark" if self.is_dark_theme else "light"))
         self.wydzial_list.setFixedHeight(120)
 
         # Dodaj pole wyszukiwania dla wydziałów
         self.wydzial_filter = QLineEdit()
         self.wydzial_filter.setPlaceholderText("Filtruj wydział...")
-        if self.is_dark_theme:
-            self.wydzial_filter.setStyleSheet("""
-                QLineEdit {
-                    background-color: #2c2c2c;
-                    color: white;
-                    border: 1px solid #3a3a3a;
-                    padding: 5px;
-                    border-radius: 3px;
-                }
-            """)
-        else:
-            self.wydzial_filter.setStyleSheet("""
-                QLineEdit {
-                    background-color: white;
-                    color: black;
-                    border: 1px solid #cccccc;
-                    padding: 5px;
-                    border-radius: 3px;
-                }
-            """)
+        self.wydzial_filter.setStyleSheet(AppStyles.get_line_edit_style("dark" if self.is_dark_theme else "light"))
         self.wydzial_filter.textChanged.connect(self.filter_wydzial_list)
 
-        filters_layout.addWidget(self.wydzial_filter)
-        filters_layout.addWidget(self.wydzial_list)
+        parent_layout.addWidget(self.wydzial_filter)
+        parent_layout.addWidget(self.wydzial_list)
 
+        # Podłącz sygnał zmiany filtru
+        self.wydzial_list.itemSelectionChanged.connect(self.filter_data)
+
+    def setup_filter_przelozony(self, parent_layout):
+        """Konfiguruje filtr przełożonego"""
         # Filtr przełożonego
         przelozony_label = QLabel("Przełożony:")
-        if self.is_dark_theme:
-            przelozony_label.setStyleSheet("color: #3498db;")
-        else:
-            przelozony_label.setStyleSheet("color: #2980b9;")
-        filters_layout.addWidget(przelozony_label)
+        przelozony_label.setStyleSheet(AppStyles.get_label_style("dark" if self.is_dark_theme else "light"))
+        parent_layout.addWidget(przelozony_label)
 
         # Lista przełożonych
         self.przelozony_list = QListWidget()
         self.przelozony_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        if self.is_dark_theme:
-            self.przelozony_list.setStyleSheet("""
-                QListWidget {
-                    background-color: #2c2c2c;
-                    color: white;
-                    border: 1px solid #3a3a3a;
-                    border-radius: 3px;
-                }
-                QListWidget::item {
-                    padding: 3px;
-                }
-                QListWidget::item:selected {
-                    background-color: #3498db;
-                }
-            """)
-        else:
-            self.przelozony_list.setStyleSheet("""
-                QListWidget {
-                    background-color: white;
-                    color: black;
-                    border: 1px solid #cccccc;
-                    border-radius: 3px;
-                }
-                QListWidget::item {
-                    padding: 3px;
-                }
-                QListWidget::item:selected {
-                    background-color: #3498db;
-                    color: white;
-                }
-            """)
+        self.przelozony_list.setStyleSheet(AppStyles.get_list_style("dark" if self.is_dark_theme else "light"))
         self.przelozony_list.setFixedHeight(150)
 
         # Dodaj pole wyszukiwania dla przełożonych
         self.przelozony_filter = QLineEdit()
         self.przelozony_filter.setPlaceholderText("Filtruj przełożonych...")
-        if self.is_dark_theme:
-            self.przelozony_filter.setStyleSheet("""
-                QLineEdit {
-                    background-color: #2c2c2c;
-                    color: white;
-                    border: 1px solid #3a3a3a;
-                    padding: 5px;
-                    border-radius: 3px;
-                }
-            """)
-        else:
-            self.przelozony_filter.setStyleSheet("""
-                QLineEdit {
-                    background-color: white;
-                    color: black;
-                    border: 1px solid #cccccc;
-                    padding: 5px;
-                    border-radius: 3px;
-                }
-            """)
+        self.przelozony_filter.setStyleSheet(AppStyles.get_line_edit_style("dark" if self.is_dark_theme else "light"))
         self.przelozony_filter.textChanged.connect(self.filter_przelozony_list)
 
-        filters_layout.addWidget(self.przelozony_filter)
-        filters_layout.addWidget(self.przelozony_list)
+        parent_layout.addWidget(self.przelozony_filter)
+        parent_layout.addWidget(self.przelozony_list)
 
+        # Podłącz sygnał zmiany filtru
+        self.przelozony_list.itemSelectionChanged.connect(self.filter_data)
+
+    def setup_filter_uzytkownik(self, parent_layout):
+        """Konfiguruje filtr użytkownika"""
         # Filtr użytkownika
         uzytkownik_label = QLabel("Użytkownik:")
-        if self.is_dark_theme:
-            uzytkownik_label.setStyleSheet("color: #3498db;")
-        else:
-            uzytkownik_label.setStyleSheet("color: #2980b9;")
-        filters_layout.addWidget(uzytkownik_label)
+        uzytkownik_label.setStyleSheet(AppStyles.get_label_style("dark" if self.is_dark_theme else "light"))
+        parent_layout.addWidget(uzytkownik_label)
 
         # Lista użytkowników
         self.uzytkownik_list = QListWidget()
         self.uzytkownik_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        if self.is_dark_theme:
-            self.uzytkownik_list.setStyleSheet("""
-                QListWidget {
-                    background-color: #2c2c2c;
-                    color: white;
-                    border: 1px solid #3a3a3a;
-                    border-radius: 3px;
-                }
-                QListWidget::item {
-                    padding: 3px;
-                }
-                QListWidget::item:selected {
-                    background-color: #3498db;
-                }
-            """)
-        else:
-            self.uzytkownik_list.setStyleSheet("""
-                QListWidget {
-                    background-color: white;
-                    color: black;
-                    border: 1px solid #cccccc;
-                    border-radius: 3px;
-                }
-                QListWidget::item {
-                    padding: 3px;
-                }
-                QListWidget::item:selected {
-                    background-color: #3498db;
-                    color: white;
-                }
-            """)
+        self.uzytkownik_list.setStyleSheet(AppStyles.get_list_style("dark" if self.is_dark_theme else "light"))
         self.uzytkownik_list.setFixedHeight(180)
 
         # Dodaj pole wyszukiwania dla użytkowników
         self.uzytkownik_filter = QLineEdit()
         self.uzytkownik_filter.setPlaceholderText("Filtruj użytkowników...")
-        if self.is_dark_theme:
-            self.uzytkownik_filter.setStyleSheet("""
-                QLineEdit {
-                    background-color: #2c2c2c;
-                    color: white;
-                    border: 1px solid #3a3a3a;
-                    padding: 5px;
-                    border-radius: 3px;
-                }
-            """)
-        else:
-            self.uzytkownik_filter.setStyleSheet("""
-                QLineEdit {
-                    background-color: white;
-                    color: black;
-                    border: 1px solid #cccccc;
-                    padding: 5px;
-                    border-radius: 3px;
-                }
-            """)
+        self.uzytkownik_filter.setStyleSheet(AppStyles.get_line_edit_style("dark" if self.is_dark_theme else "light"))
         self.uzytkownik_filter.textChanged.connect(self.filter_uzytkownik_list)
 
-        filters_layout.addWidget(self.uzytkownik_filter)
-        filters_layout.addWidget(self.uzytkownik_list)
+        parent_layout.addWidget(self.uzytkownik_filter)
+        parent_layout.addWidget(self.uzytkownik_list)
 
-        # Przycisk wyczyść filtry
-        clear_filters_button = QPushButton("Wyczyść filtry")
-        # Zastosuj bazowy styl zgodny z motywem (taki sam jak inne przyciski)
-        if self.is_dark_theme:
-            clear_filters_button.setStyleSheet("""
-                background-color: #2c2c2c;
-                color: white;
-                border: 1px solid #3a3a3a;
-                padding: 5px;
-                border-radius: 3px;
-            """)
-        else:
-            clear_filters_button.setStyleSheet("""
-                background-color: #e0e0e0;
-                color: black;
-                border: 1px solid #cccccc;
-                padding: 5px;
-                border-radius: 3px;
-            """)
-        clear_filters_button.clicked.connect(self.clear_filters)
-        filters_layout.addStretch()
-        filters_layout.addWidget(clear_filters_button)
-
-        # Zapamiętaj standardową szerokość lewego panelu
-        self._left_panel.setMinimumWidth(150)
-        self._left_panel.setMaximumWidth(250)
-        self.left_panel_visible = True  # Dodaj zmienną do śledzenia stanu widoczności
-        self.left_panel_width = 200  # Zapamiętaj szerokość panelu
-
-        # Zapisz referencję do przycisku "Wyczyść filtry", aby móc go stylizować w apply_theme_settings
-        self.clear_filters_button = clear_filters_button
-
-        # Podłączenie sygnałów zmiany filtrów
-        self.wydzial_list.itemSelectionChanged.connect(self.filter_data)
-        self.przelozony_list.itemSelectionChanged.connect(self.filter_data)
+        # Podłącz sygnał zmiany filtru
         self.uzytkownik_list.itemSelectionChanged.connect(self.filter_data)
 
-        # ------------ CZĘŚĆ 3: PRAWY PANEL Z TABELAMI ------------
+    def setup_right_panel(self):
+        """Tworzy prawy panel z tabelami"""
         right_panel = QWidget()
         right_layout = QVBoxLayout(right_panel)
         right_layout.setContentsMargins(0, 0, 0, 0)
@@ -807,7 +1457,24 @@ class WorkScheduleWindow(QMainWindow):
         # Splitter pionowy dla prawego panelu (grafik | zdarzenia)
         right_splitter = QSplitter(Qt.Vertical)
 
-        # ------------ Tabela z grafikiem (Górna część prawego panelu) ------------
+        # Dodaj sekcje
+        schedule_frame = self.setup_schedule_section()
+        events_frame = self.setup_events_section()
+
+        # Dodaj panele do pionowego splittera
+        right_splitter.addWidget(schedule_frame)
+        right_splitter.addWidget(events_frame)
+
+        # Ustaw początkowe proporcje dla pionowego splittera (np. 60% grafik, 40% zdarzenia)
+        right_splitter.setSizes([600, 400])
+
+        # Dodaj pionowy splitter do layoutu prawego panelu
+        right_layout.addWidget(right_splitter)
+
+        return right_panel
+
+    def setup_schedule_section(self):
+        """Tworzy sekcję grafiku (górna część prawego panelu)"""
         schedule_frame = QFrame()
         schedule_frame.setFrameShape(QFrame.StyledPanel)
         schedule_frame.setFrameShadow(QFrame.Raised)
@@ -820,7 +1487,7 @@ class WorkScheduleWindow(QMainWindow):
         self.table.setSelectionBehavior(QAbstractItemView.SelectItems)  # Zaznaczanie pojedynczych komórek
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.itemSelectionChanged.connect(self.on_selection_changed)
-
+        self.table.setStyleSheet(AppStyles.get_table_style("dark" if self.is_dark_theme else "light"))
 
         # Zastąp standardowy nagłówek poziomy niestandardowym
         self.table.setHorizontalHeader(WeekendAwareHeaderView(Qt.Horizontal, self.table))
@@ -834,142 +1501,95 @@ class WorkScheduleWindow(QMainWindow):
         # Wyłącz automatyczne dostosowywanie wysokości wierszy
         self.table.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
 
-        # Dodaj przyciski "Wstaw nieobecność" i "Odwołaj delegacje" po prawej stronie
-        symbol_button_frame = QFrame()
-        symbol_button_layout = QHBoxLayout(symbol_button_frame)
-        symbol_button_layout.setContentsMargins(0, 0, 0, 0)
+        # Dodaj przyciski akcji
+        button_frame = self.setup_schedule_buttons()
+        schedule_layout.addWidget(button_frame)
+
+        return schedule_frame
+
+    def setup_schedule_buttons(self):
+        """Tworzy przyciski akcji dla sekcji grafiku"""
+        button_frame = QFrame()
+        button_layout = QHBoxLayout(button_frame)
+        button_layout.setContentsMargins(0, 0, 0, 0)
 
         # Dodaj elastyczny odstęp po lewej stronie, aby przyciski były po prawej
-        symbol_button_layout.addStretch()
+        button_layout.addStretch()
 
-        # Dodaj przycisk "Wstaw zmianę" obok istniejących przycisków
+        # Przycisk "Wstaw zmianę"
         self.insert_change_button = QPushButton("Wstaw zmianę")
         self.insert_change_button.setShortcut("Ctrl+Z")  # Skrót klawiszowy
         self.insert_change_button.setToolTip("Wstaw zmianę grafiku (Ctrl+Z)")
-
-        # Zastosuj styl zgodny z motywem
-        if self.is_dark_theme:
-            self.insert_change_button.setStyleSheet("""
-                background-color: #2c2c2c;
-                color: white;
-                border: 1px solid #3a3a3a;
-                padding: 5px;
-                border-radius: 3px;
-            """)
-        else:
-            self.insert_change_button.setStyleSheet("""
-                background-color: #e0e0e0;
-                color: black;
-                border: 1px solid #cccccc;
-                padding: 5px;
-                border-radius: 3px;
-            """)
+        self.insert_change_button.setStyleSheet(AppStyles.get_button_style("dark" if self.is_dark_theme else "light"))
         self.insert_change_button.clicked.connect(self.show_insert_change_dialog)
+        button_layout.addWidget(self.insert_change_button)
 
-        # Dodaj przycisk do układu (symbol_button_layout)
-        symbol_button_layout.addWidget(self.insert_change_button)
-
-        # Przycisk "Wstaw nieobecność" (dawny "Wstaw symbol")
+        # Przycisk "Wstaw nieobecność"
         self.insert_symbol_button = QPushButton("Wstaw nieobecność")
         self.insert_symbol_button.setShortcut("Ctrl+I")  # Skrót klawiszowy Ctrl+I
         self.insert_symbol_button.setToolTip("Wstaw nieobecność (Ctrl+I)")  # Podpowiedź z informacją o skrócie
-
-        # Zastosuj bazowy styl zgodny z motywem
-        if self.is_dark_theme:
-            self.insert_symbol_button.setStyleSheet("""
-                background-color: #2c2c2c;
-                color: white;
-                border: 1px solid #3a3a3a;
-                padding: 5px;
-                border-radius: 3px;
-            """)
-        else:
-            self.insert_symbol_button.setStyleSheet("""
-                background-color: #e0e0e0;
-                color: black;
-                border: 1px solid #cccccc;
-                padding: 5px;
-                border-radius: 3px;
-            """)
+        self.insert_symbol_button.setStyleSheet(AppStyles.get_button_style("dark" if self.is_dark_theme else "light"))
         self.insert_symbol_button.clicked.connect(self.show_insert_symbol_dialog)
+        button_layout.addWidget(self.insert_symbol_button)
 
         # Przycisk "Odwołaj delegacje"
         self.cancel_delegation_button = QPushButton("Odwołaj delegacje")
         self.cancel_delegation_button.setShortcut("Ctrl+D")  # Skrót klawiszowy Ctrl+D
         self.cancel_delegation_button.setToolTip("Odwołaj delegacje dla zaznaczonych komórek (Ctrl+D)")
-
-        # Zastosuj bazowy styl zgodny z motywem
-        if self.is_dark_theme:
-            self.cancel_delegation_button.setStyleSheet("""
-                background-color: #2c2c2c;
-                color: white;
-                border: 1px solid #3a3a3a;
-                padding: 5px;
-                border-radius: 3px;
-            """)
-        else:
-            self.cancel_delegation_button.setStyleSheet("""
-                background-color: #e0e0e0;
-                color: black;
-                border: 1px solid #cccccc;
-                padding: 5px;
-                border-radius: 3px;
-            """)
+        self.cancel_delegation_button.setStyleSheet(
+            AppStyles.get_button_style("dark" if self.is_dark_theme else "light"))
         self.cancel_delegation_button.clicked.connect(self.cancel_delegations)
+        button_layout.addWidget(self.cancel_delegation_button)
 
         # Przycisk "Dodaj nadgodziny"
         self.add_overtime_button = QPushButton("Dodaj nadgodziny")
         self.add_overtime_button.setShortcut("Ctrl+N")  # Skrót klawiszowy Ctrl+N
         self.add_overtime_button.setToolTip("Dodaj nadgodziny dla zaznaczonych komórek (Ctrl+N)")
-
-        # Zastosuj bazowy styl zgodny z motywem
-        if self.is_dark_theme:
-            self.add_overtime_button.setStyleSheet("""
-                background-color: #2c2c2c;
-                color: white;
-                border: 1px solid #3a3a3a;
-                padding: 5px;
-                border-radius: 3px;
-            """)
-        else:
-            self.add_overtime_button.setStyleSheet("""
-                background-color: #e0e0e0;
-                color: black;
-                border: 1px solid #cccccc;
-                padding: 5px;
-                border-radius: 3px;
-            """)
+        self.add_overtime_button.setStyleSheet(AppStyles.get_button_style("dark" if self.is_dark_theme else "light"))
         self.add_overtime_button.clicked.connect(self.show_add_overtime_dialog)
 
-        # Pokaż przycisk tylko dla roli "Pracownik WPR"
-        if hasattr(self, 'current_user_role') and self.current_user_role == "Pracownik WPR":
-            symbol_button_layout.addWidget(self.add_overtime_button)
+        # ZMODYFIKOWANA LINIA: Zawsze dodawaj przycisk do layoutu
+        button_layout.addWidget(self.add_overtime_button)
 
-        # Dodaj przyciski do layoutu
-        symbol_button_layout.addWidget(self.insert_symbol_button)
-        symbol_button_layout.addWidget(self.cancel_delegation_button)
-        symbol_button_layout.addWidget(self.add_overtime_button)
+        # Ewentualnie ustaw widoczność przycisku na podstawie roli
+        # Można to zrobić po inicjalizacji wszystkich komponentów
+        if hasattr(self, 'current_user_role'):
+            self.add_overtime_button.setVisible(self.current_user_role == "Pracownik WPR")
+        else:
+            # Domyślnie widoczny, możemy to zmienić później
+            self.add_overtime_button.setVisible(True)
 
-        schedule_layout.addWidget(symbol_button_frame)
+        return button_frame
 
-        # Dodaj panel grafiku do prawego panelu
-        right_layout.addWidget(schedule_frame)
-
-        separator_top = QFrame()
-        separator_top.setFrameShape(QFrame.HLine)
-        separator_top.setFrameShadow(QFrame.Sunken)
-        separator_top.setStyleSheet("background-color: transparent;")  # Ukryj górny separator
-        self.separator_top = separator_top
-        right_layout.addWidget(separator_top)
-
-        # ------------ CZĘŚĆ 4: PANEL ZDARZEŃ ------------
+    def setup_events_section(self):
+        """Tworzy sekcję zdarzeń (dolna część prawego panelu)"""
         events_frame = QFrame()
         events_frame.setFrameShape(QFrame.StyledPanel)
         events_frame.setFrameShadow(QFrame.Raised)
         events_layout = QVBoxLayout(events_frame)
         events_layout.setContentsMargins(5, 5, 5, 5)
 
-        # Tworzenie kontrolek filtrów dla tabeli zdarzeń
+        # Dodaj kontrolki filtrów
+        filters_frame = self.setup_events_filters()
+        events_layout.addWidget(filters_frame)
+
+        # Tworzenie tabeli zdarzeń
+        self.events_table = QTableWidget()
+        self.events_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.events_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.events_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.events_table.setStyleSheet(AppStyles.get_table_style("dark" if self.is_dark_theme else "light"))
+
+        # Ustawienie kolumn dla tabeli zdarzeń
+        self.setup_events_table_columns()
+
+        # Dodaj tabelę zdarzeń do panelu zdarzeń
+        events_layout.addWidget(self.events_table)
+
+        return events_frame
+
+    def setup_events_filters(self):
+        """Konfiguruje filtry dla tabeli zdarzeń"""
         events_filter_frame = QFrame()
         events_filter_layout = QHBoxLayout(events_filter_frame)
         events_filter_layout.setContentsMargins(0, 0, 0, 0)
@@ -980,41 +1600,45 @@ class WorkScheduleWindow(QMainWindow):
         self.date_from.setDisplayFormat("dd.MM.yyyy")
         self.date_from.setDate(QDate.currentDate().addDays(-30))
         self.date_from.setCalendarPopup(True)
+        self.date_from.setStyleSheet(AppStyles.get_date_edit_style("dark" if self.is_dark_theme else "light"))
 
         date_to_label = QLabel("Data do:")
         self.date_to = QDateEdit()
         self.date_to.setDisplayFormat("dd.MM.yyyy")
         self.date_to.setDate(QDate.currentDate())
         self.date_to.setCalendarPopup(True)
+        self.date_to.setStyleSheet(AppStyles.get_date_edit_style("dark" if self.is_dark_theme else "light"))
 
         # Filtr tematu
         topic_label = QLabel("Temat:")
         self.topic_filter = QLineEdit()
         self.topic_filter.setPlaceholderText("Filtruj po temacie...")
+        self.topic_filter.setStyleSheet(AppStyles.get_line_edit_style("dark" if self.is_dark_theme else "light"))
 
         # Filtr nazwy
         name_label = QLabel("Nazwa:")
         self.name_filter = QLineEdit()
         self.name_filter.setPlaceholderText("Filtruj po nazwie...")
+        self.name_filter.setStyleSheet(AppStyles.get_line_edit_style("dark" if self.is_dark_theme else "light"))
 
-        # Checkbox do filtrowania spotkań
+        # Checkboxy do filtrowania typów zdarzeń
         self.meetings_checkbox = QCheckBox("Spotkania")
         self.meetings_checkbox.setChecked(True)
         self.meetings_checkbox.stateChanged.connect(self.filter_events_table)
 
-        # Checkbox do filtrowania szkoleń
         self.trainings_checkbox = QCheckBox("Szkolenia")
         self.trainings_checkbox.setChecked(True)
         self.trainings_checkbox.stateChanged.connect(self.filter_events_table)
 
-        # Checkbox do filtrowania nadgodzin
         self.overtime_checkbox = QCheckBox("Nadgodziny")
         self.overtime_checkbox.setChecked(True)
         self.overtime_checkbox.stateChanged.connect(self.filter_events_table)
 
-        # podłącz sygnały zmiany daty bezpośrednio do filtrowania
+        # Podłącz sygnały zmiany daty bezpośrednio do filtrowania
         self.date_from.dateChanged.connect(self.filter_events_table)
         self.date_to.dateChanged.connect(self.filter_events_table)
+        self.topic_filter.textChanged.connect(self.filter_events_table)
+        self.name_filter.textChanged.connect(self.filter_events_table)
 
         # Dodaj kontrolki do layoutu filtrów zdarzeń
         events_filter_layout.addWidget(date_from_label)
@@ -1030,16 +1654,10 @@ class WorkScheduleWindow(QMainWindow):
         events_filter_layout.addWidget(self.overtime_checkbox)
         events_filter_layout.addStretch()
 
-        # Dodaj panel filtrów zdarzeń do layoutu panelu zdarzeń
-        events_layout.addWidget(events_filter_frame)
+        return events_filter_frame
 
-        # Tworzenie tabeli zdarzeń
-        self.events_table = QTableWidget()
-        self.events_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        self.events_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.events_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-
-        # Ustawienie kolumn dla tabeli zdarzeń
+    def setup_events_table_columns(self):
+        """Konfiguruje kolumny dla tabeli zdarzeń"""
         self.events_table.setColumnCount(10)
         self.events_table.setHorizontalHeaderLabels([
             "Id", "Typ", "Temat", "Nazwa", "Użytkownik", "Data", "Od", "Do", "Status", "Akcje"
@@ -1057,97 +1675,9 @@ class WorkScheduleWindow(QMainWindow):
         self.events_table.horizontalHeader().setSectionResizeMode(8, QHeaderView.ResizeToContents)  # Status
         self.events_table.horizontalHeader().setSectionResizeMode(9, QHeaderView.ResizeToContents)  # Akcje
 
-        # Aplikuj styl do tabeli zdarzeń
-        if self.is_dark_theme:
-            self.events_table.setStyleSheet("""
-                QTableWidget {
-                    background-color: #2c2c2c;
-                    color: white;
-                    gridline-color: #3a3a3a;
-                    border: 1px solid #3a3a3a;
-                }
-                QTableWidget::item {
-                    color: white;
-                }
-                QTableWidget::item:selected {
-                    background-color: #3498db;
-                }
-            """)
-        else:
-            self.events_table.setStyleSheet("""
-                QTableWidget {
-                    background-color: white;
-                    color: black;
-                    gridline-color: #cccccc;
-                    border: 1px solid #cccccc;
-                }
-                QTableWidget::item {
-
-                }
-                QTableWidget::item:selected {
-                    background-color: #3498db;
-                    color: white;
-                }
-            """)
-
-        # Dodaj tabelę zdarzeń do panelu zdarzeń
-        events_layout.addWidget(self.events_table)
-
-        # Dodaj panel zdarzeń do prawego panelu
-        right_layout.addWidget(events_frame)
-
-        # Inicjalizacja danych w tabeli zdarzeń
-        self.events_data = []  # Lista słowników z danymi o zdarzeniach
-
-        # Podłącz sygnały do filtrów
-        self.topic_filter.textChanged.connect(self.filter_events_table)
-        self.name_filter.textChanged.connect(self.filter_events_table)
-
-        # Dodaj lewy i prawy panel do środkowego kontenera
-        middle_layout.addWidget(self._left_panel)
-        middle_layout.addWidget(right_panel, 1)  # Dodaj wagę, aby prawy panel zajmował więcej miejsca
-
-        # Możesz ustawić minimalną szerokość, aby panel nie znikał
-        self._left_panel.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
-        self._left_panel.setMinimumWidth(150)  # Ustaw minimalną szerokość
-        self._left_panel.setMaximumWidth(250)  # Ustaw maksymalną szerokość (taka sama jak minimalna)
-
-        # Dodaj środkowy kontener do głównego layoutu
-        main_layout.addWidget(middle_container, 0)  # Dodaj wagę, aby środkowy kontener rozciągał się
-
-        # Dodaj panele do pionowego splittera
-        right_splitter.addWidget(schedule_frame)
-        right_splitter.addWidget(events_frame)
-
-        # Ustaw początkowe proporcje dla pionowego splittera (np. 60% grafik, 40% zdarzenia)
-        right_splitter.setSizes([600, 400])
-
-        # Dodaj pionowy splitter do layoutu prawego panelu
-        right_layout.addWidget(right_splitter)
-
-        # Dodaj panele do głównego splittera
-        main_splitter.addWidget(self._left_panel)
-        main_splitter.addWidget(right_panel)
-
-        # Ustaw początkowe proporcje dla głównego splittera (np. 25% lewy panel, 75% prawy panel)
-        main_splitter.setSizes([250, 950])
-
-        # Dodaj główny splitter do głównego layoutu
-        main_layout.addWidget(main_splitter, 1)  # Waga 1 zapewnia rozciąganie
-
-        # Zapisz referencję do splittera
-        self.main_splitter = main_splitter
-
-        # Dodaj główny splitter do głównego layoutu
-        main_layout.addWidget(main_splitter, 1)  # Waga 1 zapewnia rozciąganie
-
-        # Ustawienie głównego widgetu
-        self.setCentralWidget(central_widget)
-
-        # Ukryj nagłówek pionowy (numery wierszy)
-        self.table.verticalHeader().setVisible(True)
-        self.events_table.verticalHeader().setVisible(True)
-
+    def setup_table_properties(self):
+        """Konfiguruje właściwości tabel"""
+        # Sortowanie
         self.table.setSortingEnabled(True)
         self.events_table.setSortingEnabled(True)
 
@@ -1159,9 +1689,12 @@ class WorkScheduleWindow(QMainWindow):
         self.last_sort_column = 0
         self.last_sort_order = Qt.AscendingOrder
 
-        # Podłącz sygnał sortowania (opcjonalnie, jeśli chcesz wykonać dodatkowe działania przy sortowaniu)
+        # Podłącz sygnały sortowania
         self.table.horizontalHeader().sortIndicatorChanged.connect(self.on_sort_changed)
         self.events_table.horizontalHeader().sortIndicatorChanged.connect(self.on_events_sort_changed)
+
+        # Dodaj delegata do tabeli aby obsługiwał niestandardowe rysowanie
+        self.table.setItemDelegate(OvertimeItemDelegate())
 
     def toggle_left_panel(self):
         """Przełącza widoczność lewego panelu filtrów"""
@@ -1184,7 +1717,10 @@ class WorkScheduleWindow(QMainWindow):
             self.toggle_menu_button.setToolTip("Ukryj panel filtrów")
 
         # Dostosuj widoczność głównego splittera
-        self.main_splitter.refresh()
+        # self.main_splitter.refresh()
+
+        self.main_splitter.update()  # lub
+        # QApplication.processEvents()  # pozwól UI się odświeżyć
 
     def on_sort_changed(self, logical_index, order):
         """Obsługuje zmianę sortowania w tabeli grafiku"""
@@ -1197,6 +1733,10 @@ class WorkScheduleWindow(QMainWindow):
         """Obsługuje zmianę sortowania w tabeli zdarzeń"""
         debug_print(f"Tabela zdarzeń: Sortowanie po kolumnie {logical_index}, kolejność: {'rosnąco' if order == Qt.AscendingOrder else 'malejąco'}")
 
+    def update_buttons_visibility(self):
+        """Aktualizuje widoczność przycisków na podstawie roli użytkownika"""
+        if hasattr(self, 'add_overtime_button') and hasattr(self, 'current_user_role'):
+            self.add_overtime_button.setVisible(self.current_user_role == "Pracownik WPR")
 
     def check_user_permissions(self):
         """Sprawdza, czy użytkownik ma odpowiednie uprawnienia do korzystania z aplikacji"""
@@ -1207,6 +1747,9 @@ class WorkScheduleWindow(QMainWindow):
         self.current_user_id = user_id
         self.current_user_app_id = user_app_id
         self.current_user_role = user_app_role
+
+        # Aktualizuj widoczność przycisków na podstawie roli
+        self.update_buttons_visibility()
 
         # Lista dozwolonych ról
         allowed_roles = ["Pracownik WPR", "Lider", "Menadżer"]
@@ -1226,7 +1769,7 @@ class WorkScheduleWindow(QMainWindow):
             self.close()
             return False
 
-        debug_print(f"Zalogowano jako: {user_app_id} ({user_app_role})")
+        print(f"Zalogowano jako: {user_app_id} ({user_app_role})")
         return True
 
     def debug_icons_in_cell(self, row, col):
@@ -5398,7 +5941,7 @@ class WorkScheduleWindow(QMainWindow):
         self.apply_theme_settings(theme, font_family, font_size)
 
     def apply_theme_settings(self, theme, font_family, font_size):
-        """Stosuje wybrane ustawienia motywu"""
+        """Stosuje wybrane ustawienia motywu z wykorzystaniem centralnych stylów"""
         # Zapamiętaj wybrane ustawienia
         self.is_dark_theme = (theme == "dark")
         self.current_font = font_family
@@ -5408,492 +5951,61 @@ class WorkScheduleWindow(QMainWindow):
         font = QFont(font_family, font_size)
         QApplication.setFont(font)
 
-        # Zastosuj motyw
-        if self.is_dark_theme:
-            # Ciemny motyw
-            self.setStyleSheet("""
-                QMainWindow, QWidget {
-                    background-color: #1e1e1e;
-                    color: white;
-                }
-                QHeaderView {
-                    background-color: #2c2c2c;
-                    color: white;
-                }
-                QHeaderView::section {
-                    background-color: #2c2c2c;
-                    color: white;
-                    border: 1px solid #3a3a3a;
-                }
-                QTableWidget {
-                    background-color: #2c2c2c;
+        # Zastosuj główny styl dla całego okna aplikacji
+        self.setStyleSheet(AppStyles.get_main_window_style(theme))
 
-                    gridline-color: #3a3a3a;
-                    border: 1px solid #3a3a3a;
-                }
-                QTableWidget::item {
+        # Przyciski
+        self.theme_button.setStyleSheet(AppStyles.get_button_style(theme))
+        self.refresh_button.setStyleSheet(AppStyles.get_button_style(theme))
+        self.clear_filters_button.setStyleSheet(AppStyles.get_button_style(theme))
+        self.insert_symbol_button.setStyleSheet(AppStyles.get_button_style(theme))
+        self.cancel_delegation_button.setStyleSheet(AppStyles.get_button_style(theme))
+        self.add_overtime_button.setStyleSheet(AppStyles.get_button_style(theme))
 
-                }
-                QTableWidget::item:selected {
-                    background-color: #3498db;
-                }
-                QPushButton {
-                    background-color: #2c2c2c;
-                    color: white;
-                    border: 1px solid #3a3a3a;
-                    padding: 5px;
-                    border-radius: 3px;
-                }
-                QPushButton:hover {
-                    background-color: #3a3a3a;
-                }
-                QComboBox {
-                    background-color: #2c2c2c;
-                    color: white;
-                    border: 1px solid #3a3a3a;
-                    padding: 5px;
-                    border-radius: 3px;
-                }
-                QComboBox::drop-down {
-                    border: 0px;
-                }
-                QComboBox QAbstractItemView {
-                    background-color: #2c2c2c;
-                    color: white;
-                    selection-background-color: #3498db;
-                    border: 1px solid #3a3a3a;
-                }
-                QLabel {
-                    color: white;
-                }
-                QDateEdit {
-                    background-color: #2c2c2c;
-                    color: white;
-                    border: 1px solid #3a3a3a;
-                    padding: 5px;
-                    border-radius: 3px;
-                }
-                QDateEdit::drop-down {
-                    border: 0px;
-                    width: 20px;
-                }
-                QDateEdit QAbstractItemView {
-                    background-color: #2c2c2c;
-                    color: white;
-                    selection-background-color: #3498db;
-                }
-                QTabWidget::pane {
-                    border: 1px solid #3a3a3a;
-                    background-color: #1e1e1e;
-                }
-                QTabBar::tab {
-                    background-color: #2c2c2c;
-                    color: white;
-                    border: 1px solid #3a3a3a;
-                    padding: 5px 10px;
-                    border-top-left-radius: 4px;
-                    border-top-right-radius: 4px;
-                    margin-right: 2px;
-                }
-                QTabBar::tab:selected {
-                    background-color: #3498db;
-                }
-                QTabBar::tab:!selected {
-                    margin-top: 2px;
-                }
-            """)
+        # Przycisk menu
+        self.toggle_menu_button.setStyleSheet(AppStyles.get_button_style(theme))
 
-            # Style dla komponentów filtrów
-            left_panel_style = "background-color: #1e1e1e; color: white;"
-            list_style = """
-                QListWidget {
-                    background-color: #2c2c2c;
-                    color: white;
-                    border: 1px solid #3a3a3a;
-                    border-radius: 3px;
-                }
-                QListWidget::item {
-                    padding: 3px;
-                }
-                QListWidget::item:selected {
-                    background-color: #3498db;
-                }
-            """
-            line_edit_style = """
-                QLineEdit {
-                    background-color: #2c2c2c;
-                    color: white;
-                    border: 1px solid #3a3a3a;
-                    padding: 5px;
-                    border-radius: 3px;
-                }
-            """
-            date_edit_style = """
-                QDateEdit {
-                    background-color: #2c2c2c;
-                    color: white;
-                    border: 1px solid #3a3a3a;
-                    padding: 5px;
-                    border-radius: 3px;
-                }
-                QDateEdit::drop-down {
-                    border: 0px;
-                    width: 20px;
-                }
-                QDateEdit QAbstractItemView {
-                    background-color: #2c2c2c;
-                    color: white;
-                    selection-background-color: #3498db;
-                }
-            """
-            label_style = "color: #3498db;"
-            title_style = "font-size: 16px; font-weight: bold; color: white;"
-
-            # Styl dla przycisków
-            button_style = """
-                QPushButton {
-                    background-color: #2c2c2c;
-                    color: white;
-                    border: 1px solid #3a3a3a;
-                    padding: 5px;
-                    border-radius: 3px;
-                }
-                QPushButton:hover {
-                    background-color: #3a3a3a;
-                }
-            """
-
-        else:
-            # Jasny motyw
-            self.setStyleSheet("""
-                QMainWindow, QWidget {
-                    background-color: #f5f5f5;
-                    color: black;
-                }
-                QHeaderView {
-                    background-color: #e0e0e0;
-                    color: black;
-                }
-                QHeaderView::section {
-                    background-color: #e0e0e0;
-                    color: black;
-                    border: 1px solid #cccccc;
-                }
-                QTableWidget {
-                    background-color: white;
-                    color: black;
-                    gridline-color: #cccccc;
-                    border: 1px solid #cccccc;
-                }
-                QTableWidget::item {
-
-                }
-                QTableWidget::item:selected {
-                    background-color: #3498db;
-                    color: white;
-                }
-                QPushButton {
-                    background-color: #e0e0e0;
-                    color: black;
-                    border: 1px solid #cccccc;
-                    padding: 5px;
-                    border-radius: 3px;
-                }
-                QPushButton:hover {
-                    background-color: #d0d0d0;
-                }
-                QComboBox {
-                    background-color: white;
-                    color: black;
-                    border: 1px solid #cccccc;
-                    padding: 5px;
-                    border-radius: 3px;
-                }
-                QComboBox::drop-down {
-                    border: 0px;
-                }
-                QComboBox QAbstractItemView {
-                    background-color: white;
-                    color: black;
-                    selection-background-color: #3498db;
-                    selection-color: white;
-                    border: 1px solid #cccccc;
-                }
-                QLabel {
-                    color: black;
-                }
-                QDateEdit {
-                    background-color: white;
-                    color: black;
-                    border: 1px solid #cccccc;
-                    padding: 5px;
-                    border-radius: 3px;
-                }
-                QDateEdit::drop-down {
-                    border: 0px;
-                    width: 20px;
-                }
-                QDateEdit QAbstractItemView {
-                    background-color: white;
-                    color: black;
-                    selection-background-color: #3498db;
-                    selection-color: white;
-                }
-                QTabWidget::pane {
-                    border: 1px solid #cccccc;
-                    background-color: #f5f5f5;
-                }
-                QTabBar::tab {
-                    background-color: #e0e0e0;
-                    color: black;
-                    border: 1px solid #cccccc;
-                    padding: 5px 10px;
-                    border-top-left-radius: 4px;
-                    border-top-right-radius: 4px;
-                    margin-right: 2px;
-                }
-                QTabBar::tab:selected {
-                    background-color: #3498db;
-                    color: white;
-                }
-                QTabBar::tab:!selected {
-                    margin-top: 2px;
-                }
-            """)
-
-            # Style dla komponentów filtrów
-            left_panel_style = "background-color: #f0f0f0; color: black;"
-            list_style = """
-                QListWidget {
-                    background-color: white;
-                    color: black;
-                    border: 1px solid #cccccc;
-                    border-radius: 3px;
-                }
-                QListWidget::item {
-                    padding: 3px;
-                }
-                QListWidget::item:selected {
-                    background-color: #3498db;
-                    color: white;
-                }
-            """
-            line_edit_style = """
-                QLineEdit {
-                    background-color: white;
-                    color: black;
-                    border: 1px solid #cccccc;
-                    padding: 5px;
-                    border-radius: 3px;
-                }
-            """
-            date_edit_style = """
-                QDateEdit {
-                    background-color: white;
-                    color: black;
-                    border: 1px solid #cccccc;
-                    padding: 5px;
-                    border-radius: 3px;
-                }
-                QDateEdit::drop-down {
-                    border: 0px;
-                    width: 20px;
-                }
-                QDateEdit QAbstractItemView {
-                    background-color: white;
-                    color: black;
-                    selection-background-color: #3498db;
-                    selection-color: white;
-                }
-            """
-            label_style = "color: #2980b9;"
-            title_style = "font-size: 16px; font-weight: bold; color: black;"
-
-            # Styl dla przycisków
-            button_style = """
-                QPushButton {
-                    background-color: #e0e0e0;
-                    color: black;
-                    border: 1px solid #cccccc;
-                    padding: 5px;
-                    border-radius: 3px;
-                }
-                QPushButton:hover {
-                    background-color: #d0d0d0;
-                }
-            """
-
-            # Stylizacja comboboxa miesiąca
-        if self.is_dark_theme:
-            self.date_combo.setStyleSheet("""
-                   QComboBox {
-                       background-color: #2c2c2c;
-                       color: white;
-                       border: 1px solid #3a3a3a;
-                       padding: 5px;
-                       border-radius: 3px;
-                   }
-                   QComboBox::drop-down {
-                       border: 0px;
-                       width: 20px;
-                   }
-                   QComboBox QAbstractItemView {
-                       background-color: #2c2c2c;
-                       color: white;
-                       selection-background-color: #3498db;
-                       border: 1px solid #3a3a3a;
-                   }
-               """)
-        else:
-            self.date_combo.setStyleSheet("""
-                   QComboBox {
-                       background-color: white;
-                       color: black;
-                       border: 1px solid #cccccc;
-                       padding: 5px;
-                       border-radius: 3px;
-                   }
-                   QComboBox::drop-down {
-                       border: 0px;
-                       width: 20px;
-                   }
-                   QComboBox QAbstractItemView {
-                       background-color: white;
-                       color: black;
-                       selection-background-color: #3498db;
-                       selection-color: white;
-                       border: 1px solid #cccccc;
-                   }
-               """)
-
-        # Aktualizuj styl przycisku Zmiany grafiku
+        # Przycisk wstawiania zmian
         if hasattr(self, 'insert_change_button'):
-            if self.is_dark_theme:
-                self.insert_change_button.setStyleSheet("""
-                        background-color: #2c2c2c;
-                        color: white;
-                        border: 1px solid #3a3a3a;
-                        padding: 5px;
-                        border-radius: 3px;
-                    """)
-            else:
-                self.insert_change_button.setStyleSheet("""
-                        background-color: #e0e0e0;
-                        color: black;
-                        border: 1px solid #cccccc;
-                        padding: 5px;
-                        border-radius: 3px;
-                    """)
+            self.insert_change_button.setStyleSheet(AppStyles.get_button_style(theme))
 
-        # Aktualizuj styl przycisku menu
-        if self.is_dark_theme:
-            self.toggle_menu_button.setStyleSheet("""
-                QPushButton {
-                    background-color: #2c2c2c;
-                    color: white;
-                    border: 1px solid #3a3a3a;
-                    border-radius: 4px;
-                    font-size: 18px;
-                    font-weight: bold;
-                }
-                QPushButton:hover {
-                    background-color: #3a3a3a;
-                }
-            """)
-        else:
-            self.toggle_menu_button.setStyleSheet("""
-                QPushButton {
-                    background-color: #e0e0e0;
-                    color: black;
-                    border: 1px solid #cccccc;
-                    border-radius: 4px;
-                    font-size: 18px;
-                    font-weight: bold;
-                }
-                QPushButton:hover {
-                    background-color: #d0d0d0;
-                }
-            """)
+        # Combobox z datami
+        self.date_combo.setStyleSheet(AppStyles.get_combobox_style(theme))
 
-        # Stylizacja numerów wierszy
-        if self.is_dark_theme:
-            self.table.verticalHeader().setStyleSheet("""
-                QHeaderView::section {
-                    background-color: #2c2c2c;
-                    color: white;
-                    border: 1px solid #3a3a3a;
-                    padding: 3px;
-                }
-            """)
-            self.events_table.verticalHeader().setStyleSheet("""
-                QHeaderView::section {
-                    background-color: #2c2c2c;
-                    color: white;
-                    border: 1px solid #3a3a3a;
-                    padding: 3px;
-                }
-            """)
-        else:
-            self.table.verticalHeader().setStyleSheet("""
-                QHeaderView::section {
-                    background-color: #e0e0e0;
-                    color: black;
-                    border: 1px solid #cccccc;
-                    padding: 3px;
-                }
-            """)
-            self.events_table.verticalHeader().setStyleSheet("""
-                QHeaderView::section {
-                    background-color: #e0e0e0;
-                    color: black;
-                    border: 1px solid #cccccc;
-                    padding: 3px;
-                }
-            """)
+        # Listy
+        self.wydzial_list.setStyleSheet(AppStyles.get_list_style(theme))
+        self.przelozony_list.setStyleSheet(AppStyles.get_list_style(theme))
+        self.uzytkownik_list.setStyleSheet(AppStyles.get_list_style(theme))
 
-        # Zastosowanie stylów do wszystkich komponentów
-        self._left_panel.setStyleSheet(left_panel_style)
+        # Pola filtrów
+        self.wydzial_filter.setStyleSheet(AppStyles.get_line_edit_style(theme))
+        self.przelozony_filter.setStyleSheet(AppStyles.get_line_edit_style(theme))
+        self.uzytkownik_filter.setStyleSheet(AppStyles.get_line_edit_style(theme))
 
-        # Aktualizacja stylów dla list i pól wyszukiwania
-        self.wydzial_list.setStyleSheet(list_style)
-        self.przelozony_list.setStyleSheet(list_style)
-        self.uzytkownik_list.setStyleSheet(list_style)
+        # Tabele
+        self.table.setStyleSheet(AppStyles.get_table_style(theme))
+        self.events_table.setStyleSheet(AppStyles.get_table_style(theme))
 
-        self.wydzial_filter.setStyleSheet(line_edit_style)
-        self.przelozony_filter.setStyleSheet(line_edit_style)
-        self.uzytkownik_filter.setStyleSheet(line_edit_style)
+        # Lewy panel
+        self._left_panel.setStyleSheet(AppStyles.get_left_panel_style(theme))
 
-        # Zastosuj styl do przycisków
-        self.theme_button.setStyleSheet(button_style)
-        self.refresh_button.setStyleSheet(button_style)
-        self.clear_filters_button.setStyleSheet(button_style)
-        self.insert_symbol_button.setStyleSheet(button_style)
-        self.cancel_delegation_button.setStyleSheet(button_style)
-        self.add_overtime_button.setStyleSheet(button_style)
-
-        # Zastosuj styl do filtrów zdarzeń
+        # Filtry zdarzeń
         if hasattr(self, 'date_from'):
-            self.date_from.setStyleSheet(date_edit_style)
-            self.date_to.setStyleSheet(date_edit_style)
-            self.topic_filter.setStyleSheet(line_edit_style)
-            self.name_filter.setStyleSheet(line_edit_style)
-
-
-        # # Aktualizacja stylu separatora
-        # if hasattr(self, 'separator_top'):
-        #     self.separator_top.setStyleSheet(
-        #         "background-color: #3a3a3a;" if self.is_dark_theme else "background-color: #cccccc;")
+            self.date_from.setStyleSheet(AppStyles.get_date_edit_style(theme))
+            self.date_to.setStyleSheet(AppStyles.get_date_edit_style(theme))
+            self.topic_filter.setStyleSheet(AppStyles.get_line_edit_style(theme))
+            self.name_filter.setStyleSheet(AppStyles.get_line_edit_style(theme))
 
         # Zastosuj czcionkę i rozmiar do etykiet
         for widget in self.findChildren(QLabel):
             widget.setFont(font)
 
-        # Etykiety w panelu filtrów
+        # Etykiety w panelu filtrów - specjalne stylowanie
         for label in self.findChildren(QLabel):
             if label.text() in ["Wydział:", "Przełożony:", "Użytkownik:"]:
-                label.setStyleSheet(label_style)
+                label.setStyleSheet(AppStyles.get_label_style(theme))
             elif label.text() == "Filtry":
-                label.setStyleSheet(title_style)
+                label.setStyleSheet(AppStyles.get_label_style(theme, is_title=True))
 
         # Aktualizacja czcionki w tabeli
         self.table.setFont(font)
@@ -5904,44 +6016,29 @@ class WorkScheduleWindow(QMainWindow):
         self.table.horizontalHeader().setFont(header_font)
         self.table.verticalHeader().setFont(header_font)
 
-        # Dodatkowo aktualizuj styl dla tabeli zdarzeń
-        if hasattr(self, 'events_table'):
-            self.events_table.setStyleSheet(
-                """
-                QTableWidget {
-                    background-color: #2c2c2c;
-                    color: white;
-                    gridline-color: #3a3a3a;
-                    border: 1px solid #3a3a3a;
-                }
-                QTableWidget::item {
+        # Aktualizacja czcionki w tabeli zdarzeń
+        self.events_table.setFont(font)
+        self.events_table.horizontalHeader().setFont(header_font)
 
-                }
-                QTableWidget::item:selected {
-                    background-color: #3498db;
-                }
-                """
-                if self.is_dark_theme else
-                """
-                QTableWidget {
-                    background-color: white;
-                    color: black;
-                    gridline-color: #cccccc;
-                    border: 1px solid #cccccc;
-                }
-                QTableWidget::item {
+        # Stylizacja numerów wierszy
+        vertical_header_style = """
+            QHeaderView::section {
+                background-color: #2c2c2c;
+                color: white;
+                border: 1px solid #3a3a3a;
+                padding: 3px;
+            }
+        """ if self.is_dark_theme else """
+            QHeaderView::section {
+                background-color: #e0e0e0;
+                color: black;
+                border: 1px solid #cccccc;
+                padding: 3px;
+            }
+        """
 
-                }
-                QTableWidget::item:selected {
-                    background-color: #3498db;
-                    color: white;
-                }
-                """
-            )
-
-            # Aktualizacja czcionki w tabeli zdarzeń
-            self.events_table.setFont(font)
-            self.events_table.horizontalHeader().setFont(header_font)
+        self.table.verticalHeader().setStyleSheet(vertical_header_style)
+        self.events_table.verticalHeader().setStyleSheet(vertical_header_style)
 
         # Aktualizacja kolorów weekendów w nagłówku
         header = self.table.horizontalHeader()
@@ -5986,25 +6083,8 @@ class WorkScheduleWindow(QMainWindow):
             header.viewport().update()
 
         # Wymuś pełne odświeżenie tabeli grafiku
-        current_data = self.date_combo.currentData()
-        if current_data:
-            # Zapisz bieżące zaznaczenie
-            selected_ranges = self.table.selectedRanges()
-
-            # Całkowicie wyczyść i przebuduj tabelę
-            self.table.clear()
-            self.table.setRowCount(0)
-            self.table.setColumnCount(0)
-
-            # Odtwórz zawartość tabeli
-            self.update_table_content()
-
-            # Przywróć zaznaczenie (opcjonalnie)
-            for range_item in selected_ranges:
-                self.table.setRangeSelected(
-                    range_item,
-                    True
-                )
+        self.table.viewport().update()
+        self.events_table.viewport().update()
 
 
 if __name__ == "__main__":
