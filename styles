@@ -1,0 +1,307 @@
+class AppStyles:
+    """Klasa przechowująca style aplikacji dla różnych trybów"""
+
+    @staticmethod
+    def get_button_style(theme="dark"):
+        """Zwraca styl dla przycisków"""
+        if theme == "dark":
+            return """
+                QPushButton {
+                    background-color: #2c2c2c;
+                    color: white;
+                    border: 1px solid #3a3a3a;
+                    padding: 5px;
+                    border-radius: 3px;
+                }
+                QPushButton:hover {
+                    background-color: #3a3a3a;
+                }
+            """
+        else:
+            return """
+                QPushButton {
+                    background-color: #e0e0e0;
+                    color: black;
+                    border: 1px solid #cccccc;
+                    padding: 5px;
+                    border-radius: 3px;
+                }
+                QPushButton:hover {
+                    background-color: #d0d0d0;
+                }
+            """
+
+    @staticmethod
+    def get_list_style(theme="dark"):
+        """Zwraca styl dla list"""
+        if theme == "dark":
+            return """
+                QListWidget {
+                    background-color: #2c2c2c;
+                    color: white;
+                    border: 1px solid #3a3a3a;
+                    border-radius: 3px;
+                }
+                QListWidget::item {
+                    padding: 3px;
+                }
+                QListWidget::item:selected {
+                    background-color: #3498db;
+                }
+            """
+        else:
+            return """
+                QListWidget {
+                    background-color: white;
+                    color: black;
+                    border: 1px solid #cccccc;
+                    border-radius: 3px;
+                }
+                QListWidget::item {
+                    padding: 3px;
+                }
+                QListWidget::item:selected {
+                    background-color: #3498db;
+                    color: white;
+                }
+            """
+
+    @staticmethod
+    def get_line_edit_style(theme="dark"):
+        """Zwraca styl dla pól edycji tekstu"""
+        if theme == "dark":
+            return """
+                QLineEdit {
+                    background-color: #2c2c2c;
+                    color: white;
+                    border: 1px solid #3a3a3a;
+                    padding: 5px;
+                    border-radius: 3px;
+                }
+            """
+        else:
+            return """
+                QLineEdit {
+                    background-color: white;
+                    color: black;
+                    border: 1px solid #cccccc;
+                    padding: 5px;
+                    border-radius: 3px;
+                }
+            """
+
+    @staticmethod
+    def get_table_style(theme="dark"):
+        """Zwraca styl dla tabel"""
+        if theme == "dark":
+            return """
+                QTableWidget {
+                    background-color: #2c2c2c;
+                    color: white;
+                    gridline-color: #3a3a3a;
+                    border: 1px solid #3a3a3a;
+                }
+                QTableWidget::item {
+                }
+                QTableWidget::item:selected {
+                    background-color: #3498db;
+                }
+            """
+        else:
+            return """
+                QTableWidget {
+                    background-color: white;
+                    color: black;
+                    gridline-color: #cccccc;
+                    border: 1px solid #cccccc;
+                }
+                QTableWidget::item {
+                }
+                QTableWidget::item:selected {
+                    background-color: #3498db;
+                    color: white;
+                }
+            """
+
+    @staticmethod
+    def get_date_edit_style(theme="dark"):
+        """Zwraca styl dla kontrolki daty"""
+        if theme == "dark":
+            return """
+                QDateEdit {
+                    background-color: #2c2c2c;
+                    color: white;
+                    border: 1px solid #3a3a3a;
+                    padding: 5px;
+                    border-radius: 3px;
+                }
+                QDateEdit::drop-down {
+                    border: 0px;
+                    width: 20px;
+                }
+                QDateEdit QAbstractItemView {
+                    background-color: #2c2c2c;
+                    color: white;
+                    selection-background-color: #3498db;
+                }
+            """
+        else:
+            return """
+                QDateEdit {
+                    background-color: white;
+                    color: black;
+                    border: 1px solid #cccccc;
+                    padding: 5px;
+                    border-radius: 3px;
+                }
+                QDateEdit::drop-down {
+                    border: 0px;
+                    width: 20px;
+                }
+                QDateEdit QAbstractItemView {
+                    background-color: white;
+                    color: black;
+                    selection-background-color: #3498db;
+                    selection-color: white;
+                }
+            """
+
+    @staticmethod
+    def get_combobox_style(theme="dark"):
+        """Zwraca styl dla combo boxów"""
+        if theme == "dark":
+            return """
+                QComboBox {
+                    background-color: #2c2c2c;
+                    color: white;
+                    border: 1px solid #3a3a3a;
+                    padding: 5px;
+                    border-radius: 3px;
+                }
+                QComboBox::drop-down {
+                    border: 0px;
+                }
+                QComboBox QAbstractItemView {
+                    background-color: #2c2c2c;
+                    color: white;
+                    selection-background-color: #3498db;
+                    border: 1px solid #3a3a3a;
+                }
+            """
+        else:
+            return """
+                QComboBox {
+                    background-color: white;
+                    color: black;
+                    border: 1px solid #cccccc;
+                    padding: 5px;
+                    border-radius: 3px;
+                }
+                QComboBox::drop-down {
+                    border: 0px;
+                }
+                QComboBox QAbstractItemView {
+                    background-color: white;
+                    color: black;
+                    selection-background-color: #3498db;
+                    selection-color: white;
+                    border: 1px solid #cccccc;
+                }
+            """
+
+    @staticmethod
+    def get_left_panel_style(theme="dark"):
+        """Zwraca styl dla lewego panelu"""
+        if theme == "dark":
+            return "background-color: #1e1e1e; color: white;"
+        else:
+            return "background-color: #f0f0f0; color: black;"
+
+    @staticmethod
+    def get_label_style(theme="dark", is_title=False):
+        """Zwraca styl dla etykiet"""
+        if is_title:
+            if theme == "dark":
+                return "font-size: 16px; font-weight: bold; color: white;"
+            else:
+                return "font-size: 16px; font-weight: bold; color: black;"
+        else:
+            if theme == "dark":
+                return "color: #3498db;"
+            else:
+                return "color: #2980b9;"
+
+    @staticmethod
+    def get_main_window_style(theme="dark"):
+        """Zwraca główny styl dla okna aplikacji"""
+        if theme == "dark":
+            return """
+                QMainWindow, QWidget {
+                    background-color: #1e1e1e;
+                    color: white;
+                }
+                QHeaderView {
+                    background-color: #2c2c2c;
+                    color: white;
+                }
+                QHeaderView::section {
+                    background-color: #2c2c2c;
+                    color: white;
+                    border: 1px solid #3a3a3a;
+                }
+                QTabWidget::pane {
+                    border: 1px solid #3a3a3a;
+                    background-color: #1e1e1e;
+                }
+                QTabBar::tab {
+                    background-color: #2c2c2c;
+                    color: white;
+                    border: 1px solid #3a3a3a;
+                    padding: 5px 10px;
+                    border-top-left-radius: 4px;
+                    border-top-right-radius: 4px;
+                    margin-right: 2px;
+                }
+                QTabBar::tab:selected {
+                    background-color: #3498db;
+                }
+                QTabBar::tab:!selected {
+                    margin-top: 2px;
+                }
+            """
+        else:
+            return """
+                QMainWindow, QWidget {
+                    background-color: #f5f5f5;
+                    color: black;
+                }
+                QHeaderView {
+                    background-color: #e0e0e0;
+                    color: black;
+                }
+                QHeaderView::section {
+                    background-color: #e0e0e0;
+                    color: black;
+                    border: 1px solid #cccccc;
+                }
+                QTabWidget::pane {
+                    border: 1px solid #cccccc;
+                    background-color: #f5f5f5;
+                }
+                QTabBar::tab {
+                    background-color: #e0e0e0;
+                    color: black;
+                    border: 1px solid #cccccc;
+                    padding: 5px 10px;
+                    border-top-left-radius: 4px;
+                    border-top-right-radius: 4px;
+                    margin-right: 2px;
+                }
+                QTabBar::tab:selected {
+                    background-color: #3498db;
+                    color: white;
+                }
+                QTabBar::tab:!selected {
+                    margin-top: 2px;
+                }
+            """
