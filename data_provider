@@ -1005,3 +1005,39 @@ class DataProvider(QObject):  # Dziedziczy po QObject, aby móc emitować sygna�
             dict: Zdarzenie lub None jeśli nie znaleziono
         """
         return self.events_index.get_event_by_id(event_id)
+
+    def _standardize_date(self, date_obj):
+        """
+        Standaryzuje format daty do 'YYYY-MM-DD'
+
+        Args:
+            date_obj: Data w dowolnym formacie (string, datetime, itp.)
+
+        Returns:
+            str: Data w formacie 'YYYY-MM-DD'
+        """
+        if not date_obj:
+            return ''
+
+        # Jeśli to już string, wyciągnij tylko datę
+        if isinstance(date_obj, str):
+            # Obsługa różnych formatów
+            if 'T' in date_obj:  # Format ISO 'YYYY-MM-DDThh:mm:ss'
+                return date_obj.split('T')[0]
+            elif ' ' in date_obj:  # Format 'YYYY-MM-DD hh:mm:ss'
+                return date_obj.split(' ')[0]
+            elif len(date_obj) == 10 and date_obj.count('-') == 2:  # Format 'YYYY-MM-DD'
+                return date_obj
+            elif len(date_obj) == 10 and date_obj.count('.') == 2:  # Format 'DD.MM.YYYY'
+                parts = date_obj.split('.')
+                if len(parts) == 3:
+                    return f"{parts[2]}-{parts[1]}-{parts[0]}"
+            # Jeśli nie dopasowano do żadnego formatu, zwróć oryginalny string
+            return date_obj
+
+        # Jeśli to obiekt datetime, skonwertuj na string
+        if hasattr(date_obj, 'strftime'):
+            return date_obj.strftime('%Y-%m-%d')
+
+        # W przypadku nieznanego typu, zwróć pusty string
+        return ''
