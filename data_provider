@@ -162,7 +162,7 @@ class EventsIndex:
 
     def delete_event(self, event_id, event_type=None):
         """
-        Usuwa zdarzenie o określonym ID i opcjonalnie typu ze wszystkich indeksów
+        Usprawniona metoda usuwania zdarzeń z indeksu.
 
         Args:
             event_id: ID zdarzenia
@@ -171,114 +171,102 @@ class EventsIndex:
         Returns:
             bool: True jeśli znaleziono i usunięto, False w przeciwnym wypadku
         """
-        # Jeśli podano typ, sprawdź, czy istnieje zdarzenie o tym ID i typie
-        if event_type:
-            events_to_delete = []
-            for event in self.all_events:
-                if event.get('id') == event_id and event.get('type') == event_type:
-                    events_to_delete.append(event)
+        deleted = False
 
-            if not events_to_delete:
-                print(f"Nie znaleziono zdarzenia o ID {event_id} i typie {event_type}")
+        # Najpierw spróbuj usunąć przez ID
+        if event_id in self.id_index:
+            event = self.id_index[event_id]
+
+            # Jeśli podano typ, sprawdź zgodność
+            if event_type and event.get('type') != event_type:
                 return False
 
-            # Usuń każde dopasowane zdarzenie
-            for event in events_to_delete:
-                # Pobierz dane potrzebne do aktualizacji indeksów
-                deleted_type = event.get('type', '')
-                user_id = str(event.get('user_id', ''))
-                event_date = event.get('date_key', '')
-                date_str = self._standardize_date(event_date)
+            # Pobierz dane potrzebne do aktualizacji indeksów
+            deleted_type = event.get('type', '')
+            user_id = str(event.get('user_id', ''))
+            event_date = event.get('date_key', '')
+            date_str = self._standardize_date(event_date)
 
-                print(
-                    f"Usuwam z indeksu zdarzenie typu {deleted_type}: ID={event_id}, Użytkownik={user_id}, Data={date_str}")
+            print(
+                f"Usuwam z indeksu zdarzenie typu {deleted_type}: ID={event_id}, Użytkownik={user_id}, Data={date_str}")
 
-                # Usuń z indeksu ID jeśli to właściwe zdarzenie
-                if event_id in self.id_index and self.id_index[event_id].get('type') == event_type:
-                    del self.id_index[event_id]
+            # Usuń z indeksu ID
+            del self.id_index[event_id]
 
-                # Usuń z listy wszystkich zdarzeń
-                self.all_events = [e for e in self.all_events if
-                                   not (e.get('id') == event_id and e.get('type') == event_type)]
+            # Usuń z listy wszystkich zdarzeń
+            self.all_events = [e for e in self.all_events if e.get('id') != event_id]
 
-                # Usuń z indeksu (user_id, date_str)
-                key = (user_id, date_str)
-                if key in self.user_date_index:
-                    self.user_date_index[key] = [e for e in self.user_date_index[key] if
-                                                 not (e.get('id') == event_id and e.get('type') == event_type)]
-                    if not self.user_date_index[key]:
-                        del self.user_date_index[key]
+            # Usuń z indeksu (user_id, date_str)
+            key = (user_id, date_str)
+            if key in self.user_date_index:
+                self.user_date_index[key] = [e for e in self.user_date_index[key] if e.get('id') != event_id]
+                if not self.user_date_index[key]:
+                    del self.user_date_index[key]
 
-                # Usuń z indeksu dat
-                if date_str in self.date_index:
-                    self.date_index[date_str] = [e for e in self.date_index[date_str] if
-                                                 not (e.get('id') == event_id and e.get('type') == event_type)]
-                    if not self.date_index[date_str]:
-                        del self.date_index[date_str]
+            # Usuń z indeksu dat
+            if date_str in self.date_index:
+                self.date_index[date_str] = [e for e in self.date_index[date_str] if e.get('id') != event_id]
+                if not self.date_index[date_str]:
+                    del self.date_index[date_str]
 
-                # Usuń z indeksu użytkowników
-                if user_id in self.user_index:
-                    self.user_index[user_id] = [e for e in self.user_index[user_id] if
-                                                not (e.get('id') == event_id and e.get('type') == event_type)]
-                    if not self.user_index[user_id]:
-                        del self.user_index[user_id]
+            # Usuń z indeksu użytkowników
+            if user_id in self.user_index:
+                self.user_index[user_id] = [e for e in self.user_index[user_id] if e.get('id') != event_id]
+                if not self.user_index[user_id]:
+                    del self.user_index[user_id]
 
-                # Usuń z indeksu typów
-                if deleted_type in self.type_index:
-                    self.type_index[deleted_type] = [e for e in self.type_index[deleted_type] if
+            # Usuń z indeksu typów
+            if deleted_type in self.type_index:
+                self.type_index[deleted_type] = [e for e in self.type_index[deleted_type] if e.get('id') != event_id]
+                if not self.type_index[deleted_type]:
+                    del self.type_index[deleted_type]
+
+            deleted = True
+
+        # Jeśli nie znaleziono przez ID, spróbuj wyszukać po ID i typie we wszystkich indeksach
+        if not deleted and event_type:
+            # Sprawdź w indeksie typów
+            if event_type in self.type_index:
+                matching_events = [e for e in self.type_index[event_type] if e.get('id') == event_id]
+                for event in matching_events:
+                    user_id = str(event.get('user_id', ''))
+                    date_key = event.get('date_key', '')
+                    date_str = self._standardize_date(date_key)
+
+                    # Usuń z wszystkich indeksów
+                    self.all_events = [e for e in self.all_events if
+                                       not (e.get('id') == event_id and e.get('type') == event_type)]
+
+                    key = (user_id, date_str)
+                    if key in self.user_date_index:
+                        self.user_date_index[key] = [e for e in self.user_date_index[key] if
                                                      not (e.get('id') == event_id and e.get('type') == event_type)]
-                    if not self.type_index[deleted_type]:
-                        del self.type_index[deleted_type]
+                        if not self.user_date_index[key]:
+                            del self.user_date_index[key]
 
-            return True
+                    if date_str in self.date_index:
+                        self.date_index[date_str] = [e for e in self.date_index[date_str] if
+                                                     not (e.get('id') == event_id and e.get('type') == event_type)]
+                        if not self.date_index[date_str]:
+                            del self.date_index[date_str]
 
-        # Oryginalna logika dla przypadku gdy nie podano typu zdarzenia
-        event = self.id_index.get(event_id)
-        if not event:
-            print(f"Nie znaleziono zdarzenia o ID {event_id} (bez określonego typu)")
-            return False
+                    if user_id in self.user_index:
+                        self.user_index[user_id] = [e for e in self.user_index[user_id] if
+                                                    not (e.get('id') == event_id and e.get('type') == event_type)]
+                        if not self.user_index[user_id]:
+                            del self.user_index[user_id]
 
-        # Usuń z indeksu ID
-        del self.id_index[event_id]
+                    self.type_index[event_type] = [e for e in self.type_index[event_type] if e.get('id') != event_id]
+                    if not self.type_index[event_type]:
+                        del self.type_index[event_type]
 
-        # Usuń z listy wszystkich zdarzeń
-        self.all_events = [e for e in self.all_events if e.get('id') != event_id]
+                    # Usuń z indeksu ID jeśli istnieje
+                    if event_id in self.id_index:
+                        del self.id_index[event_id]
 
-        # Usuń z pozostałych indeksów
-        user_id = str(event.get('user_id', ''))
-        event_date = event.get('date_key', '')
-        date_str = self._standardize_date(event_date)
-        event_type = event.get('type', '')
+                    deleted = True
 
-        print(f"Usuwam z indeksu zdarzenie: ID={event_id}, Typ={event_type}, Użytkownik={user_id}, Data={date_str}")
-
-        # Usuń z indeksu (user_id, date_str)
-        key = (user_id, date_str)
-        if key in self.user_date_index:
-            self.user_date_index[key] = [e for e in self.user_date_index[key] if e.get('id') != event_id]
-            if not self.user_date_index[key]:
-                del self.user_date_index[key]
-
-        # Usuń z indeksu dat
-        if date_str in self.date_index:
-            self.date_index[date_str] = [e for e in self.date_index[date_str] if e.get('id') != event_id]
-            if not self.date_index[date_str]:
-                del self.date_index[date_str]
-
-        # Usuń z indeksu użytkowników
-        if user_id in self.user_index:
-            self.user_index[user_id] = [e for e in self.user_index[user_id] if e.get('id') != event_id]
-            if not self.user_index[user_id]:
-                del self.user_index[user_id]
-
-        # Usuń z indeksu typów
-        if event_type in self.type_index:
-            self.type_index[event_type] = [e for e in self.type_index[event_type] if e.get('id') != event_id]
-            if not self.type_index[event_type]:
-                del self.type_index[event_type]
-
-        return True
-
+        return deleted
 
     def filter_events(self, **kwargs):
         """
@@ -901,13 +889,58 @@ class DataProvider(QObject):  # Dziedziczy po QObject, aby móc emitować sygna�
 
         # Pobierz dane ponownie
         schedule_data = self.get_schedule_data(year, month, use_cache=False)
-        events_data = self.get_events_data(year, month, use_cache=False, build_index=True)  # Przebuduj indeks
+
+        # WAŻNA ZMIANA: Przy odświeżaniu danych, nie używaj zdarzeń z cache
+        # Najpierw pobierz zdarzenia bez budowania indeksu
+        events_data = self.get_events_data(year, month, use_cache=False, as_dict=True, build_index=False)
+
+        # Następnie przebuduj indeks, usuwając wcześniej wszystkie zdarzenia z tego miesiąca
+        if hasattr(self, 'events_index'):
+            # Usuń zdarzenia dla danego miesiąca z indeksu
+            date_prefix = f"{year}-{month:02d}-"
+            self._remove_events_by_month(year, month)
+
+            # Teraz dodaj nowe zdarzenia do indeksu
+            self.events_index.build_from_events(events_data)
+
         users_data = self.get_users_data(year, month, use_cache=False)
 
         # Wyemituj sygnały o zmianie danych
         self.data_changed.emit("schedule", year, month)
         self.data_changed.emit("events", year, month)
         self.data_changed.emit("users", year, month)
+
+    def _remove_events_by_month(self, year, month):
+        """
+        Usuwa z indeksu wszystkie zdarzenia dla danego miesiąca.
+
+        Args:
+            year: Rok
+            month: Miesiąc
+        """
+        if not hasattr(self, 'events_index'):
+            return
+
+        # Format daty dla miesiąca
+        date_prefix = f"{year}-{month:02d}-"
+
+        # Znajdź wszystkie daty dla tego miesiąca
+        month_dates = []
+        for date_str in self.events_index.date_index.keys():
+            if date_str.startswith(date_prefix):
+                month_dates.append(date_str)
+
+        # Usuń zdarzenia dla każdej daty
+        for date_str in month_dates:
+            # Pobierz zdarzenia dla tej daty
+            events = self.events_index.date_index.get(date_str, []).copy()
+
+            # Usuń każde zdarzenie z indeksu
+            for event in events:
+                event_id = event.get('id')
+                event_type = event.get('type')
+                if event_id and event_type:
+                    self.events_index.delete_event(event_id, event_type)
 
     def get_events_for_user_date(self, user_id, date_str):
         """
