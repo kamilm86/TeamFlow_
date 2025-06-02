@@ -1,1 +1,891 @@
+# schedule_model.py - ZMODYFIKOWANA WERSJA z dynamicznymi ikonami
 
+from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QDate
+from PySide6.QtGui import QColor, QBrush
+from debug_utils import debug_print, log_warning, log_error
+from symbol_parser import parse_symbol
+from column_definitions import ColumnDefinitions
+
+# Role danych
+ROLE_DATA = Qt.UserRole
+ROLE_ID = Qt.UserRole + 1
+ROLE_TYPE = Qt.UserRole + 2
+ROLE_HAS_MEETING = Qt.UserRole + 3
+ROLE_HAS_OVERTIME = Qt.UserRole + 4
+
+
+class ScheduleTableModel(QAbstractTableModel):
+    """
+    Model danych z dynamicznymi ikonami
+    """
+
+    # Definicje ról danych
+    ROLE_DATA = ROLE_DATA
+    ROLE_ID = ROLE_ID
+    ROLE_TYPE = ROLE_TYPE
+    ROLE_HAS_MEETING = ROLE_HAS_MEETING
+    ROLE_HAS_OVERTIME = ROLE_HAS_OVERTIME
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        # Podstawowe dane
+        self._data = []
+        self._processed_data = {}
+        self._keys = []
+
+        # Informacje o strukturze
+        self._column_headers = []
+        self._row_count = 0
+        self._column_count = 0
+        self._weekend_columns = []
+
+        # Informacje o pracownikach
+        self._employee_columns = []
+        self._visible_columns = []
+
+        # Informacje o miesiącu
+        self._year = None
+        self._month = None
+        self._days_in_month = 0
+        self._working_days = 0
+
+        # Ustawienia wyglądu
+        self._is_dark_theme = False
+
+        # NOWE: Referencja do DataProvider dla dynamicznych ikon
+        self._data_provider = None
+
+        # ZMODYFIKOWANE: Inicjalizacja ColumnDefinitions
+        self.column_definitions = ColumnDefinitions()
+        self._visible_columns = self.column_definitions.DEFAULT_VISIBLE_COLUMNS.copy()
+        self._employee_columns = self.column_definitions.get_ui_display_columns()
+        self._update_column_structure()
+
+        # Lokalny cache ikon
+        self._icons_cache = {}  # {(user_id, date_str): {'spotkania': 0, 'szkolenia': 0, 'nadgodziny': 0}}
+        self._icons_cache_valid = False
+
+    def data(self, index, role=Qt.DisplayRole):
+        """Zwraca dane dla określonego indeksu i roli - POPRAWIONA WERSJA"""
+        if not index.isValid():
+            return None
+
+        row = index.row()
+        col = index.column()
+
+        if row < 0 or row >= self._row_count or col < 0 or col >= self._column_count:
+            return None
+
+        if row >= len(self._keys):
+            return None
+
+        key = self._keys[row]
+        row_data = self._processed_data.get(key, {})
+        is_employee_column = col < len(self._visible_columns)
+
+        # Obsługa różnych ról
+        if role == Qt.DisplayRole:
+            return self._get_display_data(row_data, key, col, is_employee_column)
+        elif role == Qt.BackgroundRole:
+            return self._get_background_color(row_data, key, col, is_employee_column)
+        elif role == Qt.ForegroundRole:
+            return self._get_foreground_color(row_data, key, col, is_employee_column)
+        elif role == Qt.TextAlignmentRole:
+            return self._get_text_alignment(col, is_employee_column)
+        elif role == self.ROLE_DATA:
+            return self._get_user_data(row_data, key, col, is_employee_column)
+        elif role == self.ROLE_ID:
+            user_data = self._get_user_data(row_data, key, col, is_employee_column)
+            return user_data.get('uzytkownik_id') if is_employee_column else user_data.get('id')
+        elif role == Qt.UserRole + 2:
+            return "pracownik" if is_employee_column else "grafik"
+        elif role == self.ROLE_HAS_MEETING:
+            return self._get_dynamic_meeting_icon(key, col, is_employee_column)
+        elif role == self.ROLE_HAS_OVERTIME:
+            return self._get_dynamic_overtime_icon(key, col, is_employee_column)
+
+        return None
+
+    def _get_user_data(self, row_data, key, col, is_employee_column):
+        """
+        Zwraca dane użytkownika dla danej komórki - NOWA METODA
+        
+        Args:
+            row_data: Dane wiersza z processed_data
+            key: Klucz wiersza (wydzial, przelozony, uzytkownik_dane, uzytkownik_id)
+            col: Indeks kolumny
+            is_employee_column: Czy to kolumna pracownika
+            
+        Returns:
+            dict: Słownik z danymi komórki
+        """
+        if is_employee_column:
+            # Dane dla kolumn pracowników
+            return {
+                'wydzial': key[0] or '',
+                'przelozony': key[1] or '',
+                'przelozony_imie_nazwisko': row_data.get('przelozony_imie_nazwisko', ''),
+                'uzytkownik_dane': key[2] or '',
+                'uzytkownik_id': key[3] or 0,
+                'nr_kadrowy': row_data.get('nr_kadrowy', ''),
+                'rola_nazwa': row_data.get('rola_nazwa', ''),
+                'pod_rola_nazwa': row_data.get('pod_rola_nazwa', ''),
+                'etat': row_data.get('etat', ''),
+                'jezyk': row_data.get('jezyk', ''),
+                'korekta': row_data.get('korekta', ''),
+                'dtn': row_data.get('dtn', ''),
+                'lokalizacja_domyslna': row_data.get('lokalizacja_domyslna', ''),
+                'komentarz_grafik': row_data.get('komentarz_grafik', ''),
+                'column_type': 'employee'
+            }
+        else:
+            # Dane dla kolumn grafiku (dni)
+            schedule_col = col - len(self._visible_columns)
+            
+            if schedule_col < self._days_in_month:
+                # Kolumna dnia
+                day = schedule_col + 1
+                days_data = row_data.get('days', {})
+                day_data = days_data.get(day, {})
+                
+                # Przygotuj datę w formacie YYYY-MM-DD
+                date_str = f"{self._year}-{self._month:02d}-{day:02d}" if self._year and self._month else ''
+                
+                return {
+                    'wydzial': key[0] or '',
+                    'przelozony': key[1] or '',
+                    'przelozony_imie_nazwisko': row_data.get('przelozony_imie_nazwisko', ''),
+                    'uzytkownik_dane': key[2] or '',
+                    'uzytkownik_id': key[3] or 0,
+                    'nr_kadrowy': row_data.get('nr_kadrowy', ''),
+                    'date_str': date_str,
+                    'day': day,
+                    'symbol': day_data.get('symbol', ''),
+                    'hours': day_data.get('hours', 0),
+                    'id': day_data.get('id', ''),
+                    'start_hour': day_data.get('start_hour'),
+                    'has_meeting': day_data.get('spotkania', 0) > 0,
+                    'has_training': day_data.get('szkolenia', 0) > 0,
+                    'has_overtime': day_data.get('nadgodziny', 0) > 0,
+                    'events': day_data.get('events', []),
+                    'lokalizacja_domyslna': row_data.get('lokalizacja_domyslna', ''),
+                    'komentarz_grafik': row_data.get('komentarz_grafik', ''),
+                    'column_type': 'schedule'
+                }
+            elif schedule_col == self._days_in_month:
+                # Kolumna sumy RBH
+                return {
+                    'uzytkownik_id': key[3] or 0,
+                    'uzytkownik_dane': key[2] or '',
+                    'total_hours': row_data.get('total_hours', 0),
+                    'column_type': 'suma_rbh'
+                }
+            elif schedule_col == self._days_in_month + 1:
+                # Kolumna bilansu RBH
+                etat = float(row_data.get('etat', 0) or 0)
+                total_hours = row_data.get('total_hours', 0) or 0
+                expected_hours = etat * self._working_days if hasattr(self, '_working_days') else 0
+                balance = expected_hours - total_hours
+                
+                return {
+                    'uzytkownik_id': key[3] or 0,
+                    'uzytkownik_dane': key[2] or '',
+                    'etat': etat,
+                    'total_hours': total_hours,
+                    'expected_hours': expected_hours,
+                    'balance': balance,
+                    'column_type': 'bilans_rbh'
+                }
+        
+        # Fallback - zwróć podstawowe dane
+        return {
+            'uzytkownik_id': key[3] or 0,
+            'uzytkownik_dane': key[2] or '',
+            'column_type': 'unknown'
+        }
+
+    def _get_dynamic_meeting_icon(self, key, col, is_employee_column):
+        """POPRAWIONA: Używa tylko lokalnego cache, nie pyta DataProvider"""
+        if is_employee_column:
+            return False
+        
+        schedule_col = col - len(self._visible_columns)
+        if schedule_col >= self._days_in_month:
+            return False
+            
+        day = schedule_col + 1
+        user_id = key[3]
+        
+        if not self._year or not self._month:
+            return False
+            
+        # KLUCZOWA ZMIANA: Sprawdź processed_data zamiast pytać DataProvider
+        row_data = self._processed_data.get(key, {})
+        days_data = row_data.get('days', {})
+        day_data = days_data.get(day, {})
+        
+        # Pobierz z lokalnych danych w processed_data
+        has_meetings = day_data.get('spotkania', 0) > 0
+        has_trainings = day_data.get('szkolenia', 0) > 0
+        
+        return has_meetings or has_trainings
+
+    def _get_dynamic_overtime_icon(self, key, col, is_employee_column):
+        """POPRAWIONA: Używa tylko lokalnego cache, nie pyta DataProvider"""
+        if is_employee_column:
+            return False
+        
+        schedule_col = col - len(self._visible_columns)
+        if schedule_col >= self._days_in_month:
+            return False
+            
+        day = schedule_col + 1
+        user_id = key[3]
+        
+        if not self._year or not self._month:
+            return False
+            
+        # KLUCZOWA ZMIANA: Sprawdź processed_data zamiast pytać DataProvider
+        row_data = self._processed_data.get(key, {})
+        days_data = row_data.get('days', {})
+        day_data = days_data.get(day, {})
+        
+        # Pobierz z lokalnych danych w processed_data
+        has_overtime = day_data.get('nadgodziny', 0) > 0
+        
+        return has_overtime
+        
+    def refresh_specific_icons(self, user_date_pairs):
+        """
+        NOWA METODA: Odświeża ikony tylko dla określonych par (user_id, date_str)
+        """
+        if not user_date_pairs or not self._data_provider:
+            return
+        
+        affected_cells = []
+        
+        for user_id, date_str in user_date_pairs:
+            # Wyczyść z lokalnego cache
+            cache_key = (user_id, date_str)
+            if hasattr(self, '_icons_cache') and cache_key in self._icons_cache:
+                del self._icons_cache[cache_key]
+            
+            # Znajdź pozycję w modelu
+            try:
+                year, month, day_str = date_str.split('-')
+                day = int(day_str)
+                
+                if int(year) != self._year or int(month) != self._month:
+                    continue
+                    
+                # Znajdź wiersz użytkownika
+                for idx, key in enumerate(self._keys):
+                    if str(key[3]) == str(user_id):
+                        col = len(self._visible_columns) + day - 1
+                        if 0 <= col < self._column_count:
+                            affected_cells.append((idx, col))
+                        break
+            except:
+                continue
+
+        # Emituj dataChanged tylko dla zmienionych komórek
+        for row, col in affected_cells:
+            model_index = self.index(row, col)
+            roles = [self.ROLE_HAS_MEETING, self.ROLE_HAS_OVERTIME]
+            self.dataChanged.emit(model_index, model_index, roles)
+        
+        debug_print(f"Model: Odświeżono ikony dla {len(affected_cells)} komórek")
+
+    def update_data(self, data_provider_v2, year, month):
+        """
+        ZMODYFIKOWANA METODA: Przechowuje referencję do DataProvider
+        """
+        # Zapisz poprzedni stan
+        old_row_count = self._row_count
+        old_column_count = self._column_count
+
+        # NOWE: Zapisz referencję do DataProvider
+        self._data_provider = data_provider_v2
+
+        # Ustaw rok i miesiąc
+        self._year = year
+        self._month = month
+        self._days_in_month = self._get_days_in_month(year, month)
+        self._working_days = self._fetch_working_days(year, month)
+
+        # Pobierz processed_data z DataProvider (z dynamicznymi ikonami)
+        new_processed_data = data_provider_v2.get_processed_data(year, month)
+        self._data = data_provider_v2.get_schedule_data(year, month)
+
+        debug_print(f"Model: Otrzymano processed_data z {len(new_processed_data)} użytkownikami")
+
+        # Reset modelu
+        self.beginResetModel()
+        self._processed_data = new_processed_data
+        self._keys = list(new_processed_data.keys())
+        self._update_column_structure()
+        self._row_count = len(self._keys)
+        self.endResetModel()
+
+        debug_print(f"Model zaktualizowany: {self._row_count} wierszy, {self._column_count} kolumn")
+
+    def update_event_indicator(self, user_id, date_str, event_type, is_active=True):
+        """
+        POPRAWIONA WERSJA: Aktualizuje wskaźnik zdarzenia bez nadmiernego wywoływania invalidate_icons_cache
+        """
+        if not user_id or not date_str:
+            return False
+
+        if date_str.count('-') != 2:
+            return False
+
+        try:
+            year, month, day_str = date_str.split('-')
+            day = int(day_str)
+            year, month = int(year), int(month)
+        except ValueError:
+            return False
+
+        if year != self._year or month != self._month:
+            return False
+
+        # Znajdź wiersz użytkownika
+        row_index = -1
+        user_id_str = str(user_id)
+
+        for idx, key in enumerate(self._keys):
+            if str(key[3]) == user_id_str:
+                row_index = idx
+                break
+
+        if row_index == -1:
+            return False
+
+        col = len(self._visible_columns) + day - 1
+
+        if 0 <= row_index < self._row_count and 0 <= col < self._column_count:
+            # Wyczyść tylko lokalny cache dla tej komórki
+            cell_key = (user_id, date_str)
+            if hasattr(self, '_icons_cache') and cell_key in self._icons_cache:
+                del self._icons_cache[cell_key]
+
+            # ZMIANA: Wyczyść też cache w DataProvider dla tej konkretnej komórki
+            if self._data_provider and hasattr(self._data_provider, '_icons_cache_by_month'):
+                try:
+                    month_key = (year, month)
+                    if month_key in self._data_provider._icons_cache_by_month:
+                        month_cache = self._data_provider._icons_cache_by_month[month_key]
+                        if cell_key in month_cache:
+                            del month_cache[cell_key]
+                except:
+                    pass
+
+            model_index = self.index(row_index, col)
+            roles = [self.ROLE_HAS_MEETING, self.ROLE_HAS_OVERTIME]
+            self.dataChanged.emit(model_index, model_index, roles)
+            debug_print(f"Model: Emitowano sygnał dataChanged dla komórki ({row_index}, {col})")
+            return True
+
+        return False
+
+    def sort(self, column, order):
+        """Sortuje dane według wskazanej kolumny"""
+        if column >= len(self._visible_columns):
+            return
+
+        col_id = self._visible_columns[column]
+        self.layoutAboutToBeChanged.emit()
+        self._keys.sort(key=lambda k: self._get_sort_key(k, col_id),
+                        reverse=(order == Qt.DescendingOrder))
+        self.layoutChanged.emit()
+
+    def _get_sort_key(self, key, col_id):
+        """Zwraca klucz sortowania dla danego wiersza i kolumny"""
+        row_data = self._processed_data.get(key, {})
+
+        if col_id == 'wydzial':
+            return key[0] or ""
+        elif col_id == 'przelozony':
+            return key[1] or ""
+        elif col_id == 'uzytkownik_dane':
+            return key[2] or ""
+        elif col_id == 'uzytkownik_id':
+            try:
+                return int(key[3]) if key[3] is not None else 0
+            except (ValueError, TypeError):
+                return 0
+        elif col_id in row_data:
+            value = row_data.get(col_id, '')
+            if col_id in ['etat', 'dtn', 'korekta']:
+                try:
+                    return float(value) if value is not None else 0
+                except (ValueError, TypeError):
+                    return 0
+            return str(value)
+        return ""
+
+    def rowCount(self, parent=QModelIndex()):
+        """Zwraca liczbę wierszy w modelu"""
+        if parent.isValid():
+            return 0
+        return self._row_count
+
+    def columnCount(self, parent=QModelIndex()):
+        """Zwraca liczbę kolumn w modelu"""
+        if parent.isValid():
+            return 0
+        return self._column_count
+
+    def headerData(self, section, orientation, role=Qt.DisplayRole):
+        """Zwraca dane nagłówka"""
+        if orientation == Qt.Horizontal:
+            if role == Qt.DisplayRole:
+                if section < len(self._visible_columns):
+                    column_id = self._visible_columns[section]
+                    # ZMODYFIKOWANE: Użyj column_definitions zamiast _employee_columns
+                    col_def = self.column_definitions.SCHEDULE_COLUMNS.get(column_id)
+                    if col_def:
+                        return col_def.name
+                    return column_id
+                else:
+                    if section < len(self._column_headers):
+                        return self._column_headers[section]
+            elif role == Qt.BackgroundRole:
+                visible_columns_count = len(self._visible_columns)
+                if section >= visible_columns_count:
+                    schedule_column = section - visible_columns_count
+                    if schedule_column in self._weekend_columns:
+                        return QBrush(QColor(120, 40, 40) if self._is_dark_theme else QColor(255, 200, 200))
+            elif role == Qt.TextAlignmentRole:
+                return Qt.AlignCenter
+        elif orientation == Qt.Vertical:
+            if role == Qt.DisplayRole:
+                return str(section + 1)
+        return None
+
+    def setData(self, index, value, role=Qt.EditRole):
+        """POPRAWIONA: Zapisuje dane do modelu po edycji i automatycznie odświeża widok"""
+        if not index.isValid():
+            return False
+
+        if role == Qt.EditRole:
+            row = index.row()
+            col = index.column()
+
+            if row >= len(self._keys):
+                return False
+
+            key = self._keys[row]
+
+            if col >= len(self._visible_columns):
+                schedule_col = col - len(self._visible_columns)
+                if schedule_col < self._days_in_month:
+                    day = schedule_col + 1
+
+                    # Aktualizuj processed_data
+                    user_data = self._processed_data[key]
+                    days_data = user_data.setdefault('days', {})
+                    day_data = days_data.setdefault(day, {})
+
+                    old_symbol = day_data.get('symbol', '')
+                    new_symbol = str(value)
+                    day_data['symbol'] = new_symbol
+
+                    # Przelicz godziny
+                    from symbol_parser import parse_symbol
+                    parsed = parse_symbol(new_symbol)
+                    old_hours = day_data.get('hours', 0) or 0
+                    new_hours = parsed.get('work_hours', 0) or 0
+                    day_data['hours'] = new_hours
+                    day_data['start_hour'] = parsed.get('start_hour')
+
+                    # Aktualizuj total_hours
+                    if old_symbol:
+                        old_parsed = parse_symbol(old_symbol)
+                        old_hours = old_parsed.get('work_hours', 0) or 0
+
+                    user_data['total_hours'] = (user_data.get('total_hours', 0) or 0) - old_hours + new_hours
+
+                    # KLUCZOWE: Emituj sygnał dataChanged dla tej komórki i dla kolumn sum
+                    self.dataChanged.emit(index, index, [Qt.DisplayRole, Qt.BackgroundRole])
+
+                    # Odśwież też kolumny sum RBH (przedostatnia i ostatnia kolumna)
+                    sum_col_index = len(self._visible_columns) + self._days_in_month
+                    bilans_col_index = sum_col_index + 1
+
+                    sum_index = self.index(row, sum_col_index)
+                    bilans_index = self.index(row, bilans_col_index)
+
+                    if sum_index.isValid():
+                        self.dataChanged.emit(sum_index, sum_index, [Qt.DisplayRole])
+                    if bilans_index.isValid():
+                        self.dataChanged.emit(bilans_index, bilans_index, [Qt.DisplayRole, Qt.BackgroundRole])
+
+                    debug_print(
+                        f"Model.setData: '{old_symbol}' -> '{new_symbol}' w [{row},{col}] ({old_hours}h -> {new_hours}h)")
+                    return True
+
+        return False
+
+    def flags(self, index):
+        """Zwraca flagi określające możliwe operacje na elemencie"""
+        if not index.isValid():
+            return Qt.NoItemFlags
+
+        flags = Qt.ItemIsEnabled | Qt.ItemIsSelectable
+        col = index.column()
+        if col >= len(self._visible_columns):
+            schedule_col = col - len(self._visible_columns)
+            if schedule_col < self._days_in_month:
+                flags |= Qt.ItemIsEditable
+        return flags
+
+
+    def _get_display_data(self, row_data, key, col, is_employee_column):
+        """Zwraca dane do wyświetlenia dla danej komórki"""
+        if is_employee_column:
+            if col >= len(self._visible_columns):
+                return ""
+            col_id = self._visible_columns[col]
+            if col_id == 'wydzial':
+                return key[0] or ""
+            elif col_id == 'przelozony':
+                return key[1] or ""
+            elif col_id == 'uzytkownik_dane':
+                return key[2] or ""
+            elif col_id == 'uzytkownik_id':
+                return str(key[3] or "")
+            elif col_id in row_data:
+                return str(row_data.get(col_id, ''))
+            return ''
+        else:
+            days_data = row_data.get('days', {})
+            schedule_col = col - len(self._visible_columns)
+
+            if schedule_col == self._days_in_month + 1:
+                # BilansRBH
+                etat = float(row_data.get('etat', 0) or 0)
+                total_hours = row_data.get('total_hours', 0) or 0
+                expected_hours = etat * self._working_days
+                balance = expected_hours - total_hours
+                return f"{balance:.1f}"
+            elif schedule_col == self._days_in_month:
+                # SumaRBH
+                return str(row_data.get('total_hours', 0))
+            elif 0 <= schedule_col < self._days_in_month:
+                day = schedule_col + 1
+                day_data = days_data.get(day, {})
+                return day_data.get('symbol', '')
+            return ''
+
+    def _get_background_color(self, row_data, key, col, is_employee_column):
+        """Zwraca kolor tła dla danej komórki"""
+        if not is_employee_column:
+            schedule_col = col - len(self._visible_columns)
+
+            if schedule_col == self._days_in_month + 1:
+                # Kolorowanie bilansu RBH
+                etat = float(row_data.get('etat', 0) or 0)
+                total_hours = row_data.get('total_hours', 0) or 0
+                expected_hours = etat * self._working_days
+                balance = expected_hours - total_hours
+
+                if balance < 0:
+                    return QBrush(QColor(255, 200, 200) if not self._is_dark_theme else QColor(120, 40, 40))
+                elif balance > 0:
+                    return QBrush(QColor(255, 200, 200) if not self._is_dark_theme else QColor(120, 40, 40))
+                elif balance == 0:
+                    return QBrush(QColor(200, 255, 200) if not self._is_dark_theme else QColor(40, 120, 40))
+
+            if schedule_col < self._days_in_month:
+                day = schedule_col + 1
+                days_data = row_data.get('days', {})
+                day_data = days_data.get(day, {})
+                symbol = day_data.get('symbol', '')
+
+                if symbol:
+                    parsed_symbol = parse_symbol(symbol)
+                    special_symbol = parsed_symbol['special_symbol'] or ""
+                    if "OS" in special_symbol or "U" in special_symbol:
+                        return QBrush(QColor(255, 180, 0))
+
+                    start_hour = parsed_symbol['start_hour']
+                    if start_hour is None:
+                        start_hour = day_data.get('start_hour')
+                    if start_hour is not None:
+                        return QBrush(self._get_color_by_start_hour(start_hour))
+        return None
+
+    def _get_foreground_color(self, row_data, key, col, is_employee_column):
+        """Zwraca kolor tekstu dla danej komórki"""
+        if not is_employee_column:
+            schedule_col = col - len(self._visible_columns)
+            if schedule_col < self._days_in_month:
+                day = schedule_col + 1
+                days_data = row_data.get('days', {})
+                day_data = days_data.get(day, {})
+                symbol = day_data.get('symbol', '')
+
+                if symbol:
+                    parsed_symbol = parse_symbol(symbol)
+                    special_symbol = parsed_symbol['special_symbol']
+                    if special_symbol and ("OS" in special_symbol or "U" in special_symbol):
+                        return QBrush(QColor(0, 0, 0))
+
+                    start_hour = parsed_symbol['start_hour']
+                    if start_hour is None:
+                        start_hour = day_data.get('start_hour')
+                    if start_hour is not None:
+                        if 5 <= start_hour <= 19:
+                            return QBrush(QColor(0, 0, 0))
+                        else:
+                            return QBrush(QColor(255, 255, 255))
+        return None
+
+    def _get_text_alignment(self, col, is_employee_column):
+        """Zwraca wyrównanie tekstu dla danej kolumny"""
+        if is_employee_column:
+            return Qt.AlignLeft | Qt.AlignVCenter
+        else:
+            return Qt.AlignCenter
+
+    
+    def _get_color_by_start_hour(self, hour):
+        """Zwraca kolor dla danej godziny rozpoczęcia"""
+        if hour is None or hour < 0 or hour > 23:
+            return QColor(255, 255, 255, 0)
+
+        if hour == 5 or hour == 6:
+            return QColor(204, 255, 255)
+        elif hour == 7:
+            return QColor(0, 255, 255)
+        elif hour == 8:
+            return QColor(0, 204, 255)
+        elif hour == 9:
+            return QColor(0, 255, 0)
+        elif hour == 10:
+            return QColor(153, 204, 0)
+        elif hour == 11:
+            return QColor(204, 255, 204)
+        elif hour == 12:
+            return QColor(255, 255, 153)
+        elif hour == 13:
+            return QColor(255, 204, 153)
+        elif hour == 14:
+            return QColor(255, 153, 0)
+        elif hour == 15:
+            return QColor(255, 0, 255)
+        elif hour == 16:
+            return QColor(204, 0, 0)
+        elif 17 <= hour <= 21:
+            return QColor(150, 150, 150)
+        elif hour >= 22 or hour <= 4:
+            return QColor(51, 51, 51)
+        return QColor(255, 255, 255, 0)
+
+    # Metody publiczne
+    def set_theme(self, is_dark_theme):
+        """Ustawia motyw (jasny/ciemny)"""
+        if self._is_dark_theme != is_dark_theme:
+            self._is_dark_theme = is_dark_theme
+            self.layoutChanged.emit()
+
+    def set_employee_columns(self, columns, visible_columns=None):
+        """Ustawia informacje o kolumnach pracowników"""
+        if columns and isinstance(columns, list):
+            valid_columns = []
+            for col in columns:
+                if isinstance(col, tuple) and len(col) == 3:
+                    valid_columns.append(col)
+                else:
+                    debug_print(f"Nieprawidłowy format kolumny: {col}")
+            self._employee_columns = valid_columns
+        else:
+            debug_print(f"Nieprawidłowy format danych kolumn: {columns}")
+            self._employee_columns = []
+
+        if visible_columns is None:
+            self._visible_columns = [col[0] for col in self._employee_columns[:3]] if self._employee_columns else []
+        else:
+            self._visible_columns = visible_columns
+
+        debug_print(f"Ustawiono kolumny pracowników: {self._employee_columns}")
+        debug_print(f"Ustawiono widoczne kolumny: {self._visible_columns}")
+
+        if self._year is not None and self._month is not None:
+            self._update_column_structure()
+
+    def set_visible_columns(self, column_ids):
+        """Ustawia widoczne kolumny pracowników"""
+        if self._visible_columns != column_ids:
+            self.beginResetModel()
+            self._visible_columns = column_ids
+            self._update_column_structure()
+            self.endResetModel()
+
+    def get_visible_columns(self):
+        """Zwraca listę identyfikatorów widocznych kolumn"""
+        return self._visible_columns
+
+    def update_filtered_data(self, filtered_data):
+        """Aktualizuje dane modelu po filtrowaniu"""
+        new_keys = list(filtered_data.keys())
+        new_row_count = len(new_keys)
+
+        if self._row_count != new_row_count or self._keys != new_keys:
+            self.beginResetModel()
+            self._processed_data = filtered_data
+            self._keys = new_keys
+            self._row_count = new_row_count
+            self.endResetModel()
+        else:
+            changed_rows = []
+            for row_idx, key in enumerate(self._keys):
+                if key in filtered_data:
+                    new_row_data = filtered_data[key]
+                    old_row_data = self._processed_data.get(key, {})
+                    if new_row_data != old_row_data:
+                        changed_rows.append(row_idx)
+
+            self._processed_data = filtered_data
+
+            for row in changed_rows:
+                start_col = 0
+                end_col = self._column_count - 1
+                top_left = self.index(row, start_col)
+                bottom_right = self.index(row, end_col)
+                self.dataChanged.emit(top_left, bottom_right)
+
+    def get_data_at(self, row, col):
+        """Zwraca dane dla konkretnej pozycji"""
+        index = self.index(row, col)
+        return self.data(index, Qt.UserRole)
+
+    def get_processed_data(self):
+        """Zwraca przetworzone dane"""
+        return self._processed_data
+
+    def _fetch_working_days(self, year, month):
+        """Pobiera liczbę dni pracujących z bazy danych"""
+        from db_connector import DatabaseConnector
+
+        try:
+            conn = DatabaseConnector.get_connection()
+            cursor = conn.cursor()
+            query = "SELECT LiczbaDniPracujacych FROM dbo.Kalendarz WHERE ROK = ? AND Miesiąc = ?"
+            cursor.execute(query, (year, month))
+            result = cursor.fetchone()
+            conn.close()
+
+            if result and result[0]:
+                working_days = result[0]
+                debug_print(f"Pobrano liczbę dni pracujących: {working_days} dla {year}-{month}")
+                return working_days
+            else:
+                debug_print(f"Brak danych o dniach pracujących dla {year}-{month}, używam domyślnej wartości: 21")
+                return 21
+        except Exception as e:
+            log_error(f"Błąd podczas pobierania liczby dni pracujących: {e}", exception=e)
+            return 21
+
+    def _update_column_structure(self):
+        """Aktualizuje strukturę kolumn i nagłówków"""
+        self._column_headers = []
+
+        for col_id in self._visible_columns:
+            col_info = None
+            for c in self._employee_columns:
+                if c[0] == col_id:
+                    col_info = c
+                    break
+            if col_info:
+                self._column_headers.append(col_info[1])
+            else:
+                self._column_headers.append(col_id)
+
+        for day in range(1, self._days_in_month + 1):
+            date = QDate(self._year, self._month, day)
+            day_of_week = date.dayOfWeek()
+            day_labels = ["Pn", "Wt", "Śr", "Cz", "Pt", "So", "Nd"]
+            day_label = day_labels[day_of_week - 1]
+            self._column_headers.append(f"{day}\n{day_label}")
+
+        self._column_headers.append("Suma\nRBH")
+        self._column_headers.append("Bilans\nRBH")
+        self._column_count = len(self._column_headers)
+
+    def _get_days_in_month(self, year, month):
+        """Zwraca liczbę dni w danym miesiącu"""
+        if month in [4, 6, 9, 11]:
+            return 30
+        elif month == 2:
+            if (year % 4 == 0 and year % 100 != 0) or (year % 400 == 0):
+                return 29
+            else:
+                return 28
+        else:
+            return 31
+
+    def _find_weekend_columns(self, year, month):
+        """Znajduje indeksy kolumn z weekendami"""
+        weekend_columns = []
+        if not year or not month:
+            return weekend_columns
+
+        days_in_month = self._get_days_in_month(year, month)
+        for day in range(1, days_in_month + 1):
+            date = QDate(year, month, day)
+            day_of_week = date.dayOfWeek()
+            if day_of_week >= 6:
+                weekend_columns.append(day - 1)
+        return weekend_columns
+    
+    def update_cell_icons_directly(self, user_id, date_str, has_meetings=False, has_trainings=False, has_overtime=False):
+        """
+        NOWA METODA: Bezpośrednio aktualizuje ikony w processed_data bez pytania bazy
+        """
+        if not self._year or not self._month or not date_str:
+            return False
+            
+        try:
+            year, month, day_str = date_str.split('-')
+            day = int(day_str)
+            year, month = int(year), int(month)
+            
+            if year != self._year or month != self._month:
+                return False
+                
+            # Znajdź wiersz użytkownika
+            target_key = None
+            for key in self._keys:
+                if str(key[3]) == str(user_id):
+                    target_key = key
+                    break
+                    
+            if not target_key:
+                return False
+                
+            # Aktualizuj bezpośrednio w processed_data
+            if target_key in self._processed_data:
+                days_data = self._processed_data[target_key].setdefault('days', {})
+                day_data = days_data.setdefault(day, {})
+                
+                # Ustaw ikony bezpośrednio
+                day_data['spotkania'] = 1 if has_meetings else 0
+                day_data['szkolenia'] = 1 if has_trainings else 0
+                day_data['nadgodziny'] = 1 if has_overtime else 0
+                
+                # Emituj sygnał zmiany
+                row_index = self._keys.index(target_key)
+                col = len(self._visible_columns) + day - 1
+                model_index = self.index(row_index, col)
+                roles = [self.ROLE_HAS_MEETING, self.ROLE_HAS_OVERTIME]
+                self.dataChanged.emit(model_index, model_index, roles)
+                
+                debug_print(f"Model: Bezpośrednio zaktualizowano ikony dla {user_id}, {date_str}")
+                return True
+                
+        except Exception as e:
+            log_error(f"Błąd aktualizacji ikon: {e}")
+            
+        return False
