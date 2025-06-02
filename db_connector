@@ -1,8 +1,9 @@
 import sqlite3
 import pyodbc
 from config import DATABASE_CONFIG, ENVIRONMENT
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, time
 import getpass
+from debug_utils import debug_print, log_warning, log_error
 
 class DatabaseConnector:
     """
@@ -53,23 +54,47 @@ class DatabaseConnector:
         Returns:
             list/tuple: Wyniki zapytania
         """
+
         conn = DatabaseConnector.get_connection()
         cursor = conn.cursor()
 
-        if params:
-            cursor.execute(query, params)
-        else:
-            cursor.execute(query)
+        start_time = time.time()
+        try:
+            if params:
+                cursor.execute(query, params)
+            else:
+                cursor.execute(query)
 
-        if fetch_all:
-            result = cursor.fetchall()
-        else:
-            result = cursor.fetchone()
+            if fetch_all:
+                result = cursor.fetchall()
+            else:
+                result = cursor.fetchone()
 
-        conn.commit()
-        conn.close()
+            end_time = time.time()
+            execution_time = end_time - start_time
 
-        return result
+            # Loguj zapytanie SQL
+            debug_print(query, params, execution_time)
+
+            conn.commit()
+            conn.close()
+
+            return result
+        except Exception as e:
+            end_time = time.time()
+            execution_time = end_time - start_time
+
+            # Loguj błąd zapytania
+            log_error(query, params, str(e))
+
+            # Zamknij połączenie
+            try:
+                conn.close()
+            except:
+                pass
+
+            # Ponownie zgłoś wyjątek
+            raise
 
 
 # Funkcja zwracająca informacje o użytkowniku (ID, NumerKadrowy, RolaNazwa)
@@ -101,7 +126,7 @@ def get_modifier_id():
         return "System", username, "Użytkownik"
 
     except Exception as e:
-        print(f"Błąd podczas pobierania informacji o użytkowniku: {e}")
+        debug_print(f"Błąd podczas pobierania informacji o użytkowniku: {e}")
         # Wartości domyślne w przypadku błędu
         return "System", username, "Użytkownik"
 
