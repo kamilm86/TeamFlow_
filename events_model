@@ -1,1 +1,454 @@
+from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex
+from PySide6.QtGui import QColor, QBrush
+from debug_utils import debug_print, log_warning, log_error
 
+# Definiuj stałe dla ról danych
+ROLE_DATA = Qt.UserRole
+ROLE_ID = Qt.UserRole + 1
+ROLE_TYPE = Qt.UserRole + 2
+
+class EventsTableModel(QAbstractTableModel):
+    """
+    Model danych dla tabeli zdarzeń.
+    """
+    # Definicje ról danych używanych w modelu
+    ROLE_DATA = ROLE_DATA
+    ROLE_ID = ROLE_ID
+    ROLE_TYPE = ROLE_TYPE
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._data = []  # Lista zdarzeń
+        self._filtered_data = []  # Lista przefiltrowanych zdarzeń
+        self._column_headers = [
+            "Id", "Typ", "Temat", "Nazwa", "Użytkownik",
+            "Data", "Od", "Do", "Status", "Akcje"
+        ]
+        self._column_count = len(self._column_headers)
+        self._is_dark_theme = False
+
+    def rowCount(self, parent=QModelIndex()):
+        """Zwraca liczbę wierszy w modelu"""
+        if parent.isValid():
+            return 0
+        return len(self._filtered_data)
+
+    def columnCount(self, parent=QModelIndex()):
+        """Zwraca liczbę kolumn w modelu"""
+        if parent.isValid():
+            return 0
+        return self._column_count
+
+    def data(self, index, role=Qt.DisplayRole):
+        """Zwraca dane dla określonego indeksu i roli"""
+        if not index.isValid():
+            return None
+
+        row = index.row()
+        col = index.column()
+
+        # Sprawdź, czy indeks jest w zakresie
+        if row < 0 or row >= len(self._filtered_data) or col < 0 or col >= self._column_count:
+            return None
+
+        # Pobierz zdarzenie
+        event = self._filtered_data[row]
+
+        # Obsługa różnych ról
+        if role == Qt.DisplayRole:
+            # Zwróć dane do wyświetlenia
+            return self._get_display_data(event, col)
+        elif role == Qt.BackgroundRole:
+            # Kolor tła w zależności od typu zdarzenia
+            return self._get_background_color(event, col)
+        elif role == Qt.ForegroundRole:
+            # Kolor tekstu
+            return self._get_foreground_color(event, col)
+        elif role == Qt.TextAlignmentRole:
+            # Wyrównanie tekstu
+            return self._get_text_alignment(col)
+        elif role == Qt.ToolTipRole:
+            # Podpowiedzi
+            return self._get_tooltip(event, col)
+        elif role == self.ROLE_DATA:
+            # Dane użytkownika - zwróć całe zdarzenie
+            return event
+        elif role == self.ROLE_ID:
+            # Zwróć ID zdarzenia
+            return event.get('id')
+        elif role == self.ROLE_TYPE:
+            # Zwróć typ zdarzenia
+            return event.get('type', '')
+
+        return None
+
+    def headerData(self, section, orientation, role=Qt.DisplayRole):
+        """Zwraca dane nagłówka"""
+        if role == Qt.DisplayRole:
+            if orientation == Qt.Horizontal:
+                # Zwróć nagłówek kolumny
+                if 0 <= section < self._column_count:
+                    return self._column_headers[section]
+            elif orientation == Qt.Vertical:
+                # Zwróć nagłówek wiersza
+                return str(section + 1)
+        elif role == Qt.TextAlignmentRole:
+            if orientation == Qt.Horizontal:
+                return Qt.AlignCenter
+
+        return None
+
+    def flags(self, index):
+        """Zwraca flagi określające możliwe operacje na elemencie"""
+        if not index.isValid():
+            return Qt.NoItemFlags
+
+        # Podstawowe flagi - tylko odczyt i możliwość zaznaczenia
+        flags = Qt.ItemIsEnabled | Qt.ItemIsSelectable
+
+        return flags
+
+    # ---- Metody pomocnicze dla data() ----
+
+    def _get_display_data(self, event, col):
+        """Zwraca dane do wyświetlenia dla danej kolumny"""
+        if col == 0:  # Id
+            return str(event.get('id', ''))
+        elif col == 1:  # Typ
+            return event.get('type', '')
+        elif col == 2:  # Temat
+            return event.get('topic', '')
+        elif col == 3:  # Nazwa
+            return event.get('name', '')
+        elif col == 4:  # Użytkownik
+            return event.get('user_name', '')
+        elif col == 5:  # Data
+            return event.get('date', '')
+        elif col == 6:  # Od
+            return event.get('time_from', '')
+        elif col == 7:  # Do
+            return event.get('time_to', '')
+        elif col == 8:  # Status
+            return event.get('status', '')
+        elif col == 9:  # Akcje - puste, bo przyciski będą dodawane przez delegata
+            return ""
+
+        return ""
+
+    def _get_background_color(self, event, col):
+        """Zwraca kolor tła dla danej kolumny"""
+        # Kolorowanie w zależności od typu zdarzenia
+        if col == 1:  # Kolumna typu
+            event_type = event.get('type', '')
+            if event_type == 'Spotkanie':
+                return QBrush(QColor(100, 149, 237))  # Cornflower Blue
+            elif event_type == 'Szkolenie':
+                return QBrush(QColor(144, 238, 144))  # Light Green
+            elif event_type == 'Nadgodziny':
+                return QBrush(QColor(255, 165, 0))  # Orange
+
+        return None
+
+    def _get_foreground_color(self, event, col):
+        """Zwraca kolor tekstu dla danej kolumny"""
+        # Dla większości przypadków używamy domyślnego koloru tekstu
+        base_color = QColor(255, 255, 255) if self._is_dark_theme else QColor(0, 0, 0)
+
+        # Dla niektórych typów zdarzeń możemy chcieć inny kolor tekstu
+        if col == 1:  # Kolumna typu
+            event_type = event.get('type', '')
+            if event_type == 'Nadgodziny':
+                # Nadgodziny mają pomarańczowe tło, więc użyjmy czarnego tekstu dla lepszej czytelności
+                return QBrush(QColor(0, 0, 0))
+
+        return None
+
+    def _get_text_alignment(self, col):
+        """Zwraca wyrównanie tekstu dla danej kolumny"""
+        # Wszystkie kolumny wyrównane do środka oprócz Tematu i Nazwy
+        if col in [2, 3]:  # Temat, Nazwa
+            return Qt.AlignLeft | Qt.AlignVCenter
+        else:
+            return Qt.AlignCenter
+
+    def _get_tooltip(self, event, col):
+        """Zwraca podpowiedź dla danej kolumny"""
+        # Przygotuj szczegółowe podpowiedzi dla kolumn
+        if col == 0:  # Id
+            return f"ID: {event.get('id', '')}"
+        elif col == 1:  # Typ
+            return f"Typ zdarzenia: {event.get('type', '')}"
+        elif col == 2:  # Temat
+            return event.get('topic', '')
+        elif col == 3:  # Nazwa
+            return event.get('name', '')
+        elif col == 4:  # Użytkownik
+            user_name = event.get('user_name', '')
+            user_id = event.get('user_id', '')
+            if user_id:
+                return f"{user_name} (ID: {user_id})"
+            return user_name
+        elif col == 5:  # Data
+            return f"Data: {event.get('date', '')}"
+        elif col == 6:  # Od
+            return f"Czas rozpoczęcia: {event.get('time_from', '')}"
+        elif col == 7:  # Do
+            return f"Czas zakończenia: {event.get('time_to', '')}"
+        elif col == 8:  # Status
+            status = event.get('status', '')
+            if status == '0':
+                return "Status: Nieaktywne"
+            else:
+                return f"Status: {status}"
+        elif col == 9:  # Akcje
+            return "Kliknij, aby usunąć zdarzenie"
+
+        return None
+
+    # ---- Metody publiczne ----
+
+    def set_theme(self, is_dark_theme):
+        """Ustawia motyw (jasny/ciemny)"""
+        if self._is_dark_theme != is_dark_theme:
+            self._is_dark_theme = is_dark_theme
+            # Odśwież widok
+            self.layoutChanged.emit()
+
+    def update_data(self, events_data):
+        """
+        ZOPTYMALIZOWANA WERSJA: Aktualizuje dane tylko gdy rzeczywiście się zmieniły
+        """
+        # Sprawdź czy dane rzeczywiście się zmieniły
+        if hasattr(self, '_data') and self._data == events_data:
+            debug_print("Model zdarzeń: Dane nie uległy zmianie - pomijam aktualizację")
+            return
+
+        # Poprawiona wersja, która nadpisuje wszystkie dane
+        self.beginResetModel()
+        self._data = events_data.copy() if events_data else []
+        self._filtered_data = events_data.copy() if events_data else []
+        self.endResetModel()
+
+        # Wypisz informacje diagnostyczne
+        debug_print(
+            f"Model zdarzeń zaktualizowany: {len(self._data)} zdarzeń w modelu, {len(self._filtered_data)} widocznych")
+
+        if events_data and len(events_data) > 0:
+            debug_print(f"Pierwsze zdarzenie: {events_data[0]}")
+
+    def filtered_update(self, filtered_data):
+        """
+        Aktualizuje tylko przefiltrowane dane, bez zmiany oryginalnych danych.
+        Ta metoda powinna być używana po wywołaniu filter_data przez filter_events_table.
+
+        Args:
+            filtered_data: Lista przefiltrowanych zdarzeń
+        """
+        # Wykonaj pełny reset, ale zachowaj oryginalne dane
+        self.beginResetModel()
+        # Nie zmieniaj self._data, tylko _filtered_data
+        self._filtered_data = filtered_data.copy() if filtered_data else []
+        self.endResetModel()
+
+        print(
+            f"Model zdarzeń zaktualizowany (tylko filtrowane dane): {len(self._data)} zdarzeń w modelu, {len(self._filtered_data)} widocznych")
+
+    def filter_data(self, **filter_params):
+        """
+        Filtruje dane modelu na podstawie podanych parametrów.
+        Zoptymalizowana wersja, która aktualizuje tylko przefiltrowane dane.
+
+        Args:
+            **filter_params: Parametry filtrowania (allowed_types, topic, name, date_from, date_to)
+        """
+        try:
+            # Zapamiętaj liczbę wierszy przed filtrowaniem
+            old_row_count = len(self._filtered_data)
+
+            # Jeśli nie ma parametrów filtrowania, pokaż wszystkie dane
+            if not filter_params:
+                if len(self._filtered_data) != len(self._data):
+                    # Liczba wierszy się zmieni, wykonaj pełny reset
+                    self.beginResetModel()
+                    self._filtered_data = self._data.copy()
+                    self.endResetModel()
+                return
+
+            # Przygotuj przefiltrowane dane
+            filtered_data = []
+
+            # Klucze filtrowania
+            date_from = filter_params.get('date_from')
+            date_to = filter_params.get('date_to')
+            topic = filter_params.get('topic')
+            name = filter_params.get('name')
+            allowed_types = filter_params.get('allowed_types')
+
+            # Użyj cache'a filtrowania jeśli istnieje i parametry się zgadzają
+            cache_key = self._generate_filter_cache_key(filter_params)
+            if hasattr(self, '_filter_cache') and cache_key in self._filter_cache:
+                filtered_data = self._filter_cache[cache_key]
+            else:
+                # Filtruj wszystkie dane według kryteriów
+                for event in self._data:
+                    # Najpierw sprawdź typ zdarzenia - najszybsze kryterium
+                    if allowed_types and event.get('type') not in allowed_types:
+                        continue
+
+                    # Następnie sprawdź datę - kolejne najszybsze kryterium
+                    event_date = self._standardize_date(event.get('date_key', ''))
+                    if (date_from and event_date < date_from) or (date_to and event_date > date_to):
+                        continue
+
+                    # Na końcu sprawdź kryteria tekstowe - najwolniejsze
+                    if topic and topic.lower() not in str(event.get('topic', '')).lower():
+                        continue
+
+                    if name and name.lower() not in str(event.get('name', '')).lower():
+                        continue
+
+                    # Jeśli wszystkie kryteria są spełnione, dodaj zdarzenie do przefiltrowanych danych
+                    filtered_data.append(event)
+
+                # Zapisz w cache dla przyszłego użycia
+                if not hasattr(self, '_filter_cache'):
+                    self._filter_cache = {}
+                self._filter_cache[cache_key] = filtered_data
+
+                # Ogranicz rozmiar cache'a
+                if len(self._filter_cache) > 10:
+                    # Usuń najstarszy wpis (zakładając, że każdy nowy klucz jest dodawany na końcu)
+                    oldest_key = next(iter(self._filter_cache))
+                    del self._filter_cache[oldest_key]
+
+            # Sprawdź, czy liczba wierszy się zmieniła
+            if len(filtered_data) != old_row_count:
+                # Wykonaj pełny reset modelu
+                self.beginResetModel()
+                self._filtered_data = filtered_data
+                self.endResetModel()
+            else:
+                # Sprawdź, czy zawartość się zmieniła
+                content_changed = False
+
+                # Tworzymy słownik mapujący ID zdarzeń na indeksy wierszy dla szybszego wyszukiwania
+                event_id_map = {e.get('id'): i for i, e in enumerate(self._filtered_data) if 'id' in e}
+
+                # Sprawdź, które zdarzenia się zmieniły lub zostały zastąpione
+                changed_rows = set()
+                for i, new_event in enumerate(filtered_data):
+                    event_id = new_event.get('id')
+                    if event_id is not None and event_id in event_id_map:
+                        # Zdarzenie o tym ID już istnieje
+                        old_idx = event_id_map[event_id]
+
+                        # Sprawdź, czy dane zdarzenia się zmieniły
+                        if new_event != self._filtered_data[old_idx]:
+                            changed_rows.add(old_idx)
+                            content_changed = True
+                    else:
+                        # Nowe zdarzenie lub zastąpione zdarzenie
+                        content_changed = True
+                        break
+
+                if content_changed:
+                    # Zaktualizuj dane bez pełnego resetu modelu
+                    self._filtered_data = filtered_data
+
+                    # Emituj sygnały dla zmienionych wierszy
+                    for row in changed_rows:
+                        # Emituj sygnał zmiany danych dla całego wiersza
+                        left_index = self.index(row, 0)
+                        right_index = self.index(row, self.columnCount() - 1)
+                        self.dataChanged.emit(left_index, right_index)
+
+                    # Jeśli zmiana jest bardziej złożona, emituj sygnał zmiany układu
+                    if len(changed_rows) < len(filtered_data):
+                        self.layoutChanged.emit()
+
+        except Exception as e:
+            print(f"Błąd w filter_data: {e}")
+            import traceback
+            traceback.print_exc()
+
+    def _generate_filter_cache_key(self, filter_params):
+        """
+        Generuje klucz cache dla parametrów filtrowania.
+
+        Args:
+            filter_params: Słownik parametrów filtrowania
+
+        Returns:
+            str: Klucz cache
+        """
+        # Sortuj klucze dla spójności
+        sorted_keys = sorted(filter_params.keys())
+        key_parts = []
+
+        for key in sorted_keys:
+            value = filter_params[key]
+            if isinstance(value, list):
+                # Sortuj listy dla spójności
+                value_str = ",".join(sorted(value))
+                key_parts.append(f"{key}=[{value_str}]")
+            else:
+                key_parts.append(f"{key}={value}")
+
+        return "|".join(key_parts)
+
+    def _standardize_date(self, date_str):
+        """
+        Standaryzuje format daty do 'YYYY-MM-DD' dla porównań.
+
+        Args:
+            date_str: Data w dowolnym formacie
+
+        Returns:
+            str: Data w formacie 'YYYY-MM-DD'
+        """
+        if not date_str:
+            return ''
+
+        # Obsługa różnych formatów
+        if isinstance(date_str, str):
+            # Format 'YYYY-MM-DDThh:mm:ss'
+            if 'T' in date_str:
+                return date_str.split('T')[0]
+
+            # Format 'YYYY-MM-DD hh:mm:ss'
+            if ' ' in date_str:
+                return date_str.split(' ')[0]
+
+            # Format 'YYYY-MM-DD'
+            if len(date_str) == 10 and date_str.count('-') == 2:
+                return date_str
+
+            # Format 'DD.MM.YYYY'
+            if len(date_str) == 10 and date_str.count('.') == 2:
+                parts = date_str.split('.')
+                if len(parts) == 3:
+                    return f"{parts[2]}-{parts[1]}-{parts[0]}"
+
+        return date_str
+
+    def get_event(self, row):
+        """
+        Zwraca zdarzenie dla danego wiersza
+
+        Args:
+            row: Indeks wiersza
+
+        Returns:
+            dict: Dane zdarzenia lub None
+        """
+        if 0 <= row < len(self._filtered_data):
+            return self._filtered_data[row]
+        return None
+
+    def get_all_events(self):
+        """Zwraca wszystkie zdarzenia"""
+        return self._data
+
+    def get_filtered_events(self):
+        """Zwraca przefiltrowane zdarzenia"""
+        return self._filtered_data
