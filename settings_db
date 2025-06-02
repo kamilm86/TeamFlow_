@@ -1,6 +1,7 @@
 from db_connector import DatabaseConnector
 import os
 import getpass
+from debug_utils import debug_print, log_warning, log_error
 
 class SettingsDatabase:
     """Klasa do obsługi bazy danych ustawień użytkownika w SQL Server"""
@@ -20,7 +21,7 @@ class SettingsDatabase:
             except:
                 return 'unknown_user'
 
-    def save_settings(self, theme, font_family, font_size, username=None):
+    def save_settings(self, theme, font_family, font_size, load_all_events=True, visible_columns=None, username=None):
         """Zapisuje ustawienia użytkownika do bazy danych SQL Server"""
         if username is None:
             username = self.get_current_username()
@@ -29,14 +30,20 @@ class SettingsDatabase:
             conn = DatabaseConnector.get_connection()
             cursor = conn.cursor()
 
+            # Konwersja listy widocznych kolumn na string (format CSV), jeśli podano
+            columns_str = None
+            if visible_columns:
+                columns_str = ','.join(visible_columns)
+
             # Użyj procedury składowanej do zapisu ustawień
             cursor.execute("""
-                EXEC SaveUserSettings @username=?, @theme=?, @font_family=?, @font_size=?
-            """, (username, theme, font_family, font_size))
+                EXEC SaveUserSettings @username=?, @theme=?, @font_family=?, @font_size=?, @load_all_events=?, @visible_columns=?
+            """, (username, theme, font_family, font_size, load_all_events, columns_str))
 
             conn.commit()
             conn.close()
-            print(f"Ustawienia zapisane dla użytkownika {username}: {theme}, {font_family}, {font_size}")
+            debug_print(
+                f"Ustawienia zapisane dla użytkownika {username}: {theme}, {font_family}, {font_size}, visible_columns={visible_columns}")
             return True
         except Exception as e:
             print(f"Błąd podczas zapisywania ustawień: {e}")
@@ -60,17 +67,27 @@ class SettingsDatabase:
             conn.close()
 
             if result:
+                # Konwersja string (CSV) na listę dla visible_columns, jeśli istnieje
+                visible_columns = None
+                if len(result) >= 5 and result[4]:  # Sprawdź czy jest piąta kolumna i czy nie jest NULL
+                    visible_columns = result[4].split(',')
+
+                # Zwróć wszystkie ustawienia w słowniku
                 return {
                     'theme': result[0],
                     'font_family': result[1],
-                    'font_size': result[2]
+                    'font_size': result[2],
+                    'load_all_events': result[3] if len(result) >= 4 else True,
+                    'visible_columns': visible_columns
                 }
             else:
                 # Domyślne ustawienia
                 return {
                     'theme': 'dark',
                     'font_family': 'Arial',
-                    'font_size': 9
+                    'font_size': 9,
+                    'load_all_events': True,
+                    'visible_columns': None
                 }
         except Exception as e:
             print(f"Błąd podczas ładowania ustawień: {e}")
@@ -78,5 +95,8 @@ class SettingsDatabase:
             return {
                 'theme': 'dark',
                 'font_family': 'Arial',
-                'font_size': 9
+                'font_size': 9,
+                'load_all_events': True,
+                'visible_columns': None
             }
+
