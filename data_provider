@@ -1,1076 +1,709 @@
+# data_provider_v2.py - ZMODYFIKOWANA WERSJA z dynamicznymi ikonami
+
 from PySide6.QtCore import QObject, Signal
 from db_connector import DatabaseConnector
-from datetime import time
+from datetime import datetime, timedelta
 import time
+from debug_utils import debug_print, log_warning, log_error
+from dataclasses import dataclass
+from typing import Dict, List, Tuple, Optional, Any
+from functools import lru_cache
+from symbol_parser import parse_symbols_batch  # NOWY import
 
-# Klasa do przechowywania zindeksowanych zdarzeń
-class EventsIndex:
+@dataclass
+class MonthlyDataContainer:
+    """Kontener na wszystkie dane miesiąca"""
+    schedule_data: List[Any]  # Surowe dane grafiku
+    events_data: List[Dict]  # Słowniki zdarzeń
+    processed_data: Dict  # Przetworzone dane dla modelu
+    events_cache: Dict[Tuple[int, str], List[Dict]]  # (user_id, date) -> [events]
+    last_updated: float
+
+    def __post_init__(self):
+        if not hasattr(self, 'last_updated'):
+            self.last_updated = time.time()
+
+
+class DataProviderV2(QObject):
     """
-    Klasa do efektywnego przechowywania i dostępu do zdarzeń zindeksowanych według daty i użytkownika.
-    Umożliwia szybkie wyszukiwanie zdarzeń dla konkretnej pary (użytkownik, data) oraz filtrowanie.
-    """
-
-    def __init__(self):
-        # Główny indeks - przechowuje zdarzenia w formacie {(user_id, date_str): [event1, event2, ...]}
-        self.user_date_index = {}
-
-        # Indeks wg dat - przechowuje zdarzenia w formacie {date_str: [event1, event2, ...]}
-        self.date_index = {}
-
-        # Indeks wg użytkowników - przechowuje zdarzenia w formacie {user_id: [event1, event2, ...]}
-        self.user_index = {}
-
-        # Indeks wg typu - przechowuje zdarzenia w formacie {event_type: [event1, event2, ...]}
-        self.type_index = {}
-
-        # Indeks wg ID - przechowuje zdarzenia w formacie {event_id: event}
-        self.id_index = {}
-
-        # Wszystkie zdarzenia w jednej liście
-        self.all_events = []
-
-    def clear(self):
-        """Czyści wszystkie indeksy"""
-        self.user_date_index.clear()
-        self.date_index.clear()
-        self.user_index.clear()
-        self.type_index.clear()
-        self.id_index.clear()
-        self.all_events.clear()
-
-    def add_event(self, event):
-        """
-        Dodaje zdarzenie do wszystkich indeksów
-
-        Args:
-            event (dict): Słownik reprezentujący zdarzenie
-        """
-        # Pobierz kluczowe pola z wydarzenia
-        user_id = str(event.get('user_id', ''))
-        event_date = event.get('date_key', '')
-        event_type = event.get('type', '')
-        event_id = event.get('id', 0)
-
-        # Standaryzacja formatu daty
-        date_str = self._standardize_date(event_date)
-
-        # Dodaj do głównego indeksu (user_id, date_str)
-        key = (user_id, date_str)
-        if key not in self.user_date_index:
-            self.user_date_index[key] = []
-        self.user_date_index[key].append(event)
-
-        # Dodaj do indeksu dat
-        if date_str not in self.date_index:
-            self.date_index[date_str] = []
-        self.date_index[date_str].append(event)
-
-        # Dodaj do indeksu użytkowników
-        if user_id not in self.user_index:
-            self.user_index[user_id] = []
-        self.user_index[user_id].append(event)
-
-        # Dodaj do indeksu typów
-        if event_type not in self.type_index:
-            self.type_index[event_type] = []
-        self.type_index[event_type].append(event)
-
-        # Dodaj do indeksu ID
-        if event_id:
-            self.id_index[event_id] = event
-
-        # Dodaj do listy wszystkich zdarzeń
-        self.all_events.append(event)
-
-    def build_from_events(self, events_list):
-        """
-        Buduje indeksy na podstawie listy zdarzeń
-
-        Args:
-            events_list (list): Lista słowników zdarzeń
-        """
-        self.clear()
-        for event in events_list:
-            self.add_event(event)
-        return self
-
-    def get_events_for_user_date(self, user_id, date_str):
-        """
-        Zwraca listę zdarzeń dla konkretnego użytkownika i daty
-
-        Args:
-            user_id (str): ID użytkownika
-            date_str (str): Data w formacie 'YYYY-MM-DD'
-
-        Returns:
-            list: Lista zdarzeń
-        """
-        user_id = str(user_id)
-        date_str = self._standardize_date(date_str)
-        key = (user_id, date_str)
-        return self.user_date_index.get(key, [])
-
-    def get_events_for_user(self, user_id):
-        """
-        Zwraca listę wszystkich zdarzeń dla konkretnego użytkownika
-
-        Args:
-            user_id (str): ID użytkownika
-
-        Returns:
-            list: Lista zdarzeń
-        """
-        user_id = str(user_id)
-        return self.user_index.get(user_id, [])
-
-    def get_events_for_date(self, date_str):
-        """
-        Zwraca listę wszystkich zdarzeń dla konkretnej daty
-
-        Args:
-            date_str (str): Data w formacie 'YYYY-MM-DD'
-
-        Returns:
-            list: Lista zdarzeń
-        """
-        date_str = self._standardize_date(date_str)
-        return self.date_index.get(date_str, [])
-
-    def get_events_by_type(self, event_type):
-        """
-        Zwraca listę wszystkich zdarzeń określonego typu
-
-        Args:
-            event_type (str): Typ zdarzenia
-
-        Returns:
-            list: Lista zdarzeń
-        """
-        return self.type_index.get(event_type, [])
-
-    def get_event_by_id(self, event_id):
-        """
-        Zwraca zdarzenie o określonym ID
-
-        Args:
-            event_id: ID zdarzenia
-
-        Returns:
-            dict: Zdarzenie lub None jeśli nie znaleziono
-        """
-        return self.id_index.get(event_id)
-
-    def delete_event(self, event_id, event_type=None):
-        """
-        Usprawniona metoda usuwania zdarzeń z indeksu.
-
-        Args:
-            event_id: ID zdarzenia
-            event_type: Typ zdarzenia (opcjonalnie)
-
-        Returns:
-            bool: True jeśli znaleziono i usunięto, False w przeciwnym wypadku
-        """
-        deleted = False
-
-        # Najpierw spróbuj usunąć przez ID
-        if event_id in self.id_index:
-            event = self.id_index[event_id]
-
-            # Jeśli podano typ, sprawdź zgodność
-            if event_type and event.get('type') != event_type:
-                return False
-
-            # Pobierz dane potrzebne do aktualizacji indeksów
-            deleted_type = event.get('type', '')
-            user_id = str(event.get('user_id', ''))
-            event_date = event.get('date_key', '')
-            date_str = self._standardize_date(event_date)
-
-            print(
-                f"Usuwam z indeksu zdarzenie typu {deleted_type}: ID={event_id}, Użytkownik={user_id}, Data={date_str}")
-
-            # Usuń z indeksu ID
-            del self.id_index[event_id]
-
-            # Usuń z listy wszystkich zdarzeń
-            self.all_events = [e for e in self.all_events if e.get('id') != event_id]
-
-            # Usuń z indeksu (user_id, date_str)
-            key = (user_id, date_str)
-            if key in self.user_date_index:
-                self.user_date_index[key] = [e for e in self.user_date_index[key] if e.get('id') != event_id]
-                if not self.user_date_index[key]:
-                    del self.user_date_index[key]
-
-            # Usuń z indeksu dat
-            if date_str in self.date_index:
-                self.date_index[date_str] = [e for e in self.date_index[date_str] if e.get('id') != event_id]
-                if not self.date_index[date_str]:
-                    del self.date_index[date_str]
-
-            # Usuń z indeksu użytkowników
-            if user_id in self.user_index:
-                self.user_index[user_id] = [e for e in self.user_index[user_id] if e.get('id') != event_id]
-                if not self.user_index[user_id]:
-                    del self.user_index[user_id]
-
-            # Usuń z indeksu typów
-            if deleted_type in self.type_index:
-                self.type_index[deleted_type] = [e for e in self.type_index[deleted_type] if e.get('id') != event_id]
-                if not self.type_index[deleted_type]:
-                    del self.type_index[deleted_type]
-
-            deleted = True
-
-        # Jeśli nie znaleziono przez ID, spróbuj wyszukać po ID i typie we wszystkich indeksach
-        if not deleted and event_type:
-            # Sprawdź w indeksie typów
-            if event_type in self.type_index:
-                matching_events = [e for e in self.type_index[event_type] if e.get('id') == event_id]
-                for event in matching_events:
-                    user_id = str(event.get('user_id', ''))
-                    date_key = event.get('date_key', '')
-                    date_str = self._standardize_date(date_key)
-
-                    # Usuń z wszystkich indeksów
-                    self.all_events = [e for e in self.all_events if
-                                       not (e.get('id') == event_id and e.get('type') == event_type)]
-
-                    key = (user_id, date_str)
-                    if key in self.user_date_index:
-                        self.user_date_index[key] = [e for e in self.user_date_index[key] if
-                                                     not (e.get('id') == event_id and e.get('type') == event_type)]
-                        if not self.user_date_index[key]:
-                            del self.user_date_index[key]
-
-                    if date_str in self.date_index:
-                        self.date_index[date_str] = [e for e in self.date_index[date_str] if
-                                                     not (e.get('id') == event_id and e.get('type') == event_type)]
-                        if not self.date_index[date_str]:
-                            del self.date_index[date_str]
-
-                    if user_id in self.user_index:
-                        self.user_index[user_id] = [e for e in self.user_index[user_id] if
-                                                    not (e.get('id') == event_id and e.get('type') == event_type)]
-                        if not self.user_index[user_id]:
-                            del self.user_index[user_id]
-
-                    self.type_index[event_type] = [e for e in self.type_index[event_type] if e.get('id') != event_id]
-                    if not self.type_index[event_type]:
-                        del self.type_index[event_type]
-
-                    # Usuń z indeksu ID jeśli istnieje
-                    if event_id in self.id_index:
-                        del self.id_index[event_id]
-
-                    deleted = True
-
-        return deleted
-
-    def filter_events(self, **kwargs):
-        """
-        Filtruje zdarzenia według podanych kryteriów
-
-        Args:
-            **kwargs: Kryteria filtrowania (user_id, date_from, date_to, type, etc.)
-
-        Returns:
-            list: Lista przefiltrowanych zdarzeń
-        """
-        # Określ najbardziej efektywny indeks do rozpoczęcia filtrowania
-        filtered_events = None
-
-        # Jeśli podano konkretnego użytkownika i datę, użyj głównego indeksu
-        if 'user_id' in kwargs and 'date' in kwargs:
-            user_id = str(kwargs['user_id'])
-            date_str = self._standardize_date(kwargs['date'])
-            key = (user_id, date_str)
-            filtered_events = self.user_date_index.get(key, []).copy()
-
-        # Jeśli podano tylko użytkownika, użyj indeksu użytkowników
-        elif 'user_id' in kwargs:
-            user_id = str(kwargs['user_id'])
-            filtered_events = self.user_index.get(user_id, []).copy()
-
-        # Jeśli podano tylko datę, użyj indeksu dat
-        elif 'date' in kwargs:
-            date_str = self._standardize_date(kwargs['date'])
-            filtered_events = self.date_index.get(date_str, []).copy()
-
-        # Jeśli podano tylko typ, użyj indeksu typów
-        elif 'type' in kwargs:
-            filtered_events = self.type_index.get(kwargs['type'], []).copy()
-
-        # W przeciwnym razie rozpocznij od wszystkich zdarzeń
-        else:
-            filtered_events = self.all_events.copy()
-
-        # Jeśli nie mamy punktu startowego, zwróć pustą listę
-        if filtered_events is None:
-            return []
-
-        # Zastosuj dodatkowe filtry
-        result = filtered_events
-
-        # Filtruj po datach od-do
-        if 'date_from' in kwargs:
-            date_from = self._standardize_date(kwargs['date_from'])
-            result = [e for e in result if self._standardize_date(e.get('date_key', '')) >= date_from]
-
-        if 'date_to' in kwargs:
-            date_to = self._standardize_date(kwargs['date_to'])
-            result = [e for e in result if self._standardize_date(e.get('date_key', '')) <= date_to]
-
-        # Filtruj po typie (jeśli nie użyto wcześniej indeksu typów)
-        if 'type' in kwargs and filtered_events != self.type_index.get(kwargs['type'], []):
-            result = [e for e in result if e.get('type', '') == kwargs['type']]
-
-        # Filtruj po user_id (jeśli nie użyto wcześniej indeksu użytkowników)
-        if 'user_id' in kwargs and filtered_events != self.user_index.get(str(kwargs['user_id']), []):
-            user_id = str(kwargs['user_id'])
-            result = [e for e in result if str(e.get('user_id', '')) == user_id]
-
-        # Filtruj po temacie
-        if 'topic' in kwargs:
-            topic_filter = kwargs['topic'].lower()
-            result = [e for e in result if topic_filter in str(e.get('topic', '')).lower()]
-
-        # Filtruj po nazwie
-        if 'name' in kwargs:
-            name_filter = kwargs['name'].lower()
-            result = [e for e in result if name_filter in str(e.get('name', '')).lower()]
-
-        # Filtruj po typach zdarzeń - lista dozwolonych typów
-        if 'allowed_types' in kwargs and kwargs['allowed_types']:
-            allowed_types = kwargs['allowed_types']
-            result = [e for e in result if e.get('type', '') in allowed_types]
-
-        return result
-
-    def _standardize_date(self, date_obj):
-        """
-        Standaryzuje format daty do 'YYYY-MM-DD'
-
-        Args:
-            date_obj: Data w dowolnym formacie (string, datetime, itp.)
-
-        Returns:
-            str: Data w formacie 'YYYY-MM-DD'
-        """
-        if not date_obj:
-            return ''
-
-        # Jeśli to już string, wyciągnij tylko datę
-        if isinstance(date_obj, str):
-            # Obsługa różnych formatów
-            if 'T' in date_obj:  # Format ISO 'YYYY-MM-DDThh:mm:ss'
-                return date_obj.split('T')[0]
-            elif ' ' in date_obj:  # Format 'YYYY-MM-DD hh:mm:ss'
-                return date_obj.split(' ')[0]
-            elif len(date_obj) == 10 and date_obj.count('-') == 2:  # Format 'YYYY-MM-DD'
-                return date_obj
-            elif len(date_obj) == 10 and date_obj.count('.') == 2:  # Format 'DD.MM.YYYY'
-                parts = date_obj.split('.')
-                if len(parts) == 3:
-                    return f"{parts[2]}-{parts[1]}-{parts[0]}"
-            # Jeśli nie dopasowano do żadnego formatu, zwróć oryginalny string
-            return date_obj
-
-        # Jeśli to obiekt datetime, skonwertuj na string
-        if hasattr(date_obj, 'strftime'):
-            return date_obj.strftime('%Y-%m-%d')
-
-        # W przypadku nieznanego typu, zwróć pusty string
-        return ''
-
-class DataProvider(QObject):  # Dziedziczy po QObject, aby móc emitować sygnały
-    """
-    Klasa do obsługi pobierania danych z bazy danych.
-    Wykorzystuje funkcje tabelaryczne SQL i cache'owanie danych w pamięci
-    dla minimalizacji liczby zapytań do bazy danych.
+    DataProvider z ograniczonym odświeżaniem ikon
     """
     data_changed = Signal(str, int, int)  # Typ danych, rok, miesiąc
 
     def __init__(self):
         super().__init__()
         self.db_connector = DatabaseConnector
-        self.cache = {}  # Cache do przechowywania danych w pamięci
-        self.all_events_cache = {}  # Nowy cache dla wszystkich zdarzeń
-        self.cache_timestamps = {}  # Czas utworzenia każdego wpisu w cache
-        self.cache_lifetime = 300  # Czas życia cache w sekundach (5 minut)
-        self.events_index = EventsIndex()  # Dodaj indeks zdarzeń jako część DataProvider
 
-    def _get_cache_key(self, operation, year, month, all_events=False, **kwargs):
-        """Generuje klucz cache'u na podstawie parametrów operacji"""
-        # Bazowy klucz zawiera operację, rok i miesiąc
-        key = f"{operation}_{year}_{month}"
+        # Cache miesięczny
+        self.monthly_cache: Dict[Tuple[int, int], MonthlyDataContainer] = {}
 
-        # Dodaj marker dla wszystkich zdarzeń
-        if all_events:
-            key += "_all_events"
+        # Cache dla ikon - UPROSZCZONY
+        self._icons_cache_by_month: Dict[Tuple[int, int], Dict[Tuple[int, str], Dict]] = {}
 
-        # Dodaj dodatkowe parametry, jeśli istnieją
-        if kwargs:
-            # Sortuj parametry po kluczu, aby zapewnić spójność klucza
-            param_str = "_".join(f"{k}={v}" for k, v in sorted(kwargs.items()))
-            key += f"_{param_str}"
+        # Inicjalizacja managera kolumn
+        from column_mapper import ColumnMapper
+        self.column_mapper = ColumnMapper()
 
-        return key
-
-    def is_cache_valid(self, cache_key):
-        """Sprawdza, czy cache jest wciąż ważny"""
-        if cache_key not in self.cache or cache_key not in self.cache_timestamps:
-            return False
-
-        import time  # Dodaj ten import lokalnie w metodzie, aby być pewnym że używasz właściwego modułu
-        current_time = time.time()
-        timestamp = self.cache_timestamps.get(cache_key, 0)
-
-        # Sprawdź, czy cache nie jest starszy niż cache_lifetime
-        return (current_time - timestamp) < self.cache_lifetime
-
-    def get_schedule_data(self, year, month, use_cache=True):
+    def get_dynamic_icons_for_cell(self, user_id: int, date_str: str) -> Dict:
         """
-        Pobiera dane grafiku dla określonego roku i miesiąca przy użyciu funkcji tabelarycznej.
-        Wyniki są cache'owane w pamięci.
-
-        Args:
-            year: Rok
-            month: Miesiąc
-            use_cache: Czy używać cache'u (domyślnie True)
-
-        Returns:
-            list: Dane grafiku
+        POPRAWIONA WERSJA: Zwraca ikony z cache lub oblicza je na podstawie aktywnych zdarzeń
         """
-        cache_key = self._get_cache_key("schedule", year, month)
-
-        # Sprawdź, czy dane są już w cache'u
-        if use_cache and cache_key in self.cache:
-            print(f"Używam cache'owanych danych grafiku dla {year}-{month}")
-            return self.cache[cache_key]
-
-        try:
-            query = """
-            SELECT * FROM [dbo].[fn_GetScheduleData](?, ?, NULL, NULL, NULL)
-            ORDER BY WydzialGrafik, PrzelozonyDane, UzytkownikDane, Data
-            """
-
-            conn = self.db_connector.get_connection()
-            cursor = conn.cursor()
-            cursor.execute(query, (year, month))
-            schedule_data = cursor.fetchall()
-            conn.close()
-
-            # Zapisz dane w cache'u
-            self.cache[cache_key] = schedule_data
-
-            return schedule_data
-        except Exception as e:
-            print(f"Błąd podczas pobierania danych grafiku: {e}")
-            import traceback
-            traceback.print_exc()
-            return []
-
-    def get_events_data(self, year, month, use_cache=True, as_dict=True, build_index=True):
-        """
-        Pobiera dane zdarzeń dla określonego roku i miesiąca.
-        Wyniki są cache'owane w pamięci i opcjonalnie buduje indeks.
-
-        Args:
-            year: Rok
-            month: Miesiąc
-            use_cache: Czy używać cache'u (domyślnie True)
-            as_dict: Czy konwertować dane na słowniki (domyślnie True)
-
-        Returns:
-            list: Dane zdarzeń (jako lista słowników gdy as_dict=True)
-        """
-        cache_key = self._get_cache_key("events", year, month)
-        dict_cache_key = f"{cache_key}_as_dict"
-
-        # Sprawdź, czy dane są już w cache'u
-        if use_cache:
-            if as_dict and dict_cache_key in self.cache:
-                print(f"Używam cache'owanych danych zdarzeń (słowniki) dla {year}-{month}")
-                return self.cache[dict_cache_key]
-            elif not as_dict and cache_key in self.cache:
-                print(f"Używam cache'owanych danych zdarzeń (krotki) dla {year}-{month}")
-                return self.cache[cache_key]
-
-        try:
-            query = """
-            SELECT * FROM [dbo].[fn_GetEventsData](?, ?)
-            """
-
-            conn = self.db_connector.get_connection()
-            cursor = conn.cursor()
-            cursor.execute(query, (year, month))
-            events_data = cursor.fetchall()
-            conn.close()
-
-            # Zapisz surowe dane w cache'u
-            self.cache[cache_key] = events_data
-
-            # Jeśli wymagane są słowniki, przekonwertuj dane
-            if as_dict:
-                # Konwertuj pyodbc.Row na słowniki
-                events_dicts = []
-                for row in events_data:
-                    # Rozpakuj dane z wiersza
-                    event_type, event_id, temat, nazwa, uzytkownik, data, data_od, data_do, status = row
-
-                    # Formatowanie daty
-                    if hasattr(data, 'strftime'):
-                        date_str = data.strftime('%Y-%m-%d')
-                        date_display = data.strftime('%d.%m.%Y')
-                    else:
-                        # Obsługa różnych formatów daty
-                        if isinstance(data, str):
-                            date_str = data
-                            # Konwertuj format daty z YYYY-MM-DD na DD.MM.YYYY
-                            if len(data.split('-')) == 3:
-                                year_part, month_part, day_part = data.split('-')
-                                date_display = f"{day_part}.{month_part}.{year_part}"
-                            else:
-                                date_display = data
-                        else:
-                            date_str = str(data)
-                            date_display = str(data)
-
-                    # Formatowanie czasu
-                    time_from = data_od.strftime('%H:%M') if hasattr(data_od, 'strftime') else data_od
-                    time_to = data_do.strftime('%H:%M') if hasattr(data_do, 'strftime') else data_do
-
-                    # Tworzenie obiektu zdarzenia jako słownik
-                    event = {
-                        'type': event_type,
-                        'id': event_id,
-                        'topic': temat,
-                        'name': nazwa,
-                        'user_id': uzytkownik,
-                        'date': date_display,
-                        'date_key': date_str,
-                        'time_from': time_from,
-                        'time_to': time_to,
-                        'status': status
-                    }
-
-                    events_dicts.append(event)
-
-                # Zapisz słowniki w cache'u
-                self.cache[dict_cache_key] = events_dicts
-
-                # Dodaj budowanie indeksu PRZED zwróceniem wyniku
-                if build_index and events_dicts:
-                    self.events_index.build_from_events(events_dicts)
-                    print(f"Zbudowano indeks zdarzeń z {len(events_dicts)} elementów")
-
-                return events_dicts if as_dict else events_data
-
-            return events_data
-        except Exception as e:
-            print(f"Błąd podczas pobierania danych zdarzeń: {e}")
-            import traceback
-            traceback.print_exc()
-            return []
-
-
-    def get_users_data(self, year, month, use_cache=True):
-        """
-        Pobiera dane użytkowników dla określonego roku i miesiąca.
-        Wyniki są cache'owane w pamięci.
-
-        Args:
-            year: Rok
-            month: Miesiąc
-            use_cache: Czy używać cache'u (domyślnie True)
-
-        Returns:
-            list: Dane użytkowników
-        """
-        cache_key = self._get_cache_key("users", year, month)
-
-        # Sprawdź, czy dane są już w cache'u
-        if use_cache and cache_key in self.cache:
-            print(f"Używam cache'owanych danych użytkowników dla {year}-{month}")
-            return self.cache[cache_key]
-
-        try:
-            query = """
-            SELECT Uzytkownik, WydzialGrafik, PrzelozonyDane, UzytkownikDane
-            FROM p_t_do_KonfiguracjaZatrudnienie
-            WHERE Rok = ? AND Miesiac = ? AND Flaga = 1
-            """
-
-            conn = self.db_connector.get_connection()
-            cursor = conn.cursor()
-            cursor.execute(query, (year, month))
-            users_data = cursor.fetchall()
-            conn.close()
-
-            # Zapisz dane w cache'u
-            self.cache[cache_key] = users_data
-
-            return users_data
-        except Exception as e:
-            print(f"Błąd podczas pobierania danych użytkowników: {e}")
-            import traceback
-            traceback.print_exc()
-            return []
-
-    def filter_data(self, year, month, wydzialy=None, przelozeni=None, uzytkownicy=None):
-        """
-        Filtruje dane grafiku lokalnie w pamięci.
-        Pobiera wszystkie dane raz i filtruje je lokalnie dla większej wydajności.
-
-        Args:
-            year: Rok
-            month: Miesiąc
-            wydzialy: Lista wydziałów
-            przelozeni: Lista przełożonych
-            uzytkownicy: Lista użytkowników
-
-        Returns:
-            list: Przefiltrowane dane grafiku
-        """
-        # Pobierz wszystkie dane do pamięci (używając cache'u jeśli dostępne)
-        all_data = self.get_schedule_data(year, month)
-
-        # Jeśli nie ma filtrów, zwróć wszystkie dane
-        if not (wydzialy or przelozeni or uzytkownicy):
-            return all_data
-
-        # Filtruj dane lokalnie
-        filtered_data = []
-        for row in all_data:
-            # Rozpakuj dane potrzebne do filtrowania
-            wydzial, przelozony, uzytkownik_dane = row[0], row[1], row[2]
-
-            # Sprawdź filtry
-            passes_filter = True
-
-            # Filtr wydziału
-            if wydzialy and wydzial not in wydzialy:
-                passes_filter = False
-
-            # Filtr przełożonego
-            if przelozeni and przelozony not in przelozeni:
-                passes_filter = False
-
-            # Filtr użytkownika
-            if uzytkownicy and uzytkownik_dane not in uzytkownicy:
-                passes_filter = False
-
-            # Jeśli wiersz przeszedł wszystkie filtry, dodaj go do wyników
-            if passes_filter:
-                filtered_data.append(row)
-
-        return filtered_data
-
-    def filter_events(self, year, month, date_from=None, date_to=None,
-                      allowed_types=None, topic=None, name=None, user_ids=None):
-        """
-        Filtruje zdarzenia lokalnie w pamięci.
-
-        Args:
-            year: Rok
-            month: Miesiąc
-            date_from: Data początkowa
-            date_to: Data końcowa
-            allowed_types: Dozwolone typy zdarzeń
-            topic: Filtr tematu
-            name: Filtr nazwy
-            user_ids: Lista ID użytkowników
-
-        Returns:
-            list: Przefiltrowane zdarzenia
-        """
-        # Pobierz wszystkie zdarzenia do pamięci - jako krotki, nie słowniki
-        all_events = self.get_events_data(year, month, as_dict=False)
-
-        # Jeśli nie ma filtrów, zwróć wszystkie zdarzenia
-        if not (date_from or date_to or allowed_types or topic or name or user_ids):
-            return all_events
-
-        # Filtruj zdarzenia lokalnie
-        filtered_events = []
-        for event in all_events:
-            event_type, event_id, temat, nazwa, uzytkownik, data, data_od, data_do, status = event
-
-            # Konwertuj datę do formatu string dla porównań
-            if hasattr(data, 'strftime'):
-                date_str = data.strftime('%Y-%m-%d')
-            else:
-                # Obsługa różnych formatów daty
-                if isinstance(data, str):
-                    if ' ' in data:
-                        date_str = data.split(' ')[0]  # Format 'YYYY-MM-DD HH:MM:SS'
-                    else:
-                        date_str = data  # Format 'YYYY-MM-DD'
-                else:
-                    date_str = str(data)
-
-            # Sprawdź wszystkie filtry
-            passes_filter = True
-
-            # Filtr zakresu dat
-            if date_from and date_str < date_from:
-                passes_filter = False
-
-            if date_to and date_str > date_to:
-                passes_filter = False
-
-            # Filtr typów zdarzeń
-            if allowed_types and event_type not in allowed_types:
-                passes_filter = False
-
-            # Filtr tematu
-            if topic and topic.lower() not in str(temat).lower():
-                passes_filter = False
-
-            # Filtr nazwy
-            if name and name.lower() not in str(nazwa).lower():
-                passes_filter = False
-
-            # Filtr użytkowników
-            if user_ids and str(uzytkownik) not in [str(uid) for uid in user_ids]:
-                passes_filter = False
-
-            # Jeśli zdarzenie przeszło wszystkie filtry, dodaj je do wyników
-            if passes_filter:
-                filtered_events.append(event)
-
-        return filtered_events
-
-    def get_events_for_user_date_pairs(self, user_date_pairs, allowed_types=None, as_dict=False):
-        """
-        Pobiera zdarzenia dla listy par (użytkownik, data).
-        Wykorzystuje lokalne filtrowanie na cache'owanych danych.
-
-        Args:
-            user_date_pairs: Lista krotek (user_id, date_str) gdzie date_str jest w formacie 'YYYY-MM-DD'
-            allowed_types: Lista dozwolonych typów zdarzeń (np. ['Spotkanie', 'Szkolenie'])
-            as_dict: Czy zwracać zdarzenia jako słowniki (domyślnie False)
-
-        Returns:
-            list: Lista zdarzeń pasujących do podanych par (użytkownik, data)
-        """
-        print(f"get_events_for_user_date_pairs: otrzymano {len(user_date_pairs)} par (użytkownik, data)")
-        if len(user_date_pairs) > 0:
-            print(f"Przykład pary: {user_date_pairs[0]}")
-
-        if not user_date_pairs:
-            return []
-
-        try:
-            # Pogrupuj daty według roku i miesiąca
-            year_month_groups = {}
-            for user_id, date_str in user_date_pairs:
-                if date_str and len(date_str) >= 7:  # Format YYYY-MM-DD
-                    year, month = date_str.split('-')[:2]
-                    key = (int(year), int(month))
-                    if key not in year_month_groups:
-                        year_month_groups[key] = []
-                    year_month_groups[key].append((user_id, date_str))
-
-            # Pobierz zdarzenia dla każdego miesiąca i filtruj lokalnie
-            all_events = []
-
-            # Zbuduj set par (użytkownik, data) dla szybkiego wyszukiwania
-            user_date_set = set()
-            for user_id, date_str in user_date_pairs:
-                user_date_set.add((str(user_id), date_str))
-
-            # Dla każdego miesiąca
-            for (year, month), _ in year_month_groups.items():
-                # Pobierz wszystkie zdarzenia za miesiąc (z cache'u, jeśli dostępne)
-                # Używaj as_dict=False, bo będziemy konwertować tylko potrzebne zdarzenia
-                month_events = self.get_events_data(year, month, as_dict=False)
-
-                # Filtruj lokalnie
-                for event in month_events:
-                    event_type, event_id, temat, nazwa, uzytkownik, data, data_od, data_do, status = event
-
-                    # Konwertuj datę do formatu string YYYY-MM-DD
-                    if hasattr(data, 'strftime'):
-                        date_str = data.strftime('%Y-%m-%d')
-                    else:
-                        # Obsługa różnych formatów daty
-                        if isinstance(data, str):
-                            if ' ' in data:
-                                date_str = data.split(' ')[0]  # Format 'YYYY-MM-DD HH:MM:SS'
-                            else:
-                                date_str = data  # Format 'YYYY-MM-DD'
-                        else:
-                            date_str = str(data)
-
-                    # Sprawdź czy para (użytkownik, data) jest na liście
-                    if (str(uzytkownik), date_str) in user_date_set:
-                        # Sprawdź typ zdarzenia jeśli podano listę dozwolonych typów
-                        if allowed_types is None or event_type in allowed_types:
-                            if as_dict:
-                                # Konwertuj na słownik tylko zdarzenia, które przeszły filtrowanie
-                                # Formatowanie daty
-                                if hasattr(data, 'strftime'):
-                                    date_display = data.strftime('%d.%m.%Y')
-                                else:
-                                    # Konwertuj format daty z YYYY-MM-DD na DD.MM.YYYY
-                                    if isinstance(date_str, str) and len(date_str.split('-')) == 3:
-                                        year_part, month_part, day_part = date_str.split('-')
-                                        date_display = f"{day_part}.{month_part}.{year_part}"
-                                    else:
-                                        date_display = date_str
-
-                                # Formatowanie czasu
-                                time_from = data_od.strftime('%H:%M') if hasattr(data_od, 'strftime') else data_od
-                                time_to = data_do.strftime('%H:%M') if hasattr(data_do, 'strftime') else data_do
-
-                                # Tworzenie obiektu zdarzenia
-                                event_dict = {
-                                    'type': event_type,
-                                    'id': event_id,
-                                    'topic': temat,
-                                    'name': nazwa,
-                                    'user_id': uzytkownik,
-                                    'date': date_display,
-                                    'date_key': date_str,
-                                    'time_from': time_from,
-                                    'time_to': time_to,
-                                    'status': status
-                                }
-                                all_events.append(event_dict)
-                            else:
-                                # Dodaj krotkę bezpośrednio
-                                all_events.append(event)
-
-            print(f"Znaleziono {len(all_events)} zdarzeń dla podanych par (użytkownik, data)")
-            return all_events
-
-        except Exception as e:
-            print(f"Błąd podczas pobierania zdarzeń dla par (użytkownik, data): {e}")
-            import traceback
-            traceback.print_exc()
-            return []
-
-    def clear_cache(self):
-        """Czyści cały cache danych"""
-        self.cache.clear()
-        print("Cache został wyczyszczony")
-
-    def refresh_data(self, year, month):
-        """
-        Odświeża dane w cache'u dla określonego roku i miesiąca i indeksie zdarzeń.
-        Pobiera dane ponownie z bazy danych, ignorując cache.
-
-        Args:
-            year: Rok
-            month: Miesiąc
-        """
-        print(f"Odświeżam dane dla {year}-{month}")
-
-        # Usuń dane z cache'u
-        schedule_key = self._get_cache_key("schedule", year, month)
-        events_key = self._get_cache_key("events", year, month)
-        dict_events_key = f"{events_key}_as_dict"
-        users_key = self._get_cache_key("users", year, month)
-
-        if schedule_key in self.cache:
-            del self.cache[schedule_key]
-
-        if events_key in self.cache:
-            del self.cache[events_key]
-
-        if dict_events_key in self.cache:
-            del self.cache[dict_events_key]
-
-        if users_key in self.cache:
-            del self.cache[users_key]
-
-        # Pobierz dane ponownie
-        schedule_data = self.get_schedule_data(year, month, use_cache=False)
-
-        # WAŻNA ZMIANA: Przy odświeżaniu danych, nie używaj zdarzeń z cache
-        # Najpierw pobierz zdarzenia bez budowania indeksu
-        events_data = self.get_events_data(year, month, use_cache=False, as_dict=True, build_index=False)
-
-        # Następnie przebuduj indeks, usuwając wcześniej wszystkie zdarzenia z tego miesiąca
-        if hasattr(self, 'events_index'):
-            # Usuń zdarzenia dla danego miesiąca z indeksu
-            date_prefix = f"{year}-{month:02d}-"
-            self._remove_events_by_month(year, month)
-
-            # Teraz dodaj nowe zdarzenia do indeksu
-            self.events_index.build_from_events(events_data)
-
-        users_data = self.get_users_data(year, month, use_cache=False)
-
-        # Wyemituj sygnały o zmianie danych
-        self.data_changed.emit("schedule", year, month)
-        self.data_changed.emit("events", year, month)
-        self.data_changed.emit("users", year, month)
-
-    def _remove_events_by_month(self, year, month):
-        """
-        Usuwa z indeksu wszystkie zdarzenia dla danego miesiąca.
-
-        Args:
-            year: Rok
-            month: Miesiąc
-        """
-        if not hasattr(self, 'events_index'):
-            return
-
-        # Format daty dla miesiąca
-        date_prefix = f"{year}-{month:02d}-"
-
-        # Znajdź wszystkie daty dla tego miesiąca
-        month_dates = []
-        for date_str in self.events_index.date_index.keys():
-            if date_str.startswith(date_prefix):
-                month_dates.append(date_str)
-
-        # Usuń zdarzenia dla każdej daty
-        for date_str in month_dates:
-            # Pobierz zdarzenia dla tej daty
-            events = self.events_index.date_index.get(date_str, []).copy()
-
-            # Usuń każde zdarzenie z indeksu
-            for event in events:
-                event_id = event.get('id')
-                event_type = event.get('type')
-                if event_id and event_type:
-                    self.events_index.delete_event(event_id, event_type)
-
-    def get_events_for_user_date(self, user_id, date_str):
-        """
-        Pobiera zdarzenia dla konkretnego użytkownika i daty.
-        Zoptymalizowana wersja z lepszym wykorzystaniem cache'u.
-
-        Args:
-            user_id (str): ID użytkownika
-            date_str (str): Data w formacie 'YYYY-MM-DD'
-
-        Returns:
-            list: Lista zdarzeń
-        """
-        # Sprawdź, czy mamy poprawny format daty
-        if not date_str or date_str.count('-') != 2:
-            return []
-
-        # Ekstrakcja roku i miesiąca z daty
         try:
             year, month, _ = date_str.split('-')
-            year = int(year)
-            month = int(month)
-        except (ValueError, TypeError):
-            print(f"Nieprawidłowy format daty: {date_str}")
+            year, month = int(year), int(month)
+        except:
+            return {'spotkania': 0, 'szkolenia': 0, 'nadgodziny': 0}
+        
+        month_key = (year, month)
+        cell_key = (user_id, date_str)
+        
+        # Sprawdź cache ikon
+        if month_key in self._icons_cache_by_month:
+            month_icons = self._icons_cache_by_month[month_key]
+            if cell_key in month_icons:
+                return month_icons[cell_key]
+        
+        # KLUCZOWA ZMIANA: Oblicz ikony na podstawie aktywnych zdarzeń
+        events = self.get_events_for_user_date(user_id, date_str)  # Ta metoda już filtruje aktywne
+        
+        has_spotkania = any(
+            e.get('type') == 'Spotkanie' 
+            for e in events
+        )
+        has_szkolenia = any(
+            e.get('type') == 'Szkolenie' 
+            for e in events
+        )
+        has_nadgodziny = any(
+            e.get('type') == 'Nadgodziny' 
+            for e in events
+        )
+        
+        result = {
+            'spotkania': 1 if has_spotkania else 0,
+            'szkolenia': 1 if has_szkolenia else 0,
+            'nadgodziny': 1 if has_nadgodziny else 0
+        }
+        
+        # Zapisz w cache
+        if month_key not in self._icons_cache_by_month:
+            self._icons_cache_by_month[month_key] = {}
+        self._icons_cache_by_month[month_key][cell_key] = result
+        
+        # Debug dla pierwszych wywołań
+        if user_id <= 100:  # Loguj tylko dla pierwszych użytkowników
+            debug_print(f"Ikony dla {user_id}, {date_str}: {result} (na podstawie {len(events)} aktywnych zdarzeń)")
+        
+        return result
+
+    def invalidate_specific_icons(self, user_date_pairs):
+        """
+        POPRAWIONA WERSJA: Wyczyść cache i wymuś przeładowanie
+        """
+        if not user_date_pairs:
+            return
+            
+        # Wyczyść cache dla zmienionych miesięcy
+        months_to_clear = set()
+        for user_id, date_str in user_date_pairs:
+            try:
+                year, month, _ = date_str.split('-')
+                months_to_clear.add((int(year), int(month)))
+            except:
+                continue
+        
+        # KLUCZOWE: Wyczyść cały cache miesięczny dla zmienionych miesięcy
+        for year, month in months_to_clear:
+            month_key = (year, month)
+            if month_key in self.monthly_cache:
+                del self.monthly_cache[month_key]
+            if month_key in self._icons_cache_by_month:
+                del self._icons_cache_by_month[month_key]
+            
+            debug_print(f"Wyczyszczono kompletny cache dla {year}-{month}")
+        
+        # Emituj sygnał odświeżenia
+        for year, month in months_to_clear:
+            self.data_changed.emit("icons", year, month)
+
+    def invalidate_icons_cache(self, year: int, month: int):
+        """
+        ZMODYFIKOWANA: Czyści cache ikon dla miesiąca - BEZ NADMIERNEGO ODŚWIEŻANIA
+        Używana tylko przy pełnym odświeżeniu danych (start, zmiana miesiąca, przycisk odśwież)
+        """
+        month_key = (year, month)
+        
+        # Wyczyść cache ikon
+        if month_key in self._icons_cache_by_month:
+            del self._icons_cache_by_month[month_key]
+            debug_print(f"Wyczyszczono cache ikon dla {year}-{month}")
+        
+        # Odśwież dane zdarzeń w kontenerze
+        if month_key in self.monthly_cache:
+            container = self.monthly_cache[month_key]
+            
+            try:
+                fresh_events = self._fetch_events_data(year, month)
+                fresh_events_cache = self._build_events_cache(fresh_events)
+                
+                container.events_data = fresh_events
+                container.events_cache = fresh_events_cache
+                container.last_updated = time.time()
+                
+                debug_print(f"Odświeżono dane zdarzeń dla {year}-{month}")
+                
+            except Exception as e:
+                log_error(f"Błąd podczas odświeżania zdarzeń dla {year}-{month}: {e}")
+                if month_key in self.monthly_cache:
+                    del self.monthly_cache[month_key]
+        
+        self.data_changed.emit("icons", year, month)
+
+    def _get_or_load_monthly_data(self, year: int, month: int, use_cache: bool = True) -> Optional[MonthlyDataContainer]:
+        """
+        UPROSZCZONA WERSJA: Bez automatycznego wygasania cache
+        """
+        self._current_year = year
+        self._current_month = month
+
+        cache_key = (year, month)
+
+        # Jeśli użytkownik chce użyć cache i istnieje - użyj go
+        if use_cache and cache_key in self.monthly_cache:
+            container = self.monthly_cache[cache_key]
+            # ZMIANA: Zawsze zwróć cache jeśli istnieje (bez sprawdzania czasu)
+            if not hasattr(self, '_last_cache_log') or time.time() - self._last_cache_log > 30:
+                debug_print(f"Używam cache'owanych danych dla {year}-{month}")
+                self._last_cache_log = time.time()
+            return container
+
+        # Ładuj dane tylko gdy:
+        # 1. Nie ma cache (pierwszy raz)
+        # 2. Użytkownik wymusił odświeżenie (use_cache=False)
+        debug_print(f"Ładuję {'świeże' if cache_key in self.monthly_cache else 'nowe'} dane dla {year}-{month}")
+        
+        try:
+            schedule_data = self._fetch_schedule_data(year, month)
+            events_data = self._fetch_events_data(year, month)
+            events_cache = self._build_events_cache(events_data)
+            processed_data = self._build_processed_data_without_icons(schedule_data)
+
+            container = MonthlyDataContainer(
+                schedule_data=schedule_data,
+                events_data=events_data,
+                processed_data=processed_data,
+                events_cache=events_cache,
+                last_updated=time.time()  # Zachowaj dla informacji, ale nie używaj do wygasania
+            )
+
+            self.monthly_cache[cache_key] = container
+
+            debug_print(f"Załadowano dane: {len(schedule_data)} wierszy grafiku, "
+                        f"{len(events_data)} zdarzeń, {len(processed_data)} użytkowników")
+
+            return container
+
+        except Exception as e:
+            log_error(f"Błąd podczas ładowania danych dla {year}-{month}: {e}", exception=e)
+            return None
+        
+    def get_schedule_data(self, year: int, month: int, use_cache: bool = True) -> List[Any]:
+        """Pobiera dane grafiku"""
+        container = self._get_or_load_monthly_data(year, month, use_cache)
+        return container.schedule_data if container else []
+
+    def get_events_data(self, year: int, month: int, use_cache: bool = True,
+                        as_dict: bool = True, build_index: bool = True) -> List[Dict]:
+        """Pobiera dane zdarzeń"""
+        container = self._get_or_load_monthly_data(year, month, use_cache)
+        return container.events_data if container else []
+
+    def get_processed_data(self, year: int, month: int) -> Dict:
+        """Zwraca processed_data z dynamicznie obliczonymi ikonami"""
+        container = self._get_or_load_monthly_data(year, month)
+        if not container:
+            return {}
+
+        if not hasattr(container, '_icons_calculated'):
+            self._update_dynamic_icons(container.processed_data, container.events_cache)
+            container._icons_calculated = True
+            debug_print("Obliczono ikony dynamicznie (pierwszy raz)")
+
+        return container.processed_data
+
+    def refresh_data(self, year: int, month: int):
+        """
+        PRZYCISK "Odśwież dane" - jedyny sposób na wymuszone przeładowanie
+        """
+        cache_key = (year, month)
+        
+        debug_print(f"UŻYTKOWNIK wymusza odświeżenie danych dla {year}-{month}")
+        
+        # Usuń cache dla tego miesiąca
+        if cache_key in self.monthly_cache:
+            del self.monthly_cache[cache_key]
+        
+        # Usuń cache ikon dla tego miesiąca  
+        if cache_key in self._icons_cache_by_month:
+            del self._icons_cache_by_month[cache_key]
+
+        # Wymuś przeładowanie
+        container = self._get_or_load_monthly_data(year, month, use_cache=False)
+
+        if container:
+            self.data_changed.emit("schedule", year, month)
+            self.data_changed.emit("events", year, month)
+            self.data_changed.emit("icons", year, month)
+
+    def _update_dynamic_icons(self, processed_data: Dict, events_cache: Dict):
+        """
+        ZOPTYMALIZOWANA WERSJA: Batch processing ikon
+        """
+        debug_print("Obliczam ikony dynamicznie (BATCH PROCESSING)...")
+
+        # OPTYMALIZACJA: Przygotuj batch operacje
+        icon_updates = {}  # {(user_id, day): {'spotkania': bool, 'szkolenia': bool, 'nadgodziny': bool}}
+
+        for key, user_data in processed_data.items():
+            user_id = key[3]
+            days_data = user_data.get('days', {})
+
+            for day, day_data in days_data.items():
+                date_str = f"{self._current_year}-{self._current_month:02d}-{day:02d}"
+                cache_key = (user_id, date_str)
+                events = events_cache.get(cache_key, [])
+
+                # Filtruj aktywne zdarzenia
+                active_events = [e for e in events if str(e.get('status', '1')) != '0']
+
+                # Sprawdź typy zdarzeń w jednym przejściu
+                has_spotkania = False
+                has_szkolenia = False
+                has_nadgodziny = False
+
+                for event in active_events:
+                    event_type = event.get('type')
+                    if event_type == 'Spotkanie':
+                        has_spotkania = True
+                    elif event_type == 'Szkolenie':
+                        has_szkolenia = True
+                    elif event_type == 'Nadgodziny':
+                        has_nadgodziny = True
+
+                # Zapisz aktualizacje
+                icon_updates[(user_id, day)] = {
+                    'spotkania': has_spotkania,
+                    'szkolenia': has_szkolenia,
+                    'nadgodziny': has_nadgodziny,
+                    'active_events': active_events
+                }
+
+        # BATCH UPDATE: Aplikuj wszystkie zmiany na raz
+        debug_print(f"Aplikuję {len(icon_updates)} aktualizacji ikon...")
+
+        for key, user_data in processed_data.items():
+            user_id = key[3]
+            days_data = user_data.get('days', {})
+
+            for day, day_data in days_data.items():
+                update_key = (user_id, day)
+                if update_key in icon_updates:
+                    updates = icon_updates[update_key]
+                    day_data['spotkania'] = 1 if updates['spotkania'] else 0
+                    day_data['szkolenia'] = 1 if updates['szkolenia'] else 0
+                    day_data['nadgodziny'] = 1 if updates['nadgodziny'] else 0
+                    day_data['events'] = updates['active_events']
+
+        debug_print(f"Zakończono batch processing ikon dla {len(icon_updates)} komórek")
+
+    def get_performance_stats(self):
+        """
+        NOWA METODA: Zwraca statystyki wydajności
+        """
+        stats = {
+            'monthly_cache_size': len(self.monthly_cache),
+            'icons_cache_size': len(self._icons_cache_by_month),
+            'total_memory_mb': 0  # Można dodać rzeczywiste pomiary pamięci
+        }
+
+        # Dodaj statystyki cache symboli
+        try:
+            from symbol_parser import get_cache_info
+            stats['symbol_cache'] = get_cache_info()
+        except:
+            stats['symbol_cache'] = "Niedostępne"
+
+        return stats
+
+    def _build_processed_data_without_icons(self, schedule_data: List[Any]) -> Dict:
+        """
+        ZOPTYMALIZOWANA WERSJA: Buduje processed_data z batch processing symboli
+        """
+        debug_print(f"Rozpoczynam przetwarzanie {len(schedule_data)} wierszy grafiku (ZOPTYMALIZOWANE)")
+
+        processed_data = {}
+
+        # NOWA OPTYMALIZACJA 1: Batch processing symboli
+        # Zbierz wszystkie unikalne symbole
+        unique_symbols = set()
+        for row in schedule_data:
+            try:
+                mapped_row = self.column_mapper.map_schedule_row_to_dict(row)
+                symbol = mapped_row.get('symbol', '')
+                if symbol:
+                    unique_symbols.add(symbol)
+            except:
+                continue
+
+        # Parsuj symbole w batchu
+        debug_print(f"Parsowanie {len(unique_symbols)} unikalnych symboli w batchu...")
+        symbols_cache = parse_symbols_batch(list(unique_symbols))
+
+        debug_print(f"Cache symboli utworzony: {len(symbols_cache)} wpisów")
+
+        # NOWA OPTYMALIZACJA 2: Przetwarzanie wierszy z cache symboli
+        for row in schedule_data:
+            try:
+                mapped_row = self.column_mapper.map_schedule_row_to_dict(row)
+
+                wydzial = mapped_row.get('wydzial', '')
+                przelozony = mapped_row.get('przelozony', '')
+                przelozony_imie_nazwisko = mapped_row.get('przelozony_imie_nazwisko', '')
+                uzytkownik_dane = mapped_row.get('uzytkownik_dane', '')
+                uzytkownik_id = mapped_row.get('uzytkownik_id', 0)
+                nr_kadrowy = mapped_row.get('nr_kadrowy', '')
+                data_str = mapped_row.get('data_str', '')
+                symbol = mapped_row.get('symbol', '')
+
+                id_wpisu = mapped_row.get('id_wpisu', '')
+                rola_nazwa = mapped_row.get('rola_nazwa', '')
+                pod_rola_nazwa = mapped_row.get('pod_rola_nazwa', '')
+                etat = mapped_row.get('etat', '')
+                jezyk = mapped_row.get('jezyk', '')
+                korekta = mapped_row.get('korekta', '')
+                dtn = mapped_row.get('dtn', '')
+                lokalizacja_domyslna = mapped_row.get('lokalizacja_domyslna', '')
+
+                # OPTYMALIZACJA: Użyj cache symboli zamiast parsowania za każdym razem
+                if symbol and symbol in symbols_cache:
+                    parsed_symbol = symbols_cache[symbol]
+                else:
+                    # Fallback - parsuj bezpośrednio jeśli nie ma w cache
+                    from symbol_parser import parse_symbol
+                    parsed_symbol = parse_symbol(symbol)
+
+                start_hour = parsed_symbol.get('start_hour')
+                hours = parsed_symbol.get('work_hours')
+
+                key = (wydzial, przelozony, uzytkownik_dane, uzytkownik_id)
+
+                if key not in processed_data:
+                    processed_data[key] = {
+                        'days': {},
+                        'total_hours': 0,
+                        'rola_nazwa': rola_nazwa,
+                        'pod_rola_nazwa': pod_rola_nazwa,
+                        'etat': etat,
+                        'jezyk': jezyk,
+                        'korekta': korekta,
+                        'dtn': dtn,
+                        'przelozony_imie_nazwisko': przelozony_imie_nazwisko,
+                        'nr_kadrowy': nr_kadrowy,
+                        'lokalizacja_domyslna': lokalizacja_domyslna
+                    }
+
+                if data_str:
+                    day = int(data_str.split('-')[2])
+
+                    processed_data[key]['days'][day] = {
+                        'symbol': symbol,
+                        'hours': hours if hours is not None else 0,
+                        'id': id_wpisu,
+                        'start_hour': start_hour,
+                        'nr_kadrowy': nr_kadrowy,
+                        'spotkania': 0,  # Placeholder - będzie obliczone dynamicznie
+                        'szkolenia': 0,  # Placeholder
+                        'nadgodziny': 0,  # Placeholder
+                        'events': []  # Placeholder
+                    }
+
+                    if hours is not None:
+                        processed_data[key]['total_hours'] += hours
+
+            except Exception as e:
+                log_error(f"Błąd podczas przetwarzania wiersza: {e}")
+                continue
+
+        debug_print(f"OPTYMALIZACJA: Przetworzono {len(processed_data)} użytkowników z cache symboli")
+        return processed_data
+
+    @lru_cache(maxsize=100)
+    def _get_month_cache_key(self, year: int, month: int) -> tuple:
+        """Cache key dla miesiąca"""
+        return (year, month)
+
+    def clear_symbol_cache(self):
+        """
+        NOWA METODA: Czyści cache symboli gdy jest za duży
+        """
+        try:
+            from symbol_parser import clear_symbol_cache, get_cache_info
+
+            cache_info = get_cache_info()
+            debug_print(f"Cache symboli przed czyszczeniem: {cache_info}")
+
+            # Wyczyść cache jeśli jest za duży
+            parse_cache = cache_info.get('parse_symbol')
+            if parse_cache and parse_cache.currsize > 1500:  # Jeśli cache > 1500 wpisów
+                clear_symbol_cache()
+                debug_print("Wyczyszczono cache symboli (był za duży)")
+
+        except Exception as e:
+            log_error(f"Błąd czyszczenia cache symboli: {e}")
+
+    def get_events_for_user_date(self, user_id: int, date_str: str) -> List[Dict]:
+        """
+        ZOPTYMALIZOWANA WERSJA: Lepsze cache i walidacja
+        """
+        # Szybka walidacja
+        if not date_str or not user_id or date_str.count('-') != 2:
             return []
 
-        # Klucz cache dla tej konkretnej pary (użytkownik, data)
-        pair_cache_key = f"user_{user_id}_date_{date_str}"
+        try:
+            year, month, _ = date_str.split('-')
+            year, month = int(year), int(month)
+        except (ValueError, TypeError):
+            return []
 
-        # Sprawdź, czy mamy już dane w cache dla tej pary
-        if pair_cache_key in self.cache:
-            # Sprawdź, czy cache jest wciąż ważny
-            current_time = time.time()
-            timestamp = self.cache_timestamps.get(pair_cache_key, 0)
-            if (current_time - timestamp) < self.cache_lifetime:
-                return self.cache[pair_cache_key]
+        # Optymalizacja: użyj cached month key
+        month_key = self._get_month_cache_key(year, month)
 
-        # Jeśli nie mamy danych w cache dla tej pary lub cache jest nieaktualny
+        # Pobierz kontener z cache
+        container = self.monthly_cache.get(month_key)
+        if not container:
+            # Spróbuj załadować dane
+            container = self._get_or_load_monthly_data(year, month)
+            if not container:
+                return []
 
-        # Opcja 1: Sprawdź, czy indeks jest zbudowany i czy zawiera dane
-        if hasattr(self, 'events_index') and self.events_index.all_events:
-            # Użyj indeksu do szybkiego wyszukania
-            events = self.events_index.get_events_for_user_date(user_id, date_str)
+        cache_key = (user_id, self._standardize_date(date_str))
+        events = container.events_cache.get(cache_key, [])
 
-            # Zapisz wynik w cache
-            self.cache[pair_cache_key] = events
-            self.cache_timestamps[pair_cache_key] = time.time()
+        # OPTYMALIZACJA: Filtruj w jednym przejściu
+        active_events = []
+        for event in events:
+            status = str(event.get('status', '1'))
+            if status != '0':  # Tylko aktywne zdarzenia
+                active_events.append(event)
 
-            return events
+        # Debug tylko dla pierwszych wywołań
+        if user_id <= 10 and len(events) != len(active_events):
+            debug_print(
+                f"DataProvider: Przefiltrowano {len(events)} -> {len(active_events)} aktywnych zdarzeń dla ({user_id}, {date_str})")
 
-        # Opcja 2: Sprawdź, czy mamy dane dla tego miesiąca
-        month_cache_key = self._get_cache_key("events", year, month, all_events=True)
-        dict_month_cache_key = f"{month_cache_key}_as_dict"
+        return active_events
 
-        month_events = None
-
-        # Sprawdź, czy mamy dane w cache dla tego miesiąca
-        if dict_month_cache_key in self.cache:
-            month_events = self.cache[dict_month_cache_key]
-        else:
-            # Pobierz dane dla tego miesiąca
-            month_events = self.get_events_data(year, month, as_dict=True, build_index=True)
-
-        # Filtruj zdarzenia dla konkretnego użytkownika i daty
-        user_date_events = [e for e in month_events if str(e.get('user_id', '')) == str(user_id) and
-                            self._standardize_date(e.get('date_key', '')) == self._standardize_date(date_str)]
-
-        # Zapisz wynik w cache
-        self.cache[pair_cache_key] = user_date_events
-        self.cache_timestamps[pair_cache_key] = time.time()
-
-        return user_date_events
-
-    def delete_event_from_index(self, event_id, event_type=None):
+    def _fetch_schedule_data(self, year: int, month: int) -> List[Any]:
+        """Pobiera dane grafiku z bazy"""
+        query = """
+        SELECT * FROM [dbo].[fn_GetScheduleData](?, ?) 
+        ORDER BY WydzialGrafik, PrzelozonyDane, UzytkownikDane, Data
         """
-        Usuwa zdarzenie z indeksu.
 
-        Args:
-            event_id: ID zdarzenia
-            event_type: Typ zdarzenia (opcjonalnie)
+        conn = self.db_connector.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(query, (year, month))
+        schedule_data = cursor.fetchall()
+        conn.close()
 
-        Returns:
-            bool: True jeśli znaleziono i usunięto, False w przeciwnym wypadku
+        return schedule_data
+
+    def _fetch_events_data(self, year: int, month: int) -> List[Dict]:
+        """Pobiera wszystkie zdarzenia miesiąca"""
+        query = """
+        SELECT * FROM [dbo].[fn_GetEventsData](?, ?) 
         """
-        return self.events_index.delete_event(event_id, event_type)
 
-    def get_event_by_id(self, event_id):
+        conn = self.db_connector.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(query, (year, month))
+        raw_events = cursor.fetchall()
+        conn.close()
+
+        events_dicts = []
+        for row in raw_events:
+            try:
+                event = self.column_mapper.map_events_row_to_dict(row)
+
+                if 'event_type' in event:
+                    event['type'] = event['event_type']
+                if 'event_id' in event:
+                    event['id'] = event['event_id']
+
+                raw_date = event.get('date', '')
+                if hasattr(raw_date, 'strftime'):
+                    event['date_display'] = raw_date.strftime('%d.%m.%Y')
+                    event['date_key'] = raw_date.strftime('%Y-%m-%d')
+                elif isinstance(raw_date, str) and raw_date:
+                    event['date_display'] = self._format_date_display(raw_date)
+                    event['date_key'] = self._standardize_date(raw_date)
+
+                time_from = event.get('time_from')
+                time_to = event.get('time_to')
+
+                if hasattr(time_from, 'strftime'):
+                    event['time_from'] = time_from.strftime('%H:%M')
+                elif isinstance(time_from, str) and 'T' in time_from:
+                    event['time_from'] = time_from.split(' ')[1][:5]
+                elif time_from:
+                    event['time_from'] = str(time_from)
+
+                if hasattr(time_to, 'strftime'):
+                    event['time_to'] = time_to.strftime('%H:%M')
+                elif isinstance(time_to, str) and 'T' in time_to:
+                    event['time_to'] = time_to.split(' ')[1][:5]
+                elif time_to:
+                    event['time_to'] = str(time_to)
+
+                if event.get('type') and event.get('id') is not None:
+                    events_dicts.append(event)
+
+            except Exception as e:
+                log_error(f"Błąd konwersji zdarzenia: {e}")
+                continue
+
+        return events_dicts
+
+    def _build_events_cache(self, events_data: List[Dict]) -> Dict[Tuple[int, str], List[Dict]]:
+        """Buduje cache zdarzeń"""
+        events_cache = {}
+
+        for event in events_data:
+            user_id = event.get('user_id')
+            date_key = self._standardize_date(event.get('date_key', ''))
+
+            if user_id and date_key:
+                cache_key = (user_id, date_key)
+                if cache_key not in events_cache:
+                    events_cache[cache_key] = []
+                events_cache[cache_key].append(event)
+
+        return events_cache
+
+    def clear_cache(self):
         """
-        Zwraca zdarzenie o określonym ID
-
-        Args:
-            event_id: ID zdarzenia
-
-        Returns:
-            dict: Zdarzenie lub None jeśli nie znaleziono
+        Tylko do czyszczenia przy STARCIE aplikacji lub ZMIANIE miesiąca
         """
-        return self.events_index.get_event_by_id(event_id)
+        cache_count = len(self.monthly_cache)
+        icons_count = len(self._icons_cache_by_month)
+        
+        self.monthly_cache.clear()
+        self._icons_cache_by_month.clear()
+        
+        debug_print(f"Wyczyszczono cache przy starcie/zmianie miesiąca: {cache_count} miesięcy, {icons_count} cache ikon")
 
-    def _standardize_date(self, date_obj):
+    def on_month_change(self, new_year: int, new_month: int):
         """
-        Standaryzuje format daty do 'YYYY-MM-DD'
-
-        Args:
-            date_obj: Data w dowolnym formacie (string, datetime, itp.)
-
-        Returns:
-            str: Data w formacie 'YYYY-MM-DD'
+        NOWA METODA: Wywoływana przy zmianie miesiąca w interface
         """
+        debug_print(f"ZMIANA MIESIĄCA na {new_year}-{new_month}")
+        
+        # Przy zmianie miesiąca możemy wyczyścić cache innych miesięcy żeby oszczędzić pamięć
+        # ale ZACHOWAĆ cache aktualnego miesiąca jeśli istnieje
+        current_key = (new_year, new_month)
+        
+        # Zachowaj cache aktualnego miesiąca
+        current_cache = self.monthly_cache.get(current_key)
+        current_icons = self._icons_cache_by_month.get(current_key, {})
+        
+        # Wyczyść wszystkie inne
+        self.monthly_cache.clear()
+        self._icons_cache_by_month.clear()
+        
+        # Przywróć cache aktualnego miesiąca jeśli istniał
+        if current_cache:
+            self.monthly_cache[current_key] = current_cache
+            self._icons_cache_by_month[current_key] = current_icons
+            debug_print(f"Zachowano cache dla aktualnego miesiąca {new_year}-{new_month}")
+        
+        debug_print(f"Wyczyszczono cache przy zmianie miesiąca, pozostawiono cache dla {new_year}-{new_month}")
+
+    def _format_date_display(self, date_str: str) -> str:
+        """Formatuje datę z YYYY-MM-DD na DD.MM.YYYY"""
+        if not date_str:
+            return ""
+        try:
+            if '-' in date_str and len(date_str.split('-')) == 3:
+                year, month, day = date_str.split('-')
+                return f"{day}.{month}.{year}"
+        except Exception as e:
+            log_warning(f"Błąd formatowania daty: {e}")
+        return date_str
+
+    def _standardize_date(self, date_obj) -> str:
+        """Standaryzuje format daty do 'YYYY-MM-DD'"""
         if not date_obj:
             return ''
 
-        # Jeśli to już string, wyciągnij tylko datę
         if isinstance(date_obj, str):
-            # Obsługa różnych formatów
-            if 'T' in date_obj:  # Format ISO 'YYYY-MM-DDThh:mm:ss'
+            if 'T' in date_obj:
                 return date_obj.split('T')[0]
-            elif ' ' in date_obj:  # Format 'YYYY-MM-DD hh:mm:ss'
+            elif ' ' in date_obj:
                 return date_obj.split(' ')[0]
-            elif len(date_obj) == 10 and date_obj.count('-') == 2:  # Format 'YYYY-MM-DD'
+            elif len(date_obj) == 10 and date_obj.count('-') == 2:
                 return date_obj
-            elif len(date_obj) == 10 and date_obj.count('.') == 2:  # Format 'DD.MM.YYYY'
+            elif len(date_obj) == 10 and date_obj.count('.') == 2:
                 parts = date_obj.split('.')
                 if len(parts) == 3:
                     return f"{parts[2]}-{parts[1]}-{parts[0]}"
-            # Jeśli nie dopasowano do żadnego formatu, zwróć oryginalny string
             return date_obj
 
-        # Jeśli to obiekt datetime, skonwertuj na string
         if hasattr(date_obj, 'strftime'):
             return date_obj.strftime('%Y-%m-%d')
 
-        # W przypadku nieznanego typu, zwróć pusty string
         return ''
+    
+
+
+    def invalidate_complete_cache_for_pairs(self, user_date_pairs):
+        """
+        NOWA METODA: Kompletne czyszczenie cache dla par (user_id, date_str)
+        Usuwa z wszystkich poziomów cache'owania
+        """
+        if not user_date_pairs:
+            return
+            
+        # Wyczyść cache miesięczny
+        months_to_clear = set()
+        for user_id, date_str in user_date_pairs:
+            try:
+                year, month, _ = date_str.split('-')
+                months_to_clear.add((int(year), int(month)))
+            except:
+                continue
+        
+        # Wyczyść kompletny cache miesięczny
+        for year, month in months_to_clear:
+            month_key = (year, month)
+            if month_key in self.monthly_cache:
+                # Usuń z kontenera miesięcznego
+                container = self.monthly_cache[month_key]
+                
+                # Przebuduj events_cache bez usuniętych zdarzeń
+                new_events_cache = {}
+                for cache_key, events in container.events_cache.items():
+                    if cache_key not in user_date_pairs:
+                        new_events_cache[cache_key] = events
+                
+                container.events_cache = new_events_cache
+                container.last_updated = time.time()
+            
+            # Wyczyść cache ikon
+            if month_key in self._icons_cache_by_month:
+                month_icons = self._icons_cache_by_month[month_key]
+                for user_id, date_str in user_date_pairs:
+                    cell_key = (user_id, date_str)
+                    if cell_key in month_icons:
+                        del month_icons[cell_key]
+        
+        debug_print(f"Kompletnie wyczyszczono cache dla {len(user_date_pairs)} par")
