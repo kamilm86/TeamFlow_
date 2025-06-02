@@ -1,1 +1,151 @@
+from dataclasses import dataclass
+from typing import Dict, List, Any, Optional
+from enum import Enum
 
+class ColumnType(Enum):
+    SCHEDULE = "schedule"
+    EVENTS = "events" 
+    UI_DISPLAY = "ui_display"
+
+class DataType(Enum):
+    STRING = str
+    INTEGER = int
+    FLOAT = float
+    BOOLEAN = bool
+
+@dataclass
+class ColumnDefinition:
+    id: str
+    name: str
+    data_type: DataType
+    default_value: Any
+    description: str
+    width: Optional[int] = 100
+    required: bool = False
+
+class ColumnDefinitions:
+    SCHEDULE_COLUMNS = {
+        'wydzial': ColumnDefinition(
+            id='wydzial', name='WydzialGrafik', data_type=DataType.STRING,
+            default_value='', description='WydzialGrafik', width=150, required=True
+        ),
+        'przelozony': ColumnDefinition(
+            id='przelozony', name='PrzelozonyDane', data_type=DataType.STRING,
+            default_value='', description='PrzelozonyDane', width=150
+        ),
+        'przelozony_imie_nazwisko': ColumnDefinition(
+            id='przelozony_imie_nazwisko', name='PrzelozonyImieNazwisko', data_type=DataType.STRING,
+            default_value='', description='PrzelozonyImieNazwisko', width=100
+        ),
+        'uzytkownik_dane': ColumnDefinition(
+            id='uzytkownik_dane', name='UzytkownikDane', data_type=DataType.STRING,
+            default_value='', description='UzytkownikDane', width=150, required=True
+        ),
+        'uzytkownik_id': ColumnDefinition(
+            id='uzytkownik_id', name='Uzytkownik', data_type=DataType.INTEGER,
+            default_value=0, description='Uzytkownik', width=80, required=True
+        ),
+        'nr_kadrowy': ColumnDefinition(
+            id='nr_kadrowy', name='NumerKadrowy', data_type=DataType.STRING,
+            default_value='', description='NumerKadrowy', width=100
+        ),
+        'data_str': ColumnDefinition(
+            id='data_str', name='Data', data_type=DataType.STRING,
+            default_value='', description='Data w formacie string', required=True
+        ),
+        'symbol': ColumnDefinition(
+            id='symbol', name='GrafikSymbol', data_type=DataType.STRING,
+            default_value='', description='GrafikSymbol'
+        ),
+        'id_wpisu': ColumnDefinition(
+            id='id_wpisu', name='ID wpisu', data_type=DataType.INTEGER,
+            default_value=0, description='ID wpisu w grafiku'
+        ),
+        'rola_nazwa': ColumnDefinition(
+            id='rola_nazwa', name='RolaNazwa', data_type=DataType.STRING,
+            default_value='', description='RolaNazwa', width=120
+        ),
+        'pod_rola_nazwa': ColumnDefinition(
+            id='pod_rola_nazwa', name='PodRolaNazwa', data_type=DataType.STRING,
+            default_value='', description='PodRolaNazwa', width=120
+        ),
+        'etat': ColumnDefinition(
+            id='etat', name='Etat', data_type=DataType.FLOAT,
+            default_value=0.0, description='Etat', width=60
+        ),
+        'jezyk': ColumnDefinition(
+            id='jezyk', name='Jezyk', data_type=DataType.STRING,
+            default_value='', description='Jezyk', width=60
+        ),
+        'korekta': ColumnDefinition(
+            id='korekta', name='Korekta', data_type=DataType.FLOAT,
+            default_value=0.0, description='Korekta', width=60
+        ),
+        'dtn': ColumnDefinition(
+            id='dtn', name='DTN', data_type=DataType.INTEGER,
+            default_value=0, description='DTN', width=50
+        ),
+        'lokalizacja_domyslna': ColumnDefinition(
+            id='lokalizacja_domyslna', name='LokalizacjaDomyslna', data_type=DataType.STRING,
+            default_value='', description='LokalizacjaDomyslna', width=100
+        ),
+        'komentarz_grafik': ColumnDefinition(
+            id='komentarz_grafik', name='KomentarzGrafik', data_type=DataType.STRING,
+            default_value='', description='KomentarzGrafik', width=500
+        )
+    }
+    
+    EVENTS_COLUMNS = {
+        'event_type': ColumnDefinition(
+            id='event_type', name='Typ zdarzenia', data_type=DataType.STRING,
+            default_value='', description='Typ zdarzenia', required=True
+        ),
+        'event_id': ColumnDefinition(
+            id='event_id', name='ID zdarzenia', data_type=DataType.INTEGER,
+            default_value=0, description='ID zdarzenia', required=True
+        ),
+        'topic': ColumnDefinition(
+            id='topic', name='Temat', data_type=DataType.STRING,
+            default_value='', description='Temat'
+        ),
+        'name': ColumnDefinition(
+            id='name', name='Nazwa', data_type=DataType.STRING,
+            default_value='', description='Nazwa'
+        ),
+        'user_id': ColumnDefinition(
+            id='user_id', name='ID użytkownika', data_type=DataType.INTEGER,
+            default_value=0, description='ID użytkownika', required=True
+        ),
+        'date': ColumnDefinition(
+            id='date', name='Data zdarzenia', data_type=DataType.STRING,
+            default_value='', description='Data zdarzenia', required=True
+        ),
+        'time_from': ColumnDefinition(
+            id='time_from', name='Czas od', data_type=DataType.STRING,
+            default_value='', description='Czas od'
+        ),
+        'time_to': ColumnDefinition(
+            id='time_to', name='Czas do', data_type=DataType.STRING,
+            default_value='', description='Czas do'
+        ),
+        'status': ColumnDefinition(
+            id='status', name='Status zdarzenia', data_type=DataType.STRING,
+            default_value='', description='Status zdarzenia'
+        )
+    }
+
+    DEFAULT_VISIBLE_COLUMNS = ['wydzial', 'przelozony_imie_nazwisko', 'uzytkownik_dane']
+
+    @classmethod
+    def get_ui_display_columns(cls):
+        return [(col_def.id, col_def.name, col_def.width) 
+                for col_def in cls.SCHEDULE_COLUMNS.values() 
+                if col_def.width is not None]
+
+    @classmethod
+    def get_required_columns(cls, column_type):
+        if column_type == ColumnType.SCHEDULE:
+            return [col_id for col_id, col_def in cls.SCHEDULE_COLUMNS.items() if col_def.required]
+        elif column_type == ColumnType.EVENTS:
+            return [col_id for col_id, col_def in cls.EVENTS_COLUMNS.items() if col_def.required]
+        return []
