@@ -1,1 +1,79 @@
+from PySide6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem
+from PySide6.QtCore import Qt, QRect, QPoint
+from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QPolygon
+from schedule_model import ROLE_HAS_MEETING, ROLE_HAS_OVERTIME
 
+class OvertimeItemDelegate(QStyledItemDelegate):
+    """
+    Delegat dla komórek tabeli grafiku.
+    Wyświetla ikony oznaczające nadgodziny, spotkania i szkolenia.
+    Dostosowany do pracy z rolami danych w modelu.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+    def paint(self, painter, option, index):
+        """
+        Maluje komórkę z dodatkowymi ikonami dla nadgodzin, spotkań i szkoleń.
+
+        Args:
+            painter: QPainter do rysowania
+            option: QStyleOptionViewItem z opcjami wyświetlania
+            index: QModelIndex wskazujący na komórkę
+        """
+        try:
+            # Najpierw rysujemy standardową komórkę
+            super().paint(painter, option, index)
+
+            # Pobierz flagi bezpośrednio z modelu
+            has_overtime = index.data(ROLE_HAS_OVERTIME)
+            has_meeting_or_training = index.data(ROLE_HAS_MEETING)
+
+            # Jeśli element ma jakiekolwiek oznaczenia
+            if has_overtime or has_meeting_or_training:
+                painter.save()
+                # Włącz antyaliasing dla gładkich krawędzi
+                painter.setRenderHint(QPainter.Antialiasing)
+
+                # Określ szerokość i pozycję znaczników
+                marker_width = 8  # Rozmiar znacznika
+                marker_height = 8
+
+                # Rysuj znacznik spotkań/szkoleń (białe kółko) w górnym prawym rogu
+                if has_meeting_or_training:
+                    # Oblicz pozycję w górnym prawym rogu
+                    top_right_x = option.rect.right() - marker_width - 2  # -2 to margines
+                    top_right_y = option.rect.top() + 2  # +2 to margines
+
+                    # Rysujemy kółko z białym wypełnieniem i czarną obwódką
+                    painter.setBrush(QBrush(QColor(255, 255, 255, 240)))  # Białe wypełnienie
+                    painter.setPen(QPen(QColor(0, 0, 0, 220), 1.0))  # Czarna obwódka
+                    painter.drawEllipse(
+                        top_right_x,
+                        top_right_y,
+                        marker_width,
+                        marker_height
+                    )
+
+                # Rysuj znacznik nadgodzin (czerwony trójkąt) w dolnym prawym rogu
+                if has_overtime:
+                    # Oblicz pozycję w dolnym prawym rogu
+                    bottom_right_x = option.rect.right() - marker_width - 2  # -2 to margines
+                    bottom_right_y = option.rect.bottom() - marker_height - 2  # -2 to margines
+
+                    # Czerwony trójkąt z czarną obwódką
+                    painter.setBrush(QBrush(QColor(220, 0, 0, 220)))  # Czerwone wypełnienie
+                    painter.setPen(QPen(Qt.black, 1.0))  # Czarna obwódka
+
+                    triangle = QPolygon()
+                    triangle.append(QPoint(bottom_right_x, bottom_right_y + marker_height))
+                    triangle.append(QPoint(bottom_right_x + marker_width, bottom_right_y + marker_height))
+                    triangle.append(QPoint(bottom_right_x + marker_width, bottom_right_y))
+                    painter.drawPolygon(triangle)
+
+                painter.restore()
+        except Exception as e:
+            # W przypadku błędu po prostu wyświetl domyślny wygląd komórki
+            print(f"Błąd podczas rysowania delegata: {e}")
+            QStyledItemDelegate.paint(self, painter, option, index)
