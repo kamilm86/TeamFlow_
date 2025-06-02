@@ -1,1 +1,207 @@
+from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+                               QListWidget, QListWidgetItem, QAbstractItemView, QWidget, QToolButton,
+                               QSpinBox, QGroupBox)  # Dodano QSpinBox i QGroupBox
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QIcon
 
+
+class ColumnSelectDialog(QDialog):
+    """
+    Dialog do wyboru kolumn widocznych w tabeli pracowników.
+    Pozwala na wybór, zmianę kolejności i przywrócenie domyślnych kolumn.
+    """
+
+    def __init__(self, parent=None, available_columns=None, visible_columns=None, default_columns=None):
+        super().__init__(parent)
+
+        self.setWindowTitle("Wybór kolumn")
+        self.setMinimumWidth(300)
+        self.setMinimumHeight(300)
+
+        # Inicjalizacja list kolumn
+        self.available_columns = available_columns or []  # Lista (id, nazwa, szerokość)
+        self.visible_columns = visible_columns or []  # Lista identyfikatorów widocznych kolumn
+        self.default_columns = default_columns or []  # Lista domyślnych identyfikatorów kolumn
+
+        # Stwórz słownik mapujący ID -> (nazwa, szerokość)
+        self.column_map = {col_id: (name, width) for col_id, name, width in self.available_columns}
+
+        # NOWE: Zastosuj motyw dialogu
+        self.apply_dialog_theme()
+
+        self.setup_ui()
+
+    def apply_dialog_theme(self):
+        """Stosuje motyw dla dialogu"""
+        if hasattr(self, 'parent') and self.parent and hasattr(self.parent, 'is_dark_theme'):
+            theme = "dark" if self.parent.is_dark_theme else "light"
+        else:
+            theme = "dark"
+
+        from styles import AppStyles
+        self.setStyleSheet(AppStyles.get_dialog_style(theme))
+
+    def setup_ui(self):
+        """Inicjalizuje interfejs użytkownika dialogu."""
+        main_layout = QVBoxLayout(self)
+
+        # Dodaj instrukcję
+        instruction_label = QLabel("Wybierz kolumny, które mają być widoczne w tabeli pracowników:")
+        main_layout.addWidget(instruction_label)
+
+        # Układ dla listy kolumn i przycisków kolejności
+        columns_layout = QHBoxLayout()
+
+        # Lista kolumn
+        self.columns_list = QListWidget()
+        self.columns_list.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.columns_list.setDragDropMode(QAbstractItemView.InternalMove)
+
+        # NOWE: Zastosuj styl listy
+        theme = "dark" if (hasattr(self, 'parent') and self.parent and
+                           hasattr(self.parent, 'is_dark_theme') and
+                           self.parent.is_dark_theme) else "light"
+        from styles import AppStyles
+        self.columns_list.setStyleSheet(AppStyles.get_list_style(theme))
+
+        # Przyciski do zmiany kolejności
+        order_buttons_layout = QVBoxLayout()
+
+        self.move_up_button = QPushButton("▲ Wyżej")
+        self.move_down_button = QPushButton("▼ Niżej")
+
+        # NOWE: Zastosuj style przycisków
+        self.move_up_button.setStyleSheet(AppStyles.get_button_style(theme))
+        self.move_down_button.setStyleSheet(AppStyles.get_button_style(theme))
+
+        self.move_up_button.clicked.connect(self.move_item_up)
+        self.move_down_button.clicked.connect(self.move_item_down)
+
+        order_buttons_layout.addWidget(self.move_up_button)
+        order_buttons_layout.addWidget(self.move_down_button)
+        order_buttons_layout.addStretch()
+
+        # Dodaj listę i przyciski do układu
+        columns_layout.addWidget(self.columns_list)
+        columns_layout.addLayout(order_buttons_layout)
+        main_layout.addLayout(columns_layout)
+
+        # Przyciski na dole
+        buttons_layout = QHBoxLayout()
+
+        self.restore_default_button = QPushButton("Przywróć domyślne")
+        self.ok_button = QPushButton("OK")
+        self.cancel_button = QPushButton("Anuluj")
+
+        # NOWE: Zastosuj style przycisków
+        self.restore_default_button.setStyleSheet(AppStyles.get_button_style(theme))
+        self.ok_button.setStyleSheet(AppStyles.get_button_style(theme))
+        self.cancel_button.setStyleSheet(AppStyles.get_button_style(theme))
+
+        self.restore_default_button.clicked.connect(self.restore_default_columns)
+        self.ok_button.clicked.connect(self.accept)
+        self.cancel_button.clicked.connect(self.reject)
+
+        buttons_layout.addWidget(self.restore_default_button)
+        buttons_layout.addStretch()
+        buttons_layout.addWidget(self.ok_button)
+        buttons_layout.addWidget(self.cancel_button)
+
+        main_layout.addLayout(buttons_layout)
+
+        # Wypełnij listę kolumn
+        self.populate_columns_list()
+
+        # Połączenie sygnału zmiany zaznaczenia z aktualizacją przycisków
+        self.columns_list.itemSelectionChanged.connect(self.update_button_states)
+
+        # Początkowa aktualizacja stanu przycisków
+        self.update_button_states()
+
+
+    def populate_columns_list(self):
+        """Wypełnia listę kolumn na podstawie aktualnie widocznych kolumn."""
+        self.columns_list.clear()
+
+        # Dodaj widoczne kolumny w aktualnej kolejności
+        for col_id in self.visible_columns:
+            if col_id in self.column_map:
+                name, _ = self.column_map[col_id]
+                item = QListWidgetItem(name)
+                item.setData(Qt.UserRole, col_id)
+                item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+                item.setCheckState(Qt.Checked)
+                self.columns_list.addItem(item)
+
+        # Dodaj pozostałe kolumny (niewidoczne)
+        visible_ids = set(self.visible_columns)
+        for col_id, name, _ in self.available_columns:
+            if col_id not in visible_ids:
+                item = QListWidgetItem(name)
+                item.setData(Qt.UserRole, col_id)
+                item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+                item.setCheckState(Qt.Unchecked)
+                self.columns_list.addItem(item)
+
+    def update_button_states(self):
+        """Aktualizuje stan przycisków do zmiany kolejności na podstawie bieżącego zaznaczenia."""
+        current_row = self.columns_list.currentRow()
+        item_count = self.columns_list.count()
+
+        # Przyciski do zmiany kolejności są aktywne tylko, gdy istnieje zaznaczenie
+        # i nie jest to pierwszy/ostatni element
+        self.move_up_button.setEnabled(current_row > 0)
+        self.move_down_button.setEnabled(current_row >= 0 and current_row < item_count - 1)
+
+    def move_item_up(self):
+        """Przesuwa zaznaczony element w górę listy."""
+        current_row = self.columns_list.currentRow()
+        if current_row > 0:
+            # Pobierz bieżący element
+            current_item = self.columns_list.takeItem(current_row)
+
+            # Wstaw go o jedną pozycję wyżej
+            self.columns_list.insertItem(current_row - 1, current_item)
+
+            # Zaznacz ten element na nowej pozycji
+            self.columns_list.setCurrentRow(current_row - 1)
+
+    def move_item_down(self):
+        """Przesuwa zaznaczony element w dół listy."""
+        current_row = self.columns_list.currentRow()
+        if current_row >= 0 and current_row < self.columns_list.count() - 1:
+            # Pobierz bieżący element
+            current_item = self.columns_list.takeItem(current_row)
+
+            # Wstaw go o jedną pozycję niżej
+            self.columns_list.insertItem(current_row + 1, current_item)
+
+            # Zaznacz ten element na nowej pozycji
+            self.columns_list.setCurrentRow(current_row + 1)
+
+    def restore_default_columns(self):
+        """Przywraca domyślny zestaw widocznych kolumn."""
+        # Zapisz bieżący zestaw domyślnych kolumn
+        self.visible_columns = self.default_columns.copy()
+
+        # Zaktualizuj listę
+        self.populate_columns_list()
+
+    def get_selected_columns(self):
+        """
+        Zwraca listę identyfikatorów kolumn, które są zaznaczone i widoczne.
+
+        Returns:
+            list: Lista identyfikatorów kolumn
+        """
+        selected_columns = []
+
+        for i in range(self.columns_list.count()):
+            item = self.columns_list.item(i)
+
+            # Dodaj tylko zaznaczone elementy
+            if item.checkState() == Qt.Checked:
+                col_id = item.data(Qt.UserRole)
+                selected_columns.append(col_id)
+
+        return selected_columns
