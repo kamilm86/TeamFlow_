@@ -1,1 +1,348 @@
+# progress_dialog.py - POPRAWIONA WERSJA
 
+from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
+                               QPushButton, QProgressBar, QTextEdit)
+from PySide6.QtCore import Qt, Signal, QThread, QTimer, QMutex, QMutexLocker
+from PySide6.QtGui import QMovie, QPixmap, QPainter, QTextCursor
+from debug_utils import debug_print, log_error
+import time
+
+
+class DataLoadingThread(QThread):
+    """
+    Thread do asynchronicznego ładowania danych z progress reporting
+    """
+    # Sygnały dla komunikacji z UI
+    progress_updated = Signal(int)  # Progress 0-100
+    status_updated = Signal(str)  # Status message
+    data_loaded = Signal(object)  # Załadowane dane
+    error_occurred = Signal(str)  # Błąd
+
+    def __init__(self, data_provider, year, month, parent=None):
+        super().__init__(parent)
+        self.data_provider = data_provider
+        self.year = year
+        self.month = month
+        self.cancel_requested = False
+        self.mutex = QMutex()
+
+    def run(self):
+        """Główna metoda wątku ładującego dane"""
+        try:
+            debug_print(f"Rozpoczynam async ładowanie danych dla {self.year}-{self.month}")
+
+            # Faza 1: Ładowanie danych grafiku (50% progress)
+            self.status_updated.emit("Ładowanie danych grafiku...")
+            self.progress_updated.emit(10)
+
+            if self._check_cancel():
+                return
+
+            schedule_data = self.data_provider.get_schedule_data(self.year, self.month, use_cache=False)
+            self.progress_updated.emit(40)
+
+            # Faza 2: Ładowanie zdarzeń (20% progress)
+            self.status_updated.emit("Ładowanie zdarzeń...")
+
+            if self._check_cancel():
+                return
+
+            events_data = self.data_provider.get_events_data(self.year, self.month, use_cache=False)
+            self.progress_updated.emit(60)
+
+            # Faza 3: Przetwarzanie danych (30% progress)
+            self.status_updated.emit("Przetwarzanie danych...")
+
+            if self._check_cancel():
+                return
+
+            processed_data = self.data_provider.get_processed_data(self.year, self.month)
+            self.progress_updated.emit(80)
+
+            # Faza 4: Finalizacja
+            self.status_updated.emit("Finalizowanie...")
+
+            if self._check_cancel():
+                return
+
+            # Przygotuj dane do zwrócenia
+            result_data = {
+                'schedule_data': schedule_data,
+                'events_data': events_data,
+                'processed_data': processed_data,
+                'year': self.year,
+                'month': self.month
+            }
+
+            self.progress_updated.emit(100)
+            self.status_updated.emit("Zakończono!")
+
+            # Małe opóźnienie żeby użytkownik zobaczył 100%
+            self.msleep(200)
+
+            # Wyślij dane
+            self.data_loaded.emit(result_data)
+            debug_print(f"Async ładowanie zakończone dla {self.year}-{self.month}")
+
+        except Exception as e:
+            error_msg = f"Błąd podczas ładowania danych: {str(e)}"
+            log_error(error_msg, exception=e)
+            self.error_occurred.emit(error_msg)
+
+    def _check_cancel(self):
+        """Sprawdza czy użytkownik anulował operację"""
+        with QMutexLocker(self.mutex):
+            if self.cancel_requested:
+                debug_print("Ładowanie danych zostało anulowane przez użytkownika")
+                return True
+        return False
+
+    def cancel_loading(self):
+        """Anuluje ładowanie danych"""
+        with QMutexLocker(self.mutex):
+            self.cancel_requested = True
+        debug_print("Żądanie anulowania ładowania danych")
+
+
+class LoadingProgressDialog(QDialog):
+    """
+    Dialog z progress bar dla async ładowania danych
+    """
+    # Sygnały
+    loading_completed = Signal(object)  # Dane załadowane
+    loading_cancelled = Signal()  # Anulowano
+    loading_failed = Signal(str)  # Błąd
+
+    def __init__(self, parent=None, data_provider=None, year=None, month=None):
+        super().__init__(parent)
+        self.data_provider = data_provider
+        self.year = year
+        self.month = month
+        self.loading_thread = None
+
+        self.setWindowTitle(f"Ładowanie danych {year}-{month:02d}")
+        self.setModal(True)
+        self.setFixedSize(400, 200)
+
+        # Nie pozwalaj na zamknięcie przez X
+        self.setWindowFlags(Qt.Dialog | Qt.CustomizeWindowHint | Qt.WindowTitleHint)
+
+        # Zastosuj motyw
+        self.apply_dialog_theme()
+
+        self.setup_ui()
+        self.start_loading()
+
+    def apply_dialog_theme(self):
+        """Stosuje motyw dla dialogu"""
+        if self.parent() and hasattr(self.parent(), 'is_dark_theme'):
+            theme = "dark" if self.parent().is_dark_theme else "light"
+        else:
+            theme = "dark"
+
+        from styles import AppStyles
+        self.setStyleSheet(AppStyles.get_dialog_style(theme))
+
+    def setup_ui(self):
+        """Inicjalizuje interfejs użytkownika"""
+        layout = QVBoxLayout(self)
+        layout.setSpacing(15)
+
+        # Tytuł
+        title_label = QLabel(f"Ładowanie danych dla {self.year}-{self.month:02d}")
+        title_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+        title_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title_label)
+
+        # Status
+        self.status_label = QLabel("Przygotowywanie...")
+        self.status_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(self.status_label)
+
+        # Progress bar
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.setStyleSheet("""
+            QProgressBar {
+                border: 2px solid grey;
+                border-radius: 5px;
+                text-align: center;
+            }
+            QProgressBar::chunk {
+                background-color: #3498db;
+                border-radius: 3px;
+            }
+        """)
+        layout.addWidget(self.progress_bar)
+
+        # Szczegółowy log (opcjonalny)
+        self.details_text = QTextEdit()
+        self.details_text.setMaximumHeight(60)
+        self.details_text.setVisible(False)  # Domyślnie ukryty
+        layout.addWidget(self.details_text)
+
+        # Przyciski
+        buttons_layout = QHBoxLayout()
+
+        # Przycisk pokazania szczegółów
+        self.details_button = QPushButton("Pokaż szczegóły")
+        self.details_button.clicked.connect(self.toggle_details)
+
+        # Przycisk anulowania
+        self.cancel_button = QPushButton("Anuluj")
+        self.cancel_button.clicked.connect(self.cancel_loading)
+
+        # Zastosuj style przycisków
+        theme = "dark" if (self.parent() and hasattr(self.parent(), 'is_dark_theme') and
+                           self.parent().is_dark_theme) else "light"
+        from styles import AppStyles
+        self.details_button.setStyleSheet(AppStyles.get_button_style(theme))
+        self.cancel_button.setStyleSheet(AppStyles.get_button_style(theme))
+
+        buttons_layout.addWidget(self.details_button)
+        buttons_layout.addStretch()
+        buttons_layout.addWidget(self.cancel_button)
+
+        layout.addLayout(buttons_layout)
+
+    def start_loading(self):
+        """Rozpoczyna asynchroniczne ładowanie danych"""
+        if not self.data_provider:
+            self.loading_failed.emit("Brak DataProvider")
+            return
+
+        # Utwórz i uruchom wątek ładujący
+        self.loading_thread = DataLoadingThread(
+            self.data_provider, self.year, self.month, self
+        )
+
+        # Podłącz sygnały
+        self.loading_thread.progress_updated.connect(self.update_progress)
+        self.loading_thread.status_updated.connect(self.update_status)
+        self.loading_thread.data_loaded.connect(self.on_data_loaded)
+        self.loading_thread.error_occurred.connect(self.on_error_occurred)
+        self.loading_thread.finished.connect(self.on_thread_finished)
+
+        # Uruchom wątek
+        self.loading_thread.start()
+        debug_print("Uruchomiono wątek ładowania danych")
+
+    def update_progress(self, value):
+        """Aktualizuje progress bar"""
+        self.progress_bar.setValue(value)
+
+        # Dodaj szczegóły do logu
+        self.details_text.append(f"Progress: {value}%")
+
+        # POPRAWIONA WERSJA: Auto-scroll do końca
+        cursor = self.details_text.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        self.details_text.setTextCursor(cursor)
+
+    def update_status(self, status):
+        """Aktualizuje status"""
+        self.status_label.setText(status)
+        self.details_text.append(f"Status: {status}")
+
+        # POPRAWIONA WERSJA: Auto-scroll do końca
+        cursor = self.details_text.textCursor()
+        cursor.movePosition(QTextCursor.MoveOperation.End)
+        self.details_text.setTextCursor(cursor)
+
+    def on_data_loaded(self, data):
+        """Obsługuje pomyślne załadowanie danych"""
+        debug_print("Dialog: Dane zostały załadowane pomyślnie")
+        self.loading_completed.emit(data)
+
+        # Zamknij dialog po krótkiej przerwie
+        QTimer.singleShot(500, self.accept)
+
+    def on_error_occurred(self, error_message):
+        """Obsługuje błędy podczas ładowania"""
+        debug_print(f"Dialog: Wystąpił błąd - {error_message}")
+        self.status_label.setText("Błąd!")
+        self.progress_bar.setStyleSheet("""
+            QProgressBar::chunk {
+                background-color: #e74c3c;
+            }
+        """)
+
+        self.loading_failed.emit(error_message)
+
+        # Zmień przycisk anuluj na zamknij
+        self.cancel_button.setText("Zamknij")
+        self.cancel_button.clicked.disconnect()
+        self.cancel_button.clicked.connect(self.reject)
+
+    def on_thread_finished(self):
+        """Obsługuje zakończenie wątku"""
+        debug_print("Wątek ładowania został zakończony")
+        if self.loading_thread:
+            self.loading_thread.deleteLater()
+            self.loading_thread = None
+
+    def cancel_loading(self):
+        """Anuluje ładowanie danych"""
+        if self.loading_thread and self.loading_thread.isRunning():
+            self.status_label.setText("Anulowanie...")
+            self.cancel_button.setEnabled(False)
+
+            # Poproś wątek o anulowanie
+            self.loading_thread.cancel_loading()
+
+            # Daj wątku czas na zakończenie (max 3 sekundy)
+            if self.loading_thread.wait(3000):
+                debug_print("Wątek został anulowany prawidłowo")
+            else:
+                debug_print("Wątek nie odpowiedział na anulowanie - wymuszam zakończenie")
+                self.loading_thread.terminate()
+                self.loading_thread.wait(1000)
+
+            self.loading_cancelled.emit()
+
+        self.reject()
+
+    def toggle_details(self):
+        """Pokazuje/ukrywa szczegółowy log"""
+        if self.details_text.isVisible():
+            self.details_text.hide()
+            self.details_button.setText("Pokaż szczegóły")
+            self.setFixedSize(400, 200)
+        else:
+            self.details_text.show()
+            self.details_button.setText("Ukryj szczegóły")
+            self.setFixedSize(400, 300)
+
+    def closeEvent(self, event):
+        """Obsługuje próbę zamknięcia dialogu"""
+        # Nie pozwalaj na zamknięcie podczas ładowania
+        if self.loading_thread and self.loading_thread.isRunning():
+            event.ignore()
+            # Opcjonalnie pokaż komunikat
+            self.status_label.setText("Użyj przycisku Anuluj aby przerwać ładowanie")
+        else:
+            event.accept()
+
+
+# NOWE: Pomocnicza funkcja do użycia w main.py
+def show_loading_dialog_async(parent, data_provider, year, month, callback=None):
+    """
+    Pokazuje dialog ładowania i wywołuje callback po zakończeniu
+
+    Args:
+        parent: Widget rodzica
+        data_provider: DataProvider do ładowania danych
+        year: Rok
+        month: Miesiąc
+        callback: Funkcja wywoływana po zakończeniu (data) -> None
+
+    Returns:
+        LoadingProgressDialog: Instancja dialogu
+    """
+    dialog = LoadingProgressDialog(parent, data_provider, year, month)
+
+    if callback:
+        dialog.loading_completed.connect(callback)
+
+    return dialog
