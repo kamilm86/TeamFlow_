@@ -25,12 +25,25 @@ class ThemeSettingsDialog(QDialog):
         self.current_font_size = current_font_size
         self.parent = parent
 
+        # NOWE: Zastosuj styl dialogu
+        self.apply_dialog_theme()
+
         self.setup_ui()
+
+    def apply_dialog_theme(self):
+        """Stosuje motyw dla dialogu"""
+        if self.parent and hasattr(self.parent, 'is_dark_theme'):
+            theme = "dark" if self.parent.is_dark_theme else "light"
+        else:
+            theme = self.current_theme
+
+        from styles import AppStyles
+        self.setStyleSheet(AppStyles.get_dialog_style(theme))
 
     def setup_ui(self):
         main_layout = QVBoxLayout(self)
 
-        # Grupa wyboru motywu
+        # Grupa wyboru motywu - BEZ DODATKOWYCH STYLÓW (używa globalnego)
         theme_group = QGroupBox("Motyw")
         theme_layout = QVBoxLayout()
 
@@ -84,6 +97,12 @@ class ThemeSettingsDialog(QDialog):
         buttons_layout = QHBoxLayout()
         self.ok_button = QPushButton("OK")
         self.cancel_button = QPushButton("Anuluj")
+
+        # NOWE: Zastosuj style przycisków
+        theme = "dark" if self.current_theme == "dark" else "light"
+        from styles import AppStyles
+        self.ok_button.setStyleSheet(AppStyles.get_button_style(theme))
+        self.cancel_button.setStyleSheet(AppStyles.get_button_style(theme))
 
         self.ok_button.clicked.connect(self.accept)
         self.cancel_button.clicked.connect(self.reject)
@@ -156,7 +175,20 @@ class InsertSymbolDialog(QDialog):
         if parent:
             self.parent_font = parent.font()
 
+        # NOWE: Zastosuj motyw dialogu
+        self.apply_dialog_theme()
+
         self.setup_ui()
+
+    def apply_dialog_theme(self):
+        """Stosuje motyw dla dialogu"""
+        if hasattr(self, 'parent') and self.parent and hasattr(self.parent, 'is_dark_theme'):
+            theme = "dark" if self.parent.is_dark_theme else "light"
+        else:
+            theme = "dark"  # domyślny
+
+        from styles import AppStyles
+        self.setStyleSheet(AppStyles.get_dialog_style(theme))
 
     def setup_ui(self):
         main_layout = QVBoxLayout(self)
@@ -170,22 +202,23 @@ class InsertSymbolDialog(QDialog):
         # Pole do ręcznego wpisania symbolu
         input_layout = QHBoxLayout()
         input_label = QLabel("Symbol:")
-        input_label.setStyleSheet("font-weight: bold;")
         input_label.setFont(self.parent_font)  # Użyj czcionki z głównego okna
 
         self.symbol_input = QLineEdit()
         self.symbol_input.setMaxLength(5)  # Ograniczenie długości
+
+        # NOWE: Zastosuj styl dla LineEdit
+        theme = "dark" if (hasattr(self, 'parent') and self.parent and
+                           hasattr(self.parent, 'is_dark_theme') and
+                           self.parent.is_dark_theme) else "light"
+        from styles import AppStyles
+        self.symbol_input.setStyleSheet(AppStyles.get_line_edit_style(theme))
 
         # Utwórz czcionkę na podstawie rodzica, ale pogrubioną i większą
         font = QFont(self.parent_font)
         font.setBold(True)
         font.setPointSize(font.pointSize() + 2)  # Nieco większa czcionka
         self.symbol_input.setFont(font)
-
-        self.symbol_input.setStyleSheet("""
-            padding: 5px;
-            min-height: 30px;
-        """)
 
         # Ustaw transformację tekstu na duże litery
         self.symbol_input.textChanged.connect(self.on_symbol_input_changed)
@@ -194,7 +227,6 @@ class InsertSymbolDialog(QDialog):
 
         input_layout.addWidget(input_label)
         input_layout.addWidget(self.symbol_input)
-
         main_layout.addLayout(input_layout)
 
         # Zakładki
@@ -280,10 +312,14 @@ class InsertSymbolDialog(QDialog):
             # self.add_tab_with_symbols(delegacje_symbole, "Delegacje i praca zdalna")
             # self.add_tab_with_symbols(inne_symbole, "Inne")
 
-        # Tylko przycisk Anuluj
+        # Przyciski
         buttons_layout = QHBoxLayout()
         self.cancel_button = QPushButton("Anuluj")
-        self.cancel_button.setFont(self.parent_font)  # Użyj czcionki z głównego okna
+        self.cancel_button.setFont(self.parent_font)
+
+        # NOWE: Zastosuj styl przycisku
+        self.cancel_button.setStyleSheet(AppStyles.get_button_style(theme))
+
         self.cancel_button.clicked.connect(self.reject)
 
         # Dodaj informację o prawidłowości symbolu
@@ -398,14 +434,13 @@ class InsertSymbolDialog(QDialog):
         """Zwraca wybrany symbol"""
         return self.selected_symbol
 
-
 class ScheduleChangeDialog(QDialog):
     """Dialog do edycji zmian w grafiku"""
 
     def __init__(self, parent=None, grouped_cells=None, year=None, month=None):
         super().__init__(parent)
         self.setWindowTitle("Wstaw zmianę grafiku")
-        self.setMinimumWidth(700)  # Zwiększona szerokość dla dodatkowej kolumny
+        self.setMinimumWidth(800)  # Zwiększona szerokość dla dodatkowej kolumny
         self.setMinimumHeight(500)  # Zwiększona wysokość dla większej liczby wierszy
 
         self.parent = parent
@@ -416,11 +451,34 @@ class ScheduleChangeDialog(QDialog):
         # Spłaszcz dane - wszystkie komórki w jednej liście
         self.flattened_cells = self.flatten_grouped_cells(grouped_cells)
 
+        # Wypisz dane do debugowania
+        print("\nDane komórek przekazane do dialogu:")
+        for i, cell in enumerate(self.flattened_cells):
+            print(f"Komórka {i + 1}:")
+            for key, value in cell.items():
+                print(f"  {key}: {value}")
+
+        # NOWE: Zastosuj motyw dialogu
+        self.apply_dialog_theme()
+
         self.setup_ui()
+
+    def apply_dialog_theme(self):
+        """Stosuje motyw dla dialogu"""
+        if self.parent and hasattr(self.parent, 'is_dark_theme'):
+            theme = "dark" if self.parent.is_dark_theme else "light"
+        else:
+            theme = "dark"
+
+        from styles import AppStyles
+        self.setStyleSheet(AppStyles.get_dialog_style(theme))
 
     def flatten_grouped_cells(self, grouped_cells):
         """Spłaszcza pogrupowane komórki do jednej listy"""
         flattened = []
+        if not grouped_cells:
+            return flattened
+
         for user_id, dates in grouped_cells.items():
             for date, cells in dates.items():
                 for cell in cells:
@@ -432,42 +490,70 @@ class ScheduleChangeDialog(QDialog):
 
         # Nagłówek
         header_label = QLabel("Edycja zmian w grafiku")
-        header_label.setStyleSheet("font-size: 14pt; font-weight: bold; margin-bottom: 10px;")
         main_layout.addWidget(header_label)
 
-        # Tabela dla wszystkich komórek
+        # Tabela - NOWY STYL
         self.cells_table = QTableWidget()
-        self.cells_table.setColumnCount(6)  # Data, Użytkownik, Symbol, Lokalizacja, Godzina rozpoczęcia, Akcje
-        self.cells_table.setHorizontalHeaderLabels(
-            ["Data", "Użytkownik", "Symbol", "Lokalizacja", "Godzina rozpoczęcia", "Akcje"])
+        self.cells_table.setColumnCount(7)
+        self.cells_table.setHorizontalHeaderLabels([
+            "Data", "Użytkownik", "Symbol", "Lokalizacja",
+            "Godzina rozpoczęcia", "Liczba godzin", "Akcje"
+        ])
+
+        # NOWE: Zastosuj styl tabeli
+        theme = "dark" if (self.parent and hasattr(self.parent, 'is_dark_theme') and
+                           self.parent.is_dark_theme) else "light"
+        from styles import AppStyles
+        self.cells_table.setStyleSheet(AppStyles.get_tablewidget_style(theme))
 
         # Ustaw właściwości dla lepszego wyświetlania
-        self.cells_table.horizontalHeader().setStretchLastSection(True)
+        self.cells_table.horizontalHeader().setStretchLastSection(False)
         self.cells_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Data
         self.cells_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Użytkownik
         self.cells_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)  # Symbol
         self.cells_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)  # Lokalizacja
         self.cells_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)  # Godzina rozpoczęcia
+        self.cells_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents)  # Liczba godzin
+        self.cells_table.horizontalHeader().setSectionResizeMode(6, QHeaderView.Stretch)  # Akcje
 
         # Dodaj wiersze dla każdej komórki
         self.cells_table.setRowCount(len(self.flattened_cells))
 
         for row, cell in enumerate(self.flattened_cells):
             # Kolumna daty
-            date_item = QTableWidgetItem(self.format_date(cell.get('date', '')))
+            date_str = cell.get('date_str', '')
+            date_item = QTableWidgetItem(self.format_date(date_str))
             date_item.setFlags(date_item.flags() & ~Qt.ItemIsEditable)  # Tylko do odczytu
             self.cells_table.setItem(row, 0, date_item)
 
             # Kolumna użytkownika
-            user_item = QTableWidgetItem(cell.get('user_name', 'Nieznany'))
+            user_name = cell.get('uzytkownik_dane', 'Nieznany')
+            user_item = QTableWidgetItem(user_name)
             user_item.setFlags(user_item.flags() & ~Qt.ItemIsEditable)  # Tylko do odczytu
             self.cells_table.setItem(row, 1, user_item)
 
             # Kolumna symbolu
-            current_symbol = cell.get('current_symbol', '')
-            symbol_item = QTableWidgetItem(current_symbol)
+            symbol = cell.get('symbol', '')
+            symbol_item = QTableWidgetItem(symbol)
             symbol_item.setFlags(symbol_item.flags() & ~Qt.ItemIsEditable)  # Tylko do odczytu
             self.cells_table.setItem(row, 2, symbol_item)
+
+            # Parsowanie symbolu do składowych
+            location_code = "h"  # Domyślnie HomeOffice
+            start_hour = 8  # Domyślnie 8:00
+            work_hours = 8  # Domyślnie 8h
+
+            # Analiza symbolu
+            from symbol_parser import parse_symbol
+
+            parsed_symbol = parse_symbol(symbol)
+            if parsed_symbol['location']:
+                location_code = parsed_symbol['location']
+            if parsed_symbol['start_hour'] is not None:
+                start_hour = parsed_symbol['start_hour']
+            if parsed_symbol['work_hours'] is not None:
+                work_hours = parsed_symbol['work_hours']
+
 
             # Kolumna lokalizacji (Combo box)
             location_combo = QComboBox()
@@ -475,30 +561,26 @@ class ScheduleChangeDialog(QDialog):
             location_combo.addItem("mPrzystanek (p)", "p")
             location_combo.addItem("HomeOffice (h)", "h")
 
-            # Ustaw bieżącą lokalizację z symbolu, jeśli dostępna
-            if current_symbol and ';' in current_symbol:
-                parts = current_symbol.split(';')
-                if parts[0] in ['s', 'p', 'h']:
-                    location_index = {'s': 0, 'p': 1, 'h': 2}.get(parts[0], 0)
-                    location_combo.setCurrentIndex(location_index)
-
+            # Ustaw odpowiednią lokalizację
+            location_index = {'s': 0, 'p': 1, 'h': 2}.get(location_code, 2)
+            location_combo.setCurrentIndex(location_index)
             self.cells_table.setCellWidget(row, 3, location_combo)
 
-            # Kolumna godziny rozpoczęcia (SpinBox)
-            time_spin = QSpinBox()
-            time_spin.setMinimum(0)
-            time_spin.setMaximum(23)
-            time_spin.setButtonSymbols(QSpinBox.UpDownArrows)  # Pokazuj przyciski góra/dół
-            time_spin.setSpecialValueText("")  # Brak specjalnego tekstu dla wartości minimalnej
+            # Kolumna godziny rozpoczęcia
+            time_button = QPushButton(str(start_hour))
+            time_button.setProperty("cell_index", row)
+            time_button.setProperty("field_type", "hour")
+            time_button.clicked.connect(self.show_digit_selection)
+            time_button.setMinimumWidth(50)
+            self.cells_table.setCellWidget(row, 4, time_button)
 
-            # Ustaw bieżącą godzinę rozpoczęcia, jeśli dostępna
-            start_hour = cell.get('start_hour')
-            if start_hour is not None and isinstance(start_hour, int) and 0 <= start_hour < 24:
-                time_spin.setValue(start_hour)
-            else:
-                time_spin.setValue(8)  # Domyślnie 8:00
-
-            self.cells_table.setCellWidget(row, 4, time_spin)
+            # NOWA KOLUMNA: Liczba godzin (SpinBox)
+            hours_button = QPushButton(str(work_hours))
+            hours_button.setProperty("cell_index", row)
+            hours_button.setProperty("field_type", "hours")
+            hours_button.clicked.connect(self.show_digit_selection)
+            hours_button.setMinimumWidth(50)
+            self.cells_table.setCellWidget(row, 5, hours_button)
 
             # Przycisk akcji
             apply_button = QPushButton("Zastosuj")
@@ -510,7 +592,7 @@ class ScheduleChangeDialog(QDialog):
             # Połącz przycisk z obsługą z danymi komórki - używając indeksu komórki
             apply_button.clicked.connect(self.apply_change_by_index)
 
-            self.cells_table.setCellWidget(row, 5, apply_button)
+            self.cells_table.setCellWidget(row, 6, apply_button)
 
         main_layout.addWidget(self.cells_table)
 
@@ -519,15 +601,50 @@ class ScheduleChangeDialog(QDialog):
 
         # Przycisk zamknięcia
         close_button = QPushButton("Zamknij")
+        # NOWE: Zastosuj styl przycisku
+        close_button.setStyleSheet(AppStyles.get_button_style(theme))
+
         close_button.clicked.connect(self.close)
 
         button_layout.addStretch()
         button_layout.addWidget(close_button)
-
         main_layout.addLayout(button_layout)
 
+    def show_digit_selection(self):
+        """
+        NOWA METODA: Pokazuje dialog wyboru cyfr
+        """
+        button = self.sender()
+        if not button:
+            return
+
+        field_type = button.property("field_type")
+        cell_index = button.property("cell_index")
+
+        if field_type == "hour":
+            # Godzina rozpoczęcia: 0-23
+            values = list(range(24))
+            title = "Wybierz godzinę rozpoczęcia"
+        elif field_type == "hours":
+            # Liczba godzin: 1-13
+            values = list(range(1, 14))
+            title = "Wybierz liczbę godzin"
+        else:
+            return
+
+        # Pokaż dialog wyboru
+        dialog = DigitSelectionDialog(self, title, values)
+        if dialog.exec() == QDialog.Accepted:
+            selected_value = dialog.get_selected_value()
+            if selected_value is not None:
+                button.setText(str(selected_value))
+                # Zapisz wartość w danych przycisku
+                button.setProperty("selected_value", selected_value)
+
     def apply_change_by_index(self):
-        """Obsługuje kliknięcie przycisku 'Zastosuj' i stosuje zmianę dla wybranej komórki"""
+        """
+        POPRAWIONA WERSJA: Używa tej samej procedury co edycja klawiatury i "Wstaw nieobecność"
+        """
         # Pobierz przycisk, który wywołał tę funkcję
         button = self.sender()
         if not button:
@@ -543,71 +660,61 @@ class ScheduleChangeDialog(QDialog):
 
         # Pobierz wartości z kontrolek
         location_combo = self.cells_table.cellWidget(cell_index, 3)
-        time_spin = self.cells_table.cellWidget(cell_index, 4)
+        time_button = self.cells_table.cellWidget(cell_index, 4)  # Zmieniono
+        hours_button = self.cells_table.cellWidget(cell_index, 5)  # Zmieniono
 
-        if not location_combo or not time_spin:
+        if not location_combo or not time_button or not hours_button:
             QMessageBox.warning(self, "Błąd", "Nie można odczytać wartości.", QMessageBox.Ok)
             return
 
         location = location_combo.currentData()
-        start_hour = time_spin.value()
+        start_hour = time_button.property("selected_value")  # Zmieniono
+        work_hours = hours_button.property("selected_value")  # Zmieniono
+
+        # Sprawdź czy wartości zostały wybrane
+        if start_hour is None:
+            start_hour = int(time_button.text())  # Fallback na tekst przycisku
+        if work_hours is None:
+            work_hours = int(hours_button.text())  # Fallback na tekst przycisku
 
         # Pobierz dane potrzebne do wywołania procedury
-        user_id = cell.get('user_id')
-        date_str = cell.get('date')
+        user_id = cell.get('uzytkownik_id')
+        date_str = cell.get('date_str')
         nr_kadrowy = cell.get('nr_kadrowy')
-        current_symbol = cell.get('current_symbol', '')
 
-        # Przygotuj nowy symbol - ZMODYFIKOWANA LOGIKA
-        # Podziel istniejący symbol, jeśli jest, aby zachować wartości po godzinie rozpoczęcia
-        if current_symbol and ';' in current_symbol:
-            parts = current_symbol.split(';')
-            # Sprawdź ile części ma symbol
-            if len(parts) >= 3:
-                # Format: lokalizacja;godzina_rozpoczęcia;pozostałe_wartości;
-                # Zamień lokalizację i godzinę rozpoczęcia, zachowując inne części
-                new_symbol = f"{location};{start_hour};{';'.join(parts[2:])}"
-            elif len(parts) == 2:
-                # Format: lokalizacja;godzina_rozpoczęcia;
-                new_symbol = f"{location};{start_hour};"
-            else:
-                # Format: tylko lokalizacja;
-                new_symbol = f"{location};{start_hour};"
-        else:
-            # Jeśli nie ma istniejącego symbolu lub jest bez średnika, utwórz nowy
-            new_symbol = f"{location};{start_hour};8;"  # Domyślna wartość 8 godzin pracy
+        if not user_id or not date_str or not nr_kadrowy:
+            QMessageBox.warning(self, "Błąd", "Niepełne dane komórki.", QMessageBox.Ok)
+            return
 
-        # Upewnij się, że symbol kończy się średnikiem
-        if not new_symbol.endswith(';'):
-            new_symbol += ';'
+        # KLUCZOWA ZMIANA: Zbuduj symbol z pól dialogu
+        new_symbol = f"{location};{start_hour};{work_hours};"
 
-        # Wyodrębnij rok i miesiąc z daty
-        year, month, _ = date_str.split('-')
-
-        # Wywołaj procedurę, aby zastosować zmianę
         try:
-            result = self.call_change_procedure(
-                user_id,
-                int(year),
-                int(month),
-                date_str,
-                new_symbol,
-                nr_kadrowy
+            year, month, day = date_str.split('-')
+            date_obj = f"{year}-{month}-{day}"
+
+            # KLUCZOWA ZMIANA: Użyj tej samej procedury co edycja klawiatury
+            result = self.parent._call_import_changes_procedure(
+                nr_kadrowy=nr_kadrowy,
+                rok=int(year),
+                miesiac=int(month),
+                data=date_obj,
+                symbol=new_symbol
             )
 
             if result["success"]:
-                # Zaktualizuj tekst i styl przycisku, aby wskazać sukces
+                # Zaktualizuj przycisk
                 button.setText("Zmieniono ✓")
                 button.setStyleSheet("background-color: #4CAF50; color: white;")
 
-                # Zaktualizuj element symbolu w tabeli
+                # Zaktualizuj symbol w tabeli
                 symbol_item = self.cells_table.item(cell_index, 2)
                 if symbol_item:
                     symbol_item.setText(new_symbol)
 
-                # Odśwież dane w głównym oknie
-                self.parent.data_provider.refresh_data(int(year), int(month))
-                self.parent.update_table_content()
+                # KLUCZOWA ZMIANA: Odśwież tylko tę komórkę
+                if self.parent and hasattr(self.parent, '_refresh_data_after_symbol_changes'):
+                    self.parent._refresh_data_after_symbol_changes([(user_id, date_str)])
             else:
                 QMessageBox.warning(self, "Błąd", result["message"], QMessageBox.Ok)
 
@@ -622,108 +729,89 @@ class ScheduleChangeDialog(QDialog):
         except:
             return date_str
 
-    def call_change_procedure(self, user_id, year, month, date_str, symbol, nr_kadrowy, pobieranie_sugestii=None):
-        """
-        Wywołuje procedurę składowaną p_P_ZZ_ImportZmianNaSerwer_v4 aby zastosować zmianę w grafiku
 
-        Args:
-            user_id: ID użytkownika
-            year: Rok
-            month: Miesiąc
-            date_str: Data w formacie 'YYYY-MM-DD'
-            symbol: Nowy symbol, w tym lokalizacja
-            nr_kadrowy: Numer kadrowy pracownika
-            pobieranie_sugestii: Parametr NULL
+class DigitSelectionDialog(QDialog):
+    """
+    Dialog do wyboru cyfry z siatki przycisków
+    """
 
-        Returns:
-            dict: Wynik operacji z kluczami 'success' i 'message'
-        """
-        try:
-            # Przygotuj parametry dla procedury składowanej
-            params = [
-                nr_kadrowy,  # @Nr_Kadrowy
-                year,  # @Rok
-                month,  # @Miesiac
-                date_str,  # @Data
-                symbol,  # @Symbol
-                pobieranie_sugestii  # @CzyPobieranieSugestii
-            ]
+    def __init__(self, parent=None, title="Wybierz wartość", values=None):
+        super().__init__(parent)
+        self.setWindowTitle(title)
+        self.setModal(True)
+        self.selected_value = None
 
-            # Utwórz połączenie z bazą danych
-            conn = DatabaseConnector.get_connection()
-            cursor = conn.cursor()
+        if values is None:
+            values = list(range(10))  # 0-9 domyślnie
 
-            # Przygotuj wywołanie procedury składowanej
-            placeholders = ", ".join(["?"] * len(params))
-            sql = f"{{CALL [dbo].[p_P_ZZ_ImportZmianNaSerwer_v4] ({placeholders})}}"
+        self.values = values
 
-            # Wykonaj procedurę składowaną
-            cursor.execute(sql, params)
+        # Ustaw stały rozmiar okna
+        self.setFixedSize(200, 150)
 
-            # Pobierz wyniki
-            result_sets = []
+        # Zastosuj motyw
+        self.apply_dialog_theme()
 
-            # Procedura może zwrócić wiele zestawów wyników
-            while True:
-                try:
-                    rows = cursor.fetchall()
-                    if rows:
-                        result_sets.append(rows)
+        self.setup_ui()
 
-                    # Sprawdź, czy są więcej zestawów wyników
-                    if not cursor.nextset():
-                        break
-                except:
-                    break
+    def apply_dialog_theme(self):
+        """Stosuje motyw dla dialogu"""
+        if hasattr(self, 'parent') and self.parent and hasattr(self.parent, 'is_dark_theme'):
+            theme = "dark" if self.parent.is_dark_theme else "light"
+        else:
+            theme = "dark"
 
-            # Domyślny komunikat
-            success = False
-            message = "Nieznany wynik operacji."
+        from styles import AppStyles
+        self.setStyleSheet(AppStyles.get_dialog_style(theme))
 
-            # Sprawdź wyniki - zwykle pierwszy zestaw wyników zawiera informacje o sukcesie/niepowodzeniu
-            if result_sets and result_sets[0]:
-                first_result = result_sets[0][0]
+    def setup_ui(self):
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(10, 10, 10, 10)
 
-                # Pobierz komunikat z wyniku
-                message = str(first_result[0]) if first_result and len(first_result) > 0 else "Operacja zakończona."
+        # Siatka przycisków
+        grid_layout = QGridLayout()
+        grid_layout.setSpacing(5)
 
-                # Określ sukces na podstawie treści komunikatu
-                success = not (
-                            "błąd" in message.lower() or "nieudany" in message.lower() or "niepowodzenie" in message.lower())
+        # Oblicz liczbę kolumn (maksymalnie 6)
+        cols = min(6, len(self.values))
 
-            # Zatwierdź transakcję i zamknij połączenie
-            conn.commit()
-            conn.close()
+        for i, value in enumerate(self.values):
+            row = i // cols
+            col = i % cols
 
-            # Zaktualizuj datę ostatniej modyfikacji, jeśli zakończono sukcesem
-            if success:
-                try:
-                    # Pobierz najnowszą datę modyfikacji
-                    query = """
-                        SELECT MAX(DataModyfikacji) as DataModyfikacji FROM p_v_zz_GrafikiPracy
-                    """
-                    conn = DatabaseConnector.get_connection()
-                    cursor = conn.cursor()
-                    cursor.execute(query)
-                    result = cursor.fetchone()
-                    conn.close()
+            button = QPushButton(str(value))
+            button.setFixedSize(25, 25)
+            button.setProperty("value", value)
+            button.clicked.connect(self.on_value_selected)
 
-                    if result and result[0]:
-                        # Zapisz jako własną modyfikację
-                        self.parent.last_self_modification_date = result[0]
-                        self.parent.last_modification_date = result[0]
-                        print(f"Zarejestrowano własną modyfikację z datą: {self.parent.last_self_modification_date}")
-                except Exception as e:
-                    print(f"Błąd rejestrowania własnej modyfikacji: {e}")
+            # Zastosuj styl przycisku
+            theme = "dark" if (hasattr(self, 'parent') and self.parent and
+                               hasattr(self.parent, 'is_dark_theme') and
+                               self.parent.is_dark_theme) else "light"
+            from styles import AppStyles
+            button.setStyleSheet(AppStyles.get_button_style(theme))
 
-            return {
-                "success": success,
-                "message": message
-            }
+            grid_layout.addWidget(button, row, col)
 
-        except Exception as e:
-            print(f"Błąd wywołania procedury zmiany: {e}")
-            return {
-                "success": False,
-                "message": f"Wystąpił błąd: {str(e)}"
-            }
+        main_layout.addLayout(grid_layout)
+
+        # Przycisk Anuluj
+        cancel_button = QPushButton("Anuluj")
+        cancel_button.clicked.connect(self.reject)
+        cancel_button.setStyleSheet(AppStyles.get_button_style(theme))
+
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        button_layout.addWidget(cancel_button)
+        main_layout.addLayout(button_layout)
+
+    def on_value_selected(self):
+        """Obsługuje wybór wartości"""
+        button = self.sender()
+        if button:
+            self.selected_value = button.property("value")
+            self.accept()
+
+    def get_selected_value(self):
+        """Zwraca wybraną wartość"""
+        return self.selected_value
