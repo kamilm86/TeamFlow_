@@ -72,3 +72,55 @@ BEGIN
 END
 -------------------
 
+USE [ZarzadzaniePraca]
+GO
+
+/****** Object:  UserDefinedFunction [dbo].[fn_GetScheduleData]    Script Date: 07.06.2025 17:30:50 ******/
+SET ANSI_NULLS ON
+GO
+
+SET QUOTED_IDENTIFIER ON
+GO
+
+ALTER FUNCTION [dbo].[fn_GetForecastData]
+(
+    @Year INT,
+    @Month INT
+)
+RETURNS TABLE
+AS
+RETURN
+(
+    
+    -- Pobieram prognozę interwałową
+
+        SELECT 
+    YEAR(DataOd) AS Rok,
+    MONTH(DataOd) AS Miesiac,
+    CAST(DataOd AS DATE) AS Data,
+    DataOd, 
+    DataDo,
+    CASE 
+        WHEN Grupa = 0 THEN 'MASS+WELCOMER+GOLD' 
+        WHEN Grupa = 1 THEN 'NUMEN+FIRMA' 
+        WHEN Grupa = 2 THEN 'CZAT' 
+        WHEN Grupa = 3 THEN 'WELCOMER' 
+        WHEN Grupa = 4 THEN 'GOLD' 
+        WHEN Grupa = 5 THEN 'NUMEN+FIRMA_VOICE' 
+        WHEN Grupa = 6 THEN 'WELCOMER' 
+        WHEN Grupa = 7 THEN 'TOTAL' -- Poprawiony błąd składniowy
+        ELSE NULL
+    END AS GrupaNazwa,
+    Ilosc AS Prognoza
+FROM p_t_ZZ_PrognozaRBH 
+WHERE YEAR(DataOd) = @Year 
+    AND MONTH(DataOd) = @Month
+
+	)
+GO
+
+
+----------------------------------------------
+
+
+
