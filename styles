@@ -1,865 +1,823 @@
+# styles.py - Propozycja przebudowy
+
 class AppStyles:
     """Klasa przechowująca style aplikacji dla różnych trybów"""
 
+    # Definicje kolorów dla łatwiejszej modyfikacji i spójności
+    # Ciemny Motyw
+    DARK_BACKGROUND_MAIN = "#23272a"  # Ciemniejszy, bardziej neutralny
+    DARK_BACKGROUND_CONTROLS = "#2c3136"  # Lekko jaśniejszy dla kontrolek
+    DARK_BACKGROUND_HOVER = "#343a40"
+    DARK_BACKGROUND_PRESSED = "#1e2124"
+    DARK_TEXT_PRIMARY = "#f8f9fa"  # Prawie biały
+    DARK_TEXT_SECONDARY = "#adb5bd"  # Szary dla mniej ważnych tekstów
+    DARK_BORDER_PRIMARY = "#495057"
+    DARK_BORDER_SECONDARY = "#343a40"  # Ciemniejszy border
+    ACCENT_COLOR_DARK = "#007bff"  # Bardziej standardowy niebieski akcent
+    ACCENT_COLOR_DARK_HOVER = "#0056b3"
+    SELECTION_BACKGROUND_DARK = "#0056b3"  # Ciemniejszy niebieski dla zaznaczenia
+
+    # Jasny Motyw
+    LIGHT_BACKGROUND_MAIN = "#f8f9fa"  # Bardzo jasny szary
+    LIGHT_BACKGROUND_CONTROLS = "#ffffff"  # Biały
+    LIGHT_BACKGROUND_HOVER = "#e9ecef"
+    LIGHT_BACKGROUND_PRESSED = "#dee2e6"
+    LIGHT_TEXT_PRIMARY = "#212529"  # Ciemny szary/czarny
+    LIGHT_TEXT_SECONDARY = "#6c757d"  # Szary
+    LIGHT_BORDER_PRIMARY = "#ced4da"
+    LIGHT_BORDER_SECONDARY = "#adb5bd"  # Ciemniejszy szary border
+    ACCENT_COLOR_LIGHT = "#007bff"
+    ACCENT_COLOR_LIGHT_HOVER = "#0056b3"
+    SELECTION_BACKGROUND_LIGHT = "#007bff"
+
+    CONTROL_PADDING = "3px 6px"  # Padding pionowy i poziomy dla kontrolek
+    BUTTON_PADDING = "4px 10px"  # Padding dla przycisków
+    BORDER_RADIUS = "4px"  # Lekko zwiększony dla nowocześniejszego wyglądu
+
+    BUTTON_GRAY_BACKGROUND = "#E0E0E0"  # Jasny szary
+    BUTTON_GRAY_TEXT_COLOR = "#000000"  # Czarny tekst dla kontrastu
+    BUTTON_GRAY_HOVER_BG = "#D0D0D0"  # Ciemniejszy szary dla hover
+    BUTTON_GRAY_PRESSED_BG = "#C0C0C0"  # Jeszcze ciemniejszy dla pressed
+    BUTTON_GRAY_BORDER = "#A9A9A9"  # Ciemniejszy szary dla ramki
+
+    BUTTON_DARK_BG = "#4f545c"  # Ciemnoszary
+    BUTTON_DARK_TEXT = "#ffffff"  # Biały
+    BUTTON_DARK_HOVER_BG = "#6a7078"  # Jaśniejszy szary dla hover
+    BUTTON_DARK_PRESSED_BG = "#40444b"  # Ciemniejszy szary dla pressed
+    BUTTON_DARK_BORDER = "#2c3136"  # Bardzo ciemna ramka
+
     @staticmethod
     def get_button_style(theme="dark"):
-        """Zwraca styl dla przycisków"""
+        # Sprawdź, którego zestawu kolorów użyć na podstawie motywu
         if theme == "dark":
-            return """
-                QPushButton {
-                    background-color: #2c2c2c;
-                    color: white;
-                    border: 1px solid #3a3a3a;
-                    padding: 5px;
-                    border-radius: 3px;
-                    min-height: 18px;
-                }
-                QPushButton:hover {
-                    background-color: #3a3a3a;
-                }
-                QPushButton:pressed {
-                    background-color: #1e1e1e;
-                }
-            """
+            # Użyj nowych, ciemnych kolorów dla motywu ciemnego
+            bg_color = AppStyles.BUTTON_DARK_BG
+            text_color = AppStyles.BUTTON_DARK_TEXT
+            border_color = AppStyles.BUTTON_DARK_BORDER
+            hover_bg = AppStyles.BUTTON_DARK_HOVER_BG
+            pressed_bg = AppStyles.BUTTON_DARK_PRESSED_BG
+            disabled_bg = AppStyles.DARK_BACKGROUND_PRESSED
+            disabled_text = AppStyles.DARK_TEXT_SECONDARY
         else:
-            return """
-                QPushButton {
-                    background-color: #e0e0e0;
-                    color: black;
-                    border: 1px solid #cccccc;
-                    padding: 5px;
-                    border-radius: 3px;
-                    min-height: 18px;
-                }
-                QPushButton:hover {
-                    background-color: #d0d0d0;
-                }
-                QPushButton:pressed {
-                    background-color: #c0c0c0;
-                }
-            """
+            # Użyj istniejących, jasnych kolorów dla motywu jasnego
+            bg_color = AppStyles.BUTTON_GRAY_BACKGROUND
+            text_color = AppStyles.BUTTON_GRAY_TEXT_COLOR
+            border_color = AppStyles.BUTTON_GRAY_BORDER
+            hover_bg = AppStyles.BUTTON_GRAY_HOVER_BG
+            pressed_bg = AppStyles.BUTTON_GRAY_PRESSED_BG
+            disabled_bg = AppStyles.LIGHT_BACKGROUND_PRESSED
+            disabled_text = AppStyles.LIGHT_TEXT_SECONDARY
+
+        # Zwróć styl CSS z użyciem wybranych zmiennych
+        return f"""
+                    QPushButton {{
+                        background-color: {bg_color};
+                        color: {text_color};
+                        border: 1px solid {border_color};
+                        padding: {AppStyles.BUTTON_PADDING};
+                        border-radius: {AppStyles.BORDER_RADIUS};
+                    }}
+                    QPushButton:hover {{
+                        background-color: {hover_bg};
+                        border-color: {border_color};
+                    }}
+                    QPushButton:pressed {{
+                        background-color: {pressed_bg};
+                    }}
+                    QPushButton:disabled {{
+                        background-color: {disabled_bg};
+                        color: {disabled_text};
+                    }}
+                """
 
     @staticmethod
     def get_list_style(theme="dark"):
-        """Zwraca styl dla list"""
         if theme == "dark":
-            return """
-                QListWidget {
-                    background-color: #2c2c2c;
-                    color: white;
-                    border: 1px solid #3a3a3a;
-                    border-radius: 3px;
-                    alternate-background-color: #3a3a3a;
-                }
-                QListWidget::item {
-                    padding: 3px;
-                    border-bottom: 1px solid #3a3a3a;
-                }
-                QListWidget::item:selected {
-                    background-color: #3498db;
-                    color: white;
-                }
-                QListWidget::item:hover {
-                    background-color: #3a3a3a;
-                }
+            return f"""
+                QListWidget {{
+                    background-color: {AppStyles.DARK_BACKGROUND_CONTROLS};
+                    color: {AppStyles.DARK_TEXT_PRIMARY};
+                    border: 1px solid {AppStyles.DARK_BORDER_SECONDARY};
+                    border-radius: {AppStyles.BORDER_RADIUS};
+                }}
+                QListWidget::item {{
+                    padding: 4px; /* Trochę więcej miejsca dla czytelności */
+                    border-bottom: 1px solid {AppStyles.DARK_BORDER_SECONDARY}; /* Subtelniejszy separator */
+                }}
+                QListWidget::item:selected {{
+                    background-color: {AppStyles.SELECTION_BACKGROUND_DARK};
+                    color: {AppStyles.DARK_TEXT_PRIMARY};
+                }}
+                QListWidget::item:hover {{
+                    background-color: {AppStyles.DARK_BACKGROUND_HOVER};
+                }}
             """
         else:
-            return """
-                QListWidget {
-                    background-color: white;
-                    color: black;
-                    border: 1px solid #cccccc;
-                    border-radius: 3px;
-                    alternate-background-color: #f8f8f8;
-                }
-                QListWidget::item {
-                    padding: 3px;
-                    border-bottom: 1px solid #eeeeee;
-                }
-                QListWidget::item:selected {
-                    background-color: #3498db;
-                    color: white;
-                }
-                QListWidget::item:hover {
-                    background-color: #f0f0f0;
-                }
+            return f"""
+                QListWidget {{
+                    background-color: {AppStyles.LIGHT_BACKGROUND_CONTROLS};
+                    color: {AppStyles.LIGHT_TEXT_PRIMARY};
+                    border: 1px solid {AppStyles.LIGHT_BORDER_PRIMARY};
+                    border-radius: {AppStyles.BORDER_RADIUS};
+                }}
+                QListWidget::item {{
+                    padding: 4px;
+                    border-bottom: 1px solid {AppStyles.LIGHT_BACKGROUND_HOVER};
+                }}
+                QListWidget::item:selected {{
+                    background-color: {AppStyles.SELECTION_BACKGROUND_LIGHT};
+                    color: {AppStyles.LIGHT_BACKGROUND_CONTROLS}; /* Biały tekst na niebieskim */
+                }}
+                QListWidget::item:hover {{
+                    background-color: {AppStyles.LIGHT_BACKGROUND_HOVER};
+                }}
             """
 
     @staticmethod
     def get_line_edit_style(theme="dark"):
-        """Zwraca styl dla pól edycji tekstu"""
         if theme == "dark":
-            return """
-                QLineEdit {
-                    background-color: #2c2c2c;
-                    color: white;
-                    border: 1px solid #3a3a3a;
-                    padding: 5px;
-                    border-radius: 3px;
-                    selection-background-color: #3498db;
-                    selection-color: white;
-                }
-                QLineEdit:focus {
-                    border: 2px solid #3498db;
-                }
+            return f"""
+                QLineEdit {{
+                    background-color: {AppStyles.DARK_BACKGROUND_CONTROLS};
+                    color: {AppStyles.DARK_TEXT_PRIMARY};
+                    border: 1px solid {AppStyles.DARK_BORDER_SECONDARY};
+                    padding: {AppStyles.CONTROL_PADDING};
+                    border-radius: {AppStyles.BORDER_RADIUS};
+                    selection-background-color: {AppStyles.SELECTION_BACKGROUND_DARK};
+                    selection-color: {AppStyles.DARK_TEXT_PRIMARY};
+                }}
+                QLineEdit:focus {{
+                    border: 1px solid {AppStyles.ACCENT_COLOR_DARK};
+                    /* Można dodać subtelny box-shadow, ale QSS ma ograniczone wsparcie */
+                }}
+                QLineEdit:disabled {{
+                    background-color: {AppStyles.DARK_BACKGROUND_PRESSED};
+                    color: {AppStyles.DARK_TEXT_SECONDARY};
+                }}
             """
         else:
-            return """
-                QLineEdit {
-                    background-color: white;
-                    color: black;
-                    border: 1px solid #cccccc;
-                    padding: 5px;
-                    border-radius: 3px;
-                    selection-background-color: #3498db;
-                    selection-color: white;
-                }
-                QLineEdit:focus {
-                    border: 2px solid #3498db;
-                }
+            return f"""
+                QLineEdit {{
+                    background-color: {AppStyles.LIGHT_BACKGROUND_CONTROLS};
+                    color: {AppStyles.LIGHT_TEXT_PRIMARY};
+                    border: 1px solid {AppStyles.LIGHT_BORDER_PRIMARY};
+                    padding: {AppStyles.CONTROL_PADDING};
+                    border-radius: {AppStyles.BORDER_RADIUS};
+                    selection-background-color: {AppStyles.SELECTION_BACKGROUND_LIGHT};
+                    selection-color: {AppStyles.LIGHT_BACKGROUND_CONTROLS};
+                }}
+                QLineEdit:focus {{
+                    border: 1px solid {AppStyles.ACCENT_COLOR_LIGHT};
+                }}
+                 QLineEdit:disabled {{
+                    background-color: {AppStyles.LIGHT_BACKGROUND_HOVER};
+                    color: {AppStyles.LIGHT_TEXT_SECONDARY};
+                }}
             """
+
+    @staticmethod
+    def get_table_style_shared( text_primary, gridline, selection_bg, selection_text, border_main,
+                               header_bg, header_text, header_border):
+        return f"""
+            QTableView, QTableWidget {{
+       
+                color: {text_primary};
+                gridline-color: {gridline};
+                selection-background-color: {selection_bg};
+                selection-color: {selection_text};
+
+                border: 1px solid {border_main};
+                outline: 0; /* Usunięcie domyślnego focus rect */
+            }}
+            QTableView::item, QTableWidget::item {{
+                padding: 3px 4px; /* Dostosowany padding */
+                border: none; /* Usuwamy indywidualne bordery komórek, gridline-color wystarczy */
+
+            }}
+            QTableView::item:selected, QTableWidget::item:selected {{
+                background-color: {selection_bg};
+                color: {selection_text};
+            }}
+            QTableView::item:focus, QTableWidget::item:focus {{
+                 /* Można dodać subtelne obramowanie dla fokusowanej komórki, jeśli potrzebne */
+                 /* border: 1px dotted {selection_bg}; */
+            }}
+            QHeaderView::section {{
+                background-color: {header_bg};
+                color: {header_text};
+                border-top: 0px solid {header_border};
+                border-bottom: 1px solid {header_border};
+                border-right: 1px solid {header_border};
+                border-left: 0px solid {header_border};
+                padding: 3px 5px; /* Zmniejszony padding dla nagłówków */
+                font-weight: 500; /* Lekko pogrubione, ale nie za mocno */
+            }}
+             QHeaderView::section:horizontal:first, QHeaderView::section:vertical:first {{
+                border-left: 1px solid {header_border};
+            }}
+        """
 
     @staticmethod
     def get_table_style(theme="dark"):
         """Zwraca styl dla tabel"""
         if theme == "dark":
             return """
-                QTableView {
-                    background-color: #333;
-                    color: #EEE;
-                    gridline-color: #666;
-                    selection-background-color: #2980b9;
-                    selection-color: #FFFFFF;
-                    alternate-background-color: #3A3A3A;
-                    border: 1px solid #666;
-                }
-                QTableView::item:selected {
-                    background-color: #2980b9;
-                }
-                QTableView::item {
-                    padding: 2px;
-                }
-                QHeaderView::section {
-                    background-color: #2c2c2c;
-                    color: white;
-                    border: 1px solid #3a3a3a;
-                    padding: 4px;
-                }
-            """
-        else:
+                   QTableView {
+                       background-color: #333;
+                       color: #EEE;
+                       gridline-color: #666;
+                       selection-background-color: #2980b9;
+                       selection-color: #FFFFFF;
+                       alternate-background-color: #3A3A3A; 
+                       border: 1px solid #666;
+                   }
+                   QTableView::item:selected {
+                       background-color: #2980b9;
+                   }
+                   QTableView::item {
+                       padding: 2px;
+                       /* BRAK background-color tutaj */
+                   }
+                   QHeaderView::section {
+                       background-color: #2c2c2c;
+                       color: white;
+                       border: 1px solid #3a3a3a;
+                       padding: 4px; /* Pamiętaj o dostosowaniu wysokości nagłówka */
+                   }
+               """
+        else:  # Jasny motyw
             return """
-                QTableView {
-                    background-color: #FFF;
-                    color: #333;
-                    gridline-color: #DDD;
-                    selection-background-color: #3498db;
-                    selection-color: #FFFFFF;
-                    alternate-background-color: #F5F5F5;
-                    border: 1px solid #DDD;
-                }
-                QTableView::item:selected {
-                    background-color: #3498db;
-                }
-                QTableView::item {
-                    padding: 2px;
-                }
-                QHeaderView::section {
-                    background-color: #e0e0e0;
-                    color: black;
-                    border: 1px solid #cccccc;
-                    padding: 4px;
-                }
-            """
+                   QTableView {
+                       background-color: #FFF;
+                       color: #333;
+                       gridline-color: #DDD;
+                       selection-background-color: #3498db;
+                       selection-color: #FFFFFF;
+                       alternate-background-color: #F5F5F5; 
+                       border: 1px solid #DDD;
+                   }
+                   QTableView::item:selected {
+                       background-color: #3498db;
+                   }
+                   QTableView::item {
+                       padding: 2px;
+                       /* BRAK background-color tutaj */
+                   }
+                   QHeaderView::section {
+                       background-color: #e0e0e0;
+                       color: black;
+                       border: 1px solid #cccccc;
+                       padding: 4px; /* Pamiętaj o dostosowaniu wysokości nagłówka */
+                   }
+               """
+
+    @staticmethod
+    def get_tablewidget_style(theme="dark"):  # Używamy tej samej logiki co dla QTableView
+        return AppStyles.get_table_style(theme)
 
     @staticmethod
     def get_date_edit_style(theme="dark"):
-        """Zwraca styl dla kontrolki daty"""
         if theme == "dark":
-            return """
-                QDateEdit {
-                    background-color: #2c2c2c;
-                    color: white;
-                    border: 1px solid #3a3a3a;
-                    padding: 5px;
-                    border-radius: 3px;
-                }
-                QDateEdit::drop-down {
-                    border: 0px;
+            return f"""
+                QDateEdit {{
+                    background-color: {AppStyles.DARK_BACKGROUND_CONTROLS};
+                    color: {AppStyles.DARK_TEXT_PRIMARY};
+                    border: 1px solid {AppStyles.DARK_BORDER_SECONDARY};
+                    padding: {AppStyles.CONTROL_PADDING};
+                    border-radius: {AppStyles.BORDER_RADIUS};
+                }}
+                QDateEdit::drop-down {{
+                    subcontrol-origin: padding;
+                    subcontrol-position: top right;
                     width: 20px;
-                }
-                QDateEdit QAbstractItemView {
-                    background-color: #2c2c2c;
-                    color: white;
-                    selection-background-color: #3498db;
-                }
+                    border-left: 1px solid {AppStyles.DARK_BORDER_SECONDARY};
+                    /* Można dodać ikonę strzałki SVG */
+                }}
+                QDateEdit QAbstractItemView {{ /* Kalendarz */
+                    background-color: {AppStyles.DARK_BACKGROUND_CONTROLS};
+                    color: {AppStyles.DARK_TEXT_PRIMARY};
+                    selection-background-color: {AppStyles.SELECTION_BACKGROUND_DARK};
+                    selection-color: {AppStyles.DARK_TEXT_PRIMARY};
+                    border: 1px solid {AppStyles.DARK_BORDER_PRIMARY};
+                    outline: 0;
+                }}
+                QDateEdit QCalendarWidget QToolButton {{
+                    color: {AppStyles.DARK_TEXT_PRIMARY};
+                    background-color: transparent;
+                }}
+                QDateEdit QCalendarWidget QTableView {{
+                     alternate-background-color: {AppStyles.DARK_BACKGROUND_HOVER};
+                }}
             """
         else:
-            return """
-                QDateEdit {
-                    background-color: white;
-                    color: black;
-                    border: 1px solid #cccccc;
-                    padding: 5px;
-                    border-radius: 3px;
-                }
-                QDateEdit::drop-down {
-                    border: 0px;
+            return f"""
+                QDateEdit {{
+                    background-color: {AppStyles.LIGHT_BACKGROUND_CONTROLS};
+                    color: {AppStyles.LIGHT_TEXT_PRIMARY};
+                    border: 1px solid {AppStyles.LIGHT_BORDER_PRIMARY};
+                    padding: {AppStyles.CONTROL_PADDING};
+                    border-radius: {AppStyles.BORDER_RADIUS};
+                }}
+                QDateEdit::drop-down {{
+                    subcontrol-origin: padding;
+                    subcontrol-position: top right;
                     width: 20px;
-                }
-                QDateEdit QAbstractItemView {
-                    background-color: white;
-                    color: black;
-                    selection-background-color: #3498db;
-                    selection-color: white;
-                }
-            """
-
-    @staticmethod
-    def get_selection_style(theme="dark"):
-        """Zwraca styl dla zaznaczenia komórek w tabelach"""
-        if theme == "dark":
-            return """
-                QTableView::item:selected {
-                    background-color: #2980b9;
-                    color: white;
-                }
-            """
-        else:
-            return """
-                QTableView::item:selected {
-                    background-color: #3498db;
-                    color: white;
-                }
+                    border-left: 1px solid {AppStyles.LIGHT_BORDER_PRIMARY};
+                }}
+                QDateEdit QAbstractItemView {{
+                    background-color: {AppStyles.LIGHT_BACKGROUND_CONTROLS};
+                    color: {AppStyles.LIGHT_TEXT_PRIMARY};
+                    selection-background-color: {AppStyles.SELECTION_BACKGROUND_LIGHT};
+                    selection-color: {AppStyles.LIGHT_BACKGROUND_CONTROLS};
+                    border: 1px solid {AppStyles.LIGHT_BORDER_PRIMARY};
+                    outline: 0;
+                }}
+                QDateEdit QCalendarWidget QToolButton {{
+                    color: {AppStyles.LIGHT_TEXT_PRIMARY};
+                    background-color: transparent;
+                }}
+                QDateEdit QCalendarWidget QTableView {{
+                     alternate-background-color: {AppStyles.LIGHT_BACKGROUND_HOVER};
+                }}
             """
 
     @staticmethod
     def get_combobox_style(theme="dark"):
-        """Zwraca styl dla combo boxów"""
         if theme == "dark":
-            return """
-                QComboBox {
-                    background-color: #2c2c2c;
-                    color: white;
-                    border: 1px solid #3a3a3a;
-                    padding: 5px;
-                    border-radius: 3px;
-                    min-height: 18px;
-                }
-                QComboBox::drop-down {
-                    border: 0px;
+            return f"""
+                QComboBox {{
+                    background-color: {AppStyles.DARK_BACKGROUND_CONTROLS};
+                    color: {AppStyles.DARK_TEXT_PRIMARY};
+                    border: 1px solid {AppStyles.DARK_BORDER_SECONDARY};
+                    padding: {AppStyles.CONTROL_PADDING};
+                    border-radius: {AppStyles.BORDER_RADIUS};
+                }}
+                QComboBox:focus {{
+                    border: 1px solid {AppStyles.ACCENT_COLOR_DARK};
+                }}
+                QComboBox::drop-down {{
+                    subcontrol-origin: padding;
+                    subcontrol-position: top right;
                     width: 20px;
-                }
-                QComboBox::down-arrow {
-                    width: 0px;
-                    height: 0px;
-                    border-left: 5px solid transparent;
-                    border-right: 5px solid transparent;
-                    border-top: 5px solid white;
-                }
-                QComboBox QAbstractItemView {
-                    background-color: #2c2c2c;
-                    color: white;
-                    selection-background-color: #3498db;
-                    border: 1px solid #3a3a3a;
-                    outline: none;
-                }
-                QComboBox QAbstractItemView::item {
-                    padding: 4px;
-                    border-bottom: 1px solid #3a3a3a;
-                }
-                QComboBox QAbstractItemView::item:selected {
-                    background-color: #3498db;
-                    color: white;
-                }
+                    border-left-width: 1px;
+                    border-left-color: {AppStyles.DARK_BORDER_SECONDARY};
+                    border-left-style: solid;
+                    border-top-right-radius: {AppStyles.BORDER_RADIUS};
+                    border-bottom-right-radius: {AppStyles.BORDER_RADIUS};
+                }}
+                QComboBox::down-arrow {{
+                    /* Można użyć obrazka SVG dla strzałki */
+                    image: url(none); /* Reset domyślnej strzałki jeśli używamy własnej */
+                    width: 10px; height: 10px; /* Jeśli używamy własnej */
+                }}
+                QComboBox QAbstractItemView {{ /* Lista rozwijana */
+                    background-color: {AppStyles.DARK_BACKGROUND_CONTROLS};
+                    color: {AppStyles.DARK_TEXT_PRIMARY};
+                    border: 1px solid {AppStyles.DARK_BORDER_PRIMARY};
+                    selection-background-color: {AppStyles.SELECTION_BACKGROUND_DARK};
+                    selection-color: {AppStyles.DARK_TEXT_PRIMARY};
+                    padding: 2px;
+                    outline: 0;
+                }}
+                 QComboBox QAbstractItemView::item {{
+                    padding: 4px 6px; /* Padding dla elementów listy */
+                }}
             """
         else:
-            return """
-                QComboBox {
-                    background-color: white;
-                    color: black;
-                    border: 1px solid #cccccc;
-                    padding: 5px;
-                    border-radius: 3px;
-                    min-height: 18px;
-                }
-                QComboBox::drop-down {
-                    border: 0px;
+            return f"""
+                QComboBox {{
+                    background-color: {AppStyles.LIGHT_BACKGROUND_CONTROLS};
+                    color: {AppStyles.LIGHT_TEXT_PRIMARY};
+                    border: 1px solid {AppStyles.LIGHT_BORDER_PRIMARY};
+                    padding: {AppStyles.CONTROL_PADDING};
+                    border-radius: {AppStyles.BORDER_RADIUS};
+                }}
+                QComboBox:focus {{
+                    border: 1px solid {AppStyles.ACCENT_COLOR_LIGHT};
+                }}
+                QComboBox::drop-down {{
+                    subcontrol-origin: padding;
+                    subcontrol-position: top right;
                     width: 20px;
-                }
-                QComboBox::down-arrow {
-                    width: 0px;
-                    height: 0px;
-                    border-left: 5px solid transparent;
-                    border-right: 5px solid transparent;
-                    border-top: 5px solid black;
-                }
-                QComboBox QAbstractItemView {
-                    background-color: white;
-                    color: black;
-                    selection-background-color: #3498db;
-                    selection-color: white;
-                    border: 1px solid #cccccc;
-                    outline: none;
-                }
-                QComboBox QAbstractItemView::item {
-                    padding: 4px;
-                    border-bottom: 1px solid #eeeeee;
-                }
-                QComboBox QAbstractItemView::item:selected {
-                    background-color: #3498db;
-                    color: white;
-                }
+                    border-left-width: 1px;
+                    border-left-color: {AppStyles.LIGHT_BORDER_PRIMARY};
+                    border-left-style: solid;
+                    border-top-right-radius: {AppStyles.BORDER_RADIUS};
+                    border-bottom-right-radius: {AppStyles.BORDER_RADIUS};
+                }}
+                QComboBox::down-arrow {{
+                    image: url(none);
+                    width: 10px; height: 10px;
+                }}
+                QComboBox QAbstractItemView {{
+                    background-color: {AppStyles.LIGHT_BACKGROUND_CONTROLS};
+                    color: {AppStyles.LIGHT_TEXT_PRIMARY};
+                    border: 1px solid {AppStyles.LIGHT_BORDER_PRIMARY};
+                    selection-background-color: {AppStyles.SELECTION_BACKGROUND_LIGHT};
+                    selection-color: {AppStyles.LIGHT_BACKGROUND_CONTROLS};
+                    padding: 2px;
+                    outline: 0;
+                }}
+                QComboBox QAbstractItemView::item {{
+                    padding: 4px 6px;
+                }}
             """
 
     @staticmethod
-    def get_left_panel_style(theme="dark"):
-        """Zwraca styl dla lewego panelu"""
+    def get_left_panel_style(theme="dark"):  # Panel filtrów
         if theme == "dark":
-            return """
-                QWidget {
-                    background-color: #1e1e1e;
-                    color: white;
-                    border: 1px solid #3a3a3a;
-                }
+            return f"""
+                QWidget {{
+                    background-color: {AppStyles.DARK_BACKGROUND_MAIN};
+                    color: {AppStyles.DARK_TEXT_PRIMARY};
+                    border-right: 1px solid {AppStyles.DARK_BORDER_SECONDARY}; /* Tylko prawa krawędź */
+                }}
             """
         else:
-            return """
-                QWidget {
-                    background-color: #f0f0f0;
-                    color: black;
-                    border: 1px solid #cccccc;
-                }
+            return f"""
+                QWidget {{
+                    background-color: {AppStyles.LIGHT_BACKGROUND_MAIN}; /* Jaśniejsze tło dla panelu */
+                    color: {AppStyles.LIGHT_TEXT_PRIMARY};
+                    border-right: 1px solid {AppStyles.LIGHT_BORDER_PRIMARY};
+                }}
             """
 
     @staticmethod
     def get_label_style(theme="dark", is_title=False):
-        """Zwraca styl dla etykiet"""
-        if is_title:
-            if theme == "dark":
-                return """
-                    QLabel {
-                        font-size: 16px; 
-                        font-weight: bold; 
-                        color: white;
-                        padding: 5px;
-                    }
-                """
-            else:
-                return """
-                    QLabel {
-                        font-size: 16px; 
-                        font-weight: bold; 
-                        color: black;
-                        padding: 5px;
-                    }
-                """
+        font_weight = "bold" if is_title else "normal"
+        font_size = "11pt" if is_title else "9pt"  # Dostosuj rozmiary czcionek
+        padding = "6px 0px" if is_title else "2px 0px"  # Większy padding dla tytułu
+
+        if theme == "dark":
+            text_color = AppStyles.DARK_TEXT_PRIMARY if is_title else AppStyles.DARK_TEXT_SECONDARY
+            return f"""
+                QLabel {{
+                    font-size: {font_size}; 
+                    font-weight: {font_weight}; 
+                    color: {text_color};
+                    padding: {padding};
+                    background-color: transparent; /* Ważne dla etykiet na tle panelu */
+                }}
+            """
         else:
-            if theme == "dark":
-                return """
-                    QLabel {
-                        color: #3498db;
-                        padding: 2px;
-                    }
-                """
-            else:
-                return """
-                    QLabel {
-                        color: #2980b9;
-                        padding: 2px;
-                    }
-                """
+            text_color = AppStyles.LIGHT_TEXT_PRIMARY if is_title else AppStyles.LIGHT_TEXT_SECONDARY
+            return f"""
+                QLabel {{
+                    font-size: {font_size}; 
+                    font-weight: {font_weight}; 
+                    color: {text_color};
+                    padding: {padding};
+                    background-color: transparent;
+                }}
+            """
 
     @staticmethod
     def get_checkbox_style(theme="dark"):
-        """Zwraca styl dla checkboxów"""
+        # Style dla checkboxów są zwykle dość standardowe i trudniejsze do głębokiej kastomizacji przez QSS
+        # bez użycia obrazków. Poniżej drobne poprawki.
         if theme == "dark":
-            return """
-                QCheckBox {
-                    color: white;
+            return f"""
+                QCheckBox {{
+                    color: {AppStyles.DARK_TEXT_PRIMARY};
                     spacing: 5px;
-                    padding: 2px;
-                }
-                QCheckBox::indicator {
-                    width: 13px;
-                    height: 13px;
-                }
-                QCheckBox::indicator:unchecked {
-                    border: 1px solid #5A5A5A;
-                    background: #2c2c2c;
-                    border-radius: 2px;
-                }
-                QCheckBox::indicator:checked {
-                    border: 1px solid #3498db;
-                    background: #3498db;
-                    border-radius: 2px;
-                }
-                QCheckBox::indicator:checked:pressed {
-                    background: #2980b9;
-                }
+                    padding: {AppStyles.CONTROL_PADDING};
+                    background-color: transparent;
+                }}
+                QCheckBox::indicator {{
+                    width: 14px; /* Lekko większe */
+                    height: 14px;
+                    border-radius: {AppStyles.BORDER_RADIUS};
+                }}
+                QCheckBox::indicator:unchecked {{
+                    border: 1px solid {AppStyles.DARK_BORDER_PRIMARY};
+                    background: {AppStyles.DARK_BACKGROUND_CONTROLS};
+                }}
+                QCheckBox::indicator:unchecked:hover {{
+                    border: 1px solid {AppStyles.ACCENT_COLOR_DARK};
+                }}
+                QCheckBox::indicator:checked {{
+                    border: 1px solid {AppStyles.ACCENT_COLOR_DARK};
+                    background: {AppStyles.ACCENT_COLOR_DARK};
+                    /* Można dodać SVG dla "ptaszka" */
+                }}
+                QCheckBox::indicator:checked:hover {{
+                    background: {AppStyles.ACCENT_COLOR_DARK_HOVER};
+                    border: 1px solid {AppStyles.ACCENT_COLOR_DARK_HOVER};
+                }}
             """
         else:
-            return """
-                QCheckBox {
-                    color: black;
+            return f"""
+                QCheckBox {{
+                    color: {AppStyles.LIGHT_TEXT_PRIMARY};
                     spacing: 5px;
-                    padding: 2px;
-                }
-                QCheckBox::indicator {
-                    width: 13px;
-                    height: 13px;
-                }
-                QCheckBox::indicator:unchecked {
-                    border: 1px solid #CCCCCC;
-                    background: white;
-                    border-radius: 2px;
-                }
-                QCheckBox::indicator:checked {
-                    border: 1px solid #3498db;
-                    background: #3498db;
-                    border-radius: 2px;
-                }
-                QCheckBox::indicator:checked:pressed {
-                    background: #2980b9;
-                }
+                    padding: {AppStyles.CONTROL_PADDING};
+                    background-color: transparent;
+                }}
+                QCheckBox::indicator {{
+                    width: 14px;
+                    height: 14px;
+                    border-radius: {AppStyles.BORDER_RADIUS};
+                }}
+                QCheckBox::indicator:unchecked {{
+                    border: 1px solid {AppStyles.LIGHT_BORDER_SECONDARY};
+                    background: {AppStyles.LIGHT_BACKGROUND_CONTROLS};
+                }}
+                 QCheckBox::indicator:unchecked:hover {{
+                    border: 1px solid {AppStyles.ACCENT_COLOR_LIGHT};
+                }}
+                QCheckBox::indicator:checked {{
+                    border: 1px solid {AppStyles.ACCENT_COLOR_LIGHT};
+                    background: {AppStyles.ACCENT_COLOR_LIGHT};
+                }}
+                QCheckBox::indicator:checked:hover {{
+                    background: {AppStyles.ACCENT_COLOR_LIGHT_HOVER};
+                    border: 1px solid {AppStyles.ACCENT_COLOR_LIGHT_HOVER};
+                }}
             """
 
     @staticmethod
-    def get_delegate_button_style(theme="dark"):
-        """Zwraca styl dla przycisków w delegatach (np. 'Usuń')"""
+    def get_delegate_button_style(theme="dark"):  # Przycisk "Usuń" w tabeli
+        # Te przyciski powinny być małe i wyraźnie akcyjne
         if theme == "dark":
             return """
-                background-color: #c0392b;
+                background-color: #c23616; /* Ciemniejsza czerwień */
                 color: white;
                 border-radius: 3px;
-                padding: 3px;
+                padding: 2px 5px; /* Mniejszy padding */
                 font-weight: bold;
-                border: 1px solid #a93226;
+                border: none; /* Bez obramowania dla czystszego wyglądu */
             """
         else:
             return """
-                background-color: #e74c3c;
+                background-color: #e74c3c; /* Standardowa czerwień */
                 color: white;
                 border-radius: 3px;
-                padding: 3px;
+                padding: 2px 5px;
                 font-weight: bold;
-                border: 1px solid #c0392b;
+                border: none;
             """
 
     @staticmethod
     def get_main_window_style(theme="dark"):
-        """Zwraca główny styl dla okna aplikacji"""
         if theme == "dark":
-            return """
-                QMainWindow, QWidget {
-                    background-color: #1e1e1e;
-                    color: white;
-                }
-                QHeaderView {
-                    background-color: #2c2c2c;
-                    color: white;
-                }
-                QHeaderView::section {
-                    background-color: #2c2c2c;
-                    color: white;
-                    border: 1px solid #3a3a3a;
-                    padding: 4px;
-                }
-                QTabWidget::pane {
-                    border: 1px solid #3a3a3a;
-                    background-color: #1e1e1e;
-                }
-                QTabBar::tab {
-                    background-color: #2c2c2c;
-                    color: white;
-                    border: 1px solid #3a3a3a;
-                    padding: 5px 10px;
-                    border-top-left-radius: 4px;
-                    border-top-right-radius: 4px;
-                    margin-right: 2px;
-                }
-                QTabBar::tab:selected {
-                    background-color: #3498db;
-                }
-                QTabBar::tab:!selected {
-                    margin-top: 2px;
-                }
-            """
+            bg_color = AppStyles.DARK_BACKGROUND_MAIN
+            text_color = AppStyles.DARK_TEXT_PRIMARY
+            border_color = AppStyles.DARK_BORDER_SECONDARY
+            tab_bg = AppStyles.DARK_BACKGROUND_CONTROLS
+            tab_selected_bg = AppStyles.ACCENT_COLOR_DARK
+            header_bg = AppStyles.DARK_BACKGROUND_MAIN
         else:
-            return """
-                QMainWindow, QWidget {
-                    background-color: #f5f5f5;
-                    color: black;
-                }
-                QHeaderView {
-                    background-color: #e0e0e0;
-                    color: black;
-                }
-                QHeaderView::section {
-                    background-color: #e0e0e0;
-                    color: black;
-                    border: 1px solid #cccccc;
-                    padding: 4px;
-                }
-                QTabWidget::pane {
-                    border: 1px solid #cccccc;
-                    background-color: #f5f5f5;
-                }
-                QTabBar::tab {
-                    background-color: #e0e0e0;
-                    color: black;
-                    border: 1px solid #cccccc;
-                    padding: 5px 10px;
-                    border-top-left-radius: 4px;
-                    border-top-right-radius: 4px;
-                    margin-right: 2px;
-                }
-                QTabBar::tab:selected {
-                    background-color: #3498db;
-                    color: white;
-                }
-                QTabBar::tab:!selected {
-                    margin-top: 2px;
-                }
-            """
+            bg_color = AppStyles.LIGHT_BACKGROUND_MAIN
+            text_color = AppStyles.LIGHT_TEXT_PRIMARY
+            border_color = AppStyles.LIGHT_BORDER_PRIMARY
+            tab_bg = AppStyles.LIGHT_BACKGROUND_HOVER
+            tab_selected_bg = AppStyles.ACCENT_COLOR_LIGHT
+            header_bg = AppStyles.LIGHT_BACKGROUND_HOVER
+
+        return f"""
+            QMainWindow, QWidget {{ /* QWidget dla tła dialogów itp. jeśli nie mają własnego stylu */
+                background-color: {bg_color};
+                color: {text_color};
+            }}
+            QStatusBar {{
+                background-color: {header_bg}; /* Dopasowanie do nagłówków */
+                color: {text_color};
+                border-top: 1px solid {border_color};
+            }}
+            QMenuBar {{
+                background-color: {header_bg};
+                color: {text_color};
+            }}
+            QMenuBar::item:selected {{
+                background-color: {AppStyles.DARK_BACKGROUND_HOVER if theme == 'dark' else AppStyles.LIGHT_BACKGROUND_HOVER};
+            }}
+            QMenu {{
+                background-color: {tab_bg};
+                color: {text_color};
+                border: 1px solid {border_color};
+            }}
+            QMenu::item:selected {{
+                background-color: {tab_selected_bg};
+            }}
+
+            /* Style dla QSplitter handle */
+            QSplitter::handle {{
+                background-color: {bg_color}; /* Kolor tła uchwytu */
+                border: 1px solid {border_color}; /* Obramowanie uchwytu */
+            }}
+            QSplitter::handle:horizontal {{
+                width: 1px; /* Cieńszy splitter */
+            }}
+            QSplitter::handle:vertical {{
+                height: 1px; /* Cieńszy splitter */
+            }}
+            QSplitter::handle:pressed {{
+                background-color: {tab_selected_bg}; /* Kolor uchwytu podczas przeciągania */
+            }}
+
+            QTabWidget::pane {{
+                border-top: 1px solid {border_color};
+                background-color: {bg_color}; /* Tło obszaru zakładek */
+            }}
+            QTabBar::tab {{
+                background-color: {tab_bg};
+                color: {text_color};
+                border: 1px solid {border_color};
+                border-bottom: none; /* Usuń dolną krawędź dla "wtopienia" w pane */
+                padding: 5px 12px;
+                margin-right: 1px;
+                border-top-left-radius: {AppStyles.BORDER_RADIUS};
+                border-top-right-radius: {AppStyles.BORDER_RADIUS};
+            }}
+            QTabBar::tab:selected {{
+                background-color: {tab_selected_bg};
+                color: {'white' if theme == 'dark' else AppStyles.LIGHT_BACKGROUND_CONTROLS};
+            }}
+            QTabBar::tab:!selected {{
+                /* margin-top: 2px; */ /* Usunięte dla gładszego przejścia */
+                background-color: {bg_color if theme == 'dark' else AppStyles.LIGHT_BACKGROUND_HOVER};
+            }}
+            QTabBar::tab:hover:!selected {{
+                background-color: {AppStyles.DARK_BACKGROUND_HOVER if theme == 'dark' else AppStyles.LIGHT_BACKGROUND_HOVER};
+            }}
+        """
 
     @staticmethod
     def get_dialog_style(theme="dark"):
-        """Zwraca POPRAWIONY styl dla okien dialogowych"""
-        if theme == "dark":
-            return """
-                QDialog {
-                    background-color: #1e1e1e;
-                    color: white;
-                }
+        # Styl dialogu dziedziczy kolory z QWidget z get_main_window_style
+        # Można tu dodać specyficzne rzeczy dla QDialog jeśli potrzeba,
+        # ale obecna struktura powinna już nadać im bazowy wygląd.
+        # Poniżej przykład jak można by rozbudować, ale najpierw sprawdź efekt dziedziczenia.
 
-                /* Grupy elementów */
-                QGroupBox {
-                    background-color: #2c2c2c;
-                    color: white;
-                    border: 1px solid #3a3a3a;
-                    border-radius: 5px;
-                    margin-top: 10px;
-                    padding-top: 10px;
-                    font-weight: bold;
-                }
-                QGroupBox::title {
-                    subcontrol-origin: margin;
-                    left: 10px;
-                    padding: 0 5px 0 5px;
-                    color: #3498db;
-                    font-weight: bold;
-                }
+        main_bg = AppStyles.DARK_BACKGROUND_MAIN if theme == "dark" else AppStyles.LIGHT_BACKGROUND_MAIN
+        control_bg = AppStyles.DARK_BACKGROUND_CONTROLS if theme == "dark" else AppStyles.LIGHT_BACKGROUND_CONTROLS
+        text_color = AppStyles.DARK_TEXT_PRIMARY if theme == "dark" else AppStyles.LIGHT_TEXT_PRIMARY
+        border_color_secondary = AppStyles.DARK_BORDER_SECONDARY if theme == "dark" else AppStyles.LIGHT_BORDER_PRIMARY
+        accent_color = AppStyles.ACCENT_COLOR_DARK if theme == "dark" else AppStyles.ACCENT_COLOR_LIGHT
 
-                /* Etykiety */
-                QLabel {
-                    color: white;
-                    background: transparent;
-                    padding: 2px;
-                }
-
-                /* Radio przyciski */
-                QRadioButton {
-                    color: white;
-                    spacing: 5px;
-                    background: transparent;
-                    padding: 3px;
-                }
-                QRadioButton::indicator {
-                    width: 13px;
-                    height: 13px;
-                }
-                QRadioButton::indicator:unchecked {
-                    border: 2px solid #5A5A5A;
-                    background: #2c2c2c;
-                    border-radius: 7px;
-                }
-                QRadioButton::indicator:checked {
-                    border: 2px solid #3498db;
-                    background: #3498db;
-                    border-radius: 7px;
-                }
-
-                /* Combo box czcionek */
-                QFontComboBox {
-                    background-color: #2c2c2c;
-                    color: white;
-                    border: 1px solid #3a3a3a;
-                    padding: 5px;
-                    border-radius: 3px;
-                    min-height: 18px;
-                }
-                QFontComboBox QAbstractItemView {
-                    background-color: #2c2c2c;
-                    color: white;
-                    selection-background-color: #3498db;
-                    border: 1px solid #3a3a3a;
-                }
-                QFontComboBox QAbstractItemView::item {
-                    padding: 4px;
-                    border-bottom: 1px solid #3a3a3a;
-                }
-
-                /* Spin boxy */
-                QSpinBox {
-                    background-color: #2c2c2c;
-                    color: white;
-                    border: 1px solid #3a3a3a;
-                    padding: 5px;
-                    border-radius: 3px;
-                    min-height: 18px;
-                }
-                QSpinBox::up-button, QSpinBox::down-button {
-                    background-color: #3a3a3a;
-                    border: 1px solid #555;
-                    width: 16px;
-                }
-                QSpinBox::up-button:hover, QSpinBox::down-button:hover {
-                    background-color: #4a4a4a;
-                }
-
-                /* Zakładki */
-                QTabWidget::pane {
-                    border: 1px solid #3a3a3a;
-                    background-color: #2c2c2c;
-                    color: white;
-                }
-                QTabBar::tab {
-                    background-color: #333;
-                    color: white;
-                    border: 1px solid #3a3a3a;
-                    padding: 8px 16px;
-                    margin-right: 2px;
-                    border-top-left-radius: 4px;
-                    border-top-right-radius: 4px;
-                }
-                QTabBar::tab:selected {
-                    background-color: #3498db;
-                    border-color: #3498db;
-                }
-                QTabWidget::tab-bar {
-                    alignment: center;
-                }
-
-                /* Text edity */
-                QTextEdit {
-                    background-color: #2c2c2c;
-                    color: white;
-                    border: 1px solid #3a3a3a;
-                    border-radius: 3px;
-                    padding: 5px;
-                }
-
-                /* Scroll bary */
-                QScrollBar:vertical {
-                    background-color: #2c2c2c;
-                    width: 12px;
-                    border: 1px solid #3a3a3a;
-                }
-                QScrollBar::handle:vertical {
-                    background-color: #555;
-                    border-radius: 3px;
-                    min-height: 20px;
-                }
-                QScrollBar::handle:vertical:hover {
-                    background-color: #666;
-                }
-            """
-        else:
-            return """
-                QDialog {
-                    background-color: #f5f5f5;
-                    color: black;
-                }
-
-                /* Grupy elementów */
-                QGroupBox {
-                    background-color: white;
-                    color: black;
-                    border: 1px solid #cccccc;
-                    border-radius: 5px;
-                    margin-top: 10px;
-                    padding-top: 10px;
-                    font-weight: bold;
-                }
-                QGroupBox::title {
-                    subcontrol-origin: margin;
-                    left: 10px;
-                    padding: 0 5px 0 5px;
-                    color: #2980b9;
-                    font-weight: bold;
-                }
-
-                /* Etykiety */
-                QLabel {
-                    color: black;
-                    background: transparent;
-                    padding: 2px;
-                }
-
-                /* Radio przyciski */
-                QRadioButton {
-                    color: black;
-                    spacing: 5px;
-                    background: transparent;
-                    padding: 3px;
-                }
-                QRadioButton::indicator {
-                    width: 13px;
-                    height: 13px;
-                }
-                QRadioButton::indicator:unchecked {
-                    border: 2px solid #CCCCCC;
-                    background: white;
-                    border-radius: 7px;
-                }
-                QRadioButton::indicator:checked {
-                    border: 2px solid #3498db;
-                    background: #3498db;
-                    border-radius: 7px;
-                }
-
-                /* Combo box czcionek */
-                QFontComboBox {
-                    background-color: white;
-                    color: black;
-                    border: 1px solid #cccccc;
-                    padding: 5px;
-                    border-radius: 3px;
-                    min-height: 18px;
-                }
-                QFontComboBox QAbstractItemView {
-                    background-color: white;
-                    color: black;
-                    selection-background-color: #3498db;
-                    selection-color: white;
-                    border: 1px solid #cccccc;
-                }
-                QFontComboBox QAbstractItemView::item {
-                    padding: 4px;
-                    border-bottom: 1px solid #eeeeee;
-                }
-
-                /* Spin boxy */
-                QSpinBox {
-                    background-color: white;
-                    color: black;
-                    border: 1px solid #cccccc;
-                    padding: 5px;
-                    border-radius: 3px;
-                    min-height: 18px;
-                }
-                QSpinBox::up-button, QSpinBox::down-button {
-                    background-color: #f0f0f0;
-                    border: 1px solid #ccc;
-                    width: 16px;
-                }
-                QSpinBox::up-button:hover, QSpinBox::down-button:hover {
-                    background-color: #e0e0e0;
-                }
-
-                /* Zakładki */
-                QTabWidget::pane {
-                    border: 1px solid #cccccc;
-                    background-color: white;
-                    color: black;
-                }
-                QTabBar::tab {
-                    background-color: #e0e0e0;
-                    color: black;
-                    border: 1px solid #cccccc;
-                    padding: 8px 16px;
-                    margin-right: 2px;
-                    border-top-left-radius: 4px;
-                    border-top-right-radius: 4px;
-                }
-                QTabBar::tab:selected {
-                    background-color: #3498db;
-                    color: white;
-                    border-color: #3498db;
-                }
-                QTabWidget::tab-bar {
-                    alignment: center;
-                }
-
-                /* Text edity */
-                QTextEdit {
-                    background-color: white;
-                    color: black;
-                    border: 1px solid #cccccc;
-                    border-radius: 3px;
-                    padding: 5px;
-                }
-
-                /* Scroll bary */
-                QScrollBar:vertical {
-                    background-color: #f0f0f0;
-                    width: 12px;
-                    border: 1px solid #ccc;
-                }
-                QScrollBar::handle:vertical {
-                    background-color: #ccc;
-                    border-radius: 3px;
-                    min-height: 20px;
-                }
-                QScrollBar::handle:vertical:hover {
-                    background-color: #bbb;
-                }
-            """
+        return f"""
+            QDialog {{
+                background-color: {main_bg}; /* Główne tło dialogu */
+                color: {text_color};
+            }}
+            QGroupBox {{
+                background-color: {main_bg}; /* Tło groupboxa, może być nieco jaśniejsze/ciemniejsze */
+                color: {text_color};
+                border: 1px solid {border_color_secondary};
+                border-radius: {AppStyles.BORDER_RADIUS};
+                margin-top: 10px; /* Odstęp dla tytułu */
+                padding: 10px; /* Wewnętrzny padding */
+            }}
+            QGroupBox::title {{
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                left: 10px;
+                padding: 0px 5px 0px 5px; /* Padding tytułu */
+                color: {accent_color}; /* Kolor akcentu dla tytułu */
+                font-weight: bold;
+                background-color: {main_bg}; /* Tło tytułu takie samo jak dialogu */
+            }}
+            QLabel {{ /* Ogólne etykiety w dialogu */
+                color: {text_color};
+                background-color: transparent;
+                padding: {AppStyles.CONTROL_PADDING};
+            }}
+            /* Style dla QRadioButton, QFontComboBox, QSpinBox, QTextEdit, QScrollBar 
+               powinny być dziedziczone lub można je tu zdefiniować/nadpisać */
+        """
 
     @staticmethod
-    def get_tablewidget_style(theme="dark"):
-        """Zwraca styl dla QTableWidget (używany w dialogach)"""
+    def get_dialog_style(theme="dark"):
+        main_bg = AppStyles.DARK_BACKGROUND_MAIN if theme == "dark" else AppStyles.LIGHT_BACKGROUND_MAIN
+        text_color = AppStyles.DARK_TEXT_PRIMARY if theme == "dark" else AppStyles.LIGHT_TEXT_PRIMARY
+        border_color = AppStyles.DARK_BORDER_SECONDARY if theme == "dark" else AppStyles.LIGHT_BORDER_PRIMARY  # Użyjemy tego dla ramki
+
+        return f"""
+            /* Ogólny styl dla QDialog, jeśli nie ma bardziej specyficznego */
+            QDialog {{
+                background-color: {main_bg};
+                color: {text_color};
+            }}
+
+            /* Styl specyficzny dla DigitSelectionDialogInstance */
+            QDialog#DigitSelectionDialogInstance {{
+                background-color: {main_bg}; /* Użyj tego samego tła co inne dialogi */
+                color: {text_color};
+                border: 1px solid {border_color}; /* Standardowa, subtelna ramka */
+                border-radius: {AppStyles.BORDER_RADIUS};
+            }}
+
+            /* Poniższe style dla elementów WEWNĄTRZ DigitSelectionDialogInstance */
+            /* mogą być potrzebne, jeśli dziedziczenie nie wystarcza lub chcesz innego wyglądu */
+            /* Na razie zakładamy, że przyciski będą stylizowane indywidualnie w apply_dialog_theme dialogu */
+
+            /* Ogólne style dla QGroupBox i QLabel w dialogach, jeśli DigitSelectionDialog ich użyje */
+            /* lub jeśli chcesz je zdefiniować globalnie dla wszystkich QDialog */
+            QDialog QGroupBox {{ /* Jeśli DigitSelectionDialog miałby GroupBoxy */
+                background-color: {AppStyles.DARK_BACKGROUND_CONTROLS if theme == "dark" else AppStyles.LIGHT_BACKGROUND_CONTROLS};
+                color: {text_color};
+                border: 1px solid {border_color};
+                border-radius: {AppStyles.BORDER_RADIUS};
+                margin-top: 10px;
+                padding: 10px;
+            }}
+            QDialog QGroupBox::title {{
+                subcontrol-origin: margin;
+                subcontrol-position: top left;
+                left: 10px;
+                padding: 0px 5px 0px 5px;
+                color: {AppStyles.ACCENT_COLOR_DARK if theme == "dark" else AppStyles.ACCENT_COLOR_LIGHT};
+                background-color: {AppStyles.DARK_BACKGROUND_CONTROLS if theme == "dark" else AppStyles.LIGHT_BACKGROUND_CONTROLS};
+            }}
+            QDialog QLabel {{
+                color: {text_color};
+                background-color: transparent; 
+                padding: {AppStyles.CONTROL_PADDING};
+            }}
+        """
+
+    SMALL_BUTTON_PADDING = "2px 5px"  # Mniejszy padding
+
+    @staticmethod
+    def get_small_button_style(theme="dark"):  # Nowa metoda
+        # Podobna do get_button_style, ale używa SMALL_BUTTON_PADDING
         if theme == "dark":
-            return """
-                QTableWidget {
-                    background-color: #333;
-                    color: #EEE;
-                    gridline-color: #666;
-                    selection-background-color: #2980b9;
-                    selection-color: #FFFFFF;
-                    alternate-background-color: #3A3A3A;
-                    border: 1px solid #666;
-                }
-                QTableWidget::item:selected {
-                    background-color: #2980b9;
-                }
-                QTableWidget::item {
-                    padding: 4px;
-                    border: none;
-                    color: white;
-                }
-                QHeaderView::section {
-                    background-color: #2c2c2c;
-                    color: white;
-                    border: 1px solid #3a3a3a;
-                    padding: 4px;
-                    font-weight: bold;
-                }
-            """
+            return f"""
+            QPushButton {{
+                background-color: {AppStyles.BUTTON_BLUE_BACKGROUND};
+                color: {AppStyles.BUTTON_BLUE_TEXT_COLOR};
+                border: 1px solid {AppStyles.BUTTON_BLUE_BORDER};
+                padding: {AppStyles.SMALL_BUTTON_PADDING if hasattr(AppStyles, 'SMALL_BUTTON_PADDING') else '2px 5px'};
+                border-radius: {AppStyles.BORDER_RADIUS};
+            }}
+            QPushButton:hover {{
+                background-color: {AppStyles.BUTTON_BLUE_HOVER_BG};
+            }}
+            QPushButton:pressed {{
+                background-color: {AppStyles.BUTTON_BLUE_PRESSED_BG};
+            }}
+            QPushButton:disabled {{
+                background-color: #c0c0c0;
+                color: #808080;
+                border-color: #a0a0a0;
+            }}
+        """
         else:
-            return """
-                QTableWidget {
-                    background-color: #FFF;
-                    color: #333;
-                    gridline-color: #DDD;
-                    selection-background-color: #3498db;
-                    selection-color: #FFFFFF;
-                    alternate-background-color: #F5F5F5;
-                    border: 1px solid #DDD;
-                }
-                QTableWidget::item:selected {
-                    background-color: #3498db;
-                }
-                QTableWidget::item {
-                    padding: 4px;
-                    border: none;
-                    color: black;
-                }
-                QHeaderView::section {
-                    background-color: #e0e0e0;
-                    color: black;
-                    border: 1px solid #cccccc;
-                    padding: 4px;
-                    font-weight: bold;
-                }
+            return f"""
+            QPushButton {{
+                background-color: {AppStyles.BUTTON_BLUE_BACKGROUND};
+                color: {AppStyles.BUTTON_BLUE_TEXT_COLOR};
+                border: 1px solid {AppStyles.BUTTON_BLUE_BORDER};
+                padding: {AppStyles.SMALL_BUTTON_PADDING if hasattr(AppStyles, 'SMALL_BUTTON_PADDING') else '2px 5px'};
+                border-radius: {AppStyles.BORDER_RADIUS};
+            }}
+            QPushButton:hover {{
+                background-color: {AppStyles.BUTTON_BLUE_HOVER_BG};
+            }}
+            QPushButton:pressed {{
+                background-color: {AppStyles.BUTTON_BLUE_PRESSED_BG};
+            }}
+            QPushButton:disabled {{
+                background-color: #c0c0c0;
+                color: #808080;
+                border-color: #a0a0a0;
+            }}
+        """
+
+    @staticmethod
+    def get_tab_widget_style(theme="dark"):
+        """Zwraca styl dla QTabWidget i QTabBar zgodny z motywem."""
+        main_bg = AppStyles.DARK_BACKGROUND_MAIN if theme == "dark" else AppStyles.LIGHT_BACKGROUND_MAIN
+        control_bg = AppStyles.DARK_BACKGROUND_CONTROLS if theme == "dark" else AppStyles.LIGHT_BACKGROUND_CONTROLS
+        text_color = AppStyles.DARK_TEXT_PRIMARY if theme == "dark" else AppStyles.LIGHT_TEXT_PRIMARY
+        border_color = AppStyles.DARK_BORDER_SECONDARY if theme == "dark" else AppStyles.LIGHT_BORDER_PRIMARY
+        accent_color = AppStyles.ACCENT_COLOR_DARK if theme == "dark" else AppStyles.ACCENT_COLOR_LIGHT
+        tab_bar_bg = control_bg if theme == "dark" else AppStyles.LIGHT_BACKGROUND_HOVER
+        tab_pane_bg = control_bg
+
+        return f"""
+                QTabWidget::pane {{
+                    border: 1px solid {border_color};
+                    border-top: none;
+                    background-color: {tab_pane_bg};
+                    border-bottom-left-radius: {AppStyles.BORDER_RADIUS};
+                    border-bottom-right-radius: {AppStyles.BORDER_RADIUS};
+                }}
+                QTabBar::tab {{
+                    background-color: {tab_bar_bg};
+                    color: {text_color};
+                    border: 1px solid {border_color};
+                    border-bottom: none; 
+                    padding: 6px 12px;
+                    margin-right: 2px;
+                    border-top-left-radius: {AppStyles.BORDER_RADIUS};
+                    border-top-right-radius: {AppStyles.BORDER_RADIUS};
+                }}
+                QTabBar::tab:selected {{
+                    background-color: {accent_color};
+                    color: {'white' if theme == "dark" else 'white'};
+                }}
+                QTabBar::tab:!selected:hover {{
+                    background-color: {AppStyles.DARK_BACKGROUND_HOVER if theme == "dark" else AppStyles.LIGHT_BACKGROUND_HOVER};
+                }}
             """
