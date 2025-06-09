@@ -38,7 +38,7 @@ class SplitTableView(QWidget):
         self.employees_view.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
 
         # Ustawienia nagłówka dla tabeli pracowników
-        self.employees_view.horizontalHeader().setFixedHeight(30)
+        self.employees_view.horizontalHeader().setFixedHeight(35)
         self.employees_view.horizontalHeader().setSectionResizeMode(QHeaderView.Fixed)
         self.employees_view.horizontalHeader().setSectionsClickable(True)
 
@@ -55,7 +55,7 @@ class SplitTableView(QWidget):
         self.schedule_view.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
 
         # Ustawienia nagłówka dla tabeli grafiku
-        self.schedule_view.horizontalHeader().setFixedHeight(30)
+        self.schedule_view.horizontalHeader().setFixedHeight(35)
 
         # Wyłącz sortowanie w tabeli grafiku
         self.schedule_view.setSortingEnabled(False)
@@ -566,5 +566,4 @@ class SplitTableView(QWidget):
 
         debug_print(
             "Skonfigurowano synchronizację poziomych pasków przewijania")  # split_table_view.py - POPRAWIONA WERSJA z lepszą synchronizacją
-
 
