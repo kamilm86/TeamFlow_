@@ -4,27 +4,30 @@ from PySide6.QtCore import QObject, Signal
 from db_connector import DatabaseConnector
 from datetime import datetime, timedelta
 import time
+from collections import defaultdict
 from debug_utils import debug_print, log_warning, log_error
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Dict, List, Tuple, Optional, Any
 from functools import lru_cache
-from symbol_parser import parse_symbols_batch  # NOWY import
+from symbol_parser import parse_symbols_batch
+
 
 @dataclass
 class MonthlyDataContainer:
     """Kontener na wszystkie dane miesiąca"""
-    schedule_data: List[Any]  # Surowe dane grafiku
-    events_data: List[Dict]  # Słowniki zdarzeń
-    processed_data: Dict  # Przetworzone dane dla modelu
-    events_cache: Dict[Tuple[int, str], List[Dict]]  # (user_id, date) -> [events]
+    schedule_data: List[Any]
+    events_data: List[Dict]
+    processed_data_base: Dict
+    events_cache: Dict[Tuple[int, str], List[Dict]]
     last_updated: float
+    _icons_calculated_on_this_instance: bool = field(default=False, repr=False, compare=False)
 
     def __post_init__(self):
         if not hasattr(self, 'last_updated'):
             self.last_updated = time.time()
 
 
-class DataProviderV2(QObject):
+class DataProvider(QObject):
     """
     DataProvider z ograniczonym odświeżaniem ikon
     """
@@ -33,16 +36,70 @@ class DataProviderV2(QObject):
     def __init__(self):
         super().__init__()
         self.db_connector = DatabaseConnector
-
-        # Cache miesięczny
         self.monthly_cache: Dict[Tuple[int, int], MonthlyDataContainer] = {}
-
-        # Cache dla ikon - UPROSZCZONY
+        self.forecast_cache: Dict[Tuple[int, int], List[Dict]] = {}
+        self.audit_cache: Dict[Tuple[int, int], List[Dict]] = {}
         self._icons_cache_by_month: Dict[Tuple[int, int], Dict[Tuple[int, str], Dict]] = {}
-
-        # Inicjalizacja managera kolumn
         from column_mapper import ColumnMapper
         self.column_mapper = ColumnMapper()
+        self._current_year: Optional[int] = None
+        self._current_month: Optional[int] = None
+
+
+    def get_schedule_audit_data(self, year: int, month: int) -> List[Dict]:
+        """Pobiera historię zmian grafiku dla danego miesiąca z cache lub bazy danych."""
+        cache_key = (year, month)
+        if cache_key in self.audit_cache:
+            debug_print(f"DataProvider: Używam cache dla danych audytowych dla {year}-{month}")
+            return self.audit_cache[cache_key]
+
+        try:
+            conn = self.db_connector.get_connection()
+            cursor = conn.cursor()
+            query = "SELECT * FROM [dbo].[fn_GetScheduleAuditData](?, ?)"
+            cursor.execute(query, (year, month))
+
+            # Mapowanie na podstawie nazw kolumn zwróconych przez bazę
+            columns = [column[0] for column in cursor.description]
+            data = [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+            conn.close()
+            debug_print(f"Pobrano {len(data)} wierszy historii zmian dla {year}-{month}")
+            self.audit_cache[cache_key] = data
+            return data
+        except Exception as e:
+            log_error(f"Błąd podczas pobierania danych audytowych: {e}", exception=e)
+            return []
+
+    def clear_audit_cache(self, year: int, month: int):
+        """Czyści cache dla danych audytowych dla konkretnego miesiąca."""
+        cache_key = (year, month)
+        if cache_key in self.audit_cache:
+            del self.audit_cache[cache_key]
+            debug_print(f"DataProvider: Usunięto cache danych audytowych dla {year}-{month}")
+
+    def _fetch_schedule_comments(self, year: int, month: int) -> Dict[int, str]:
+        """Pobiera komentarze do grafiku dla danego miesiąca."""
+        comments = {}
+        query = """
+            SELECT Uzytkownik, KomentarzGrafik
+            FROM dbo.KomentarzDoGrafiku
+            WHERE Rok = ? AND Miesiac = ?
+        """
+        try:
+            conn = self.db_connector.get_connection()
+            cursor = conn.cursor()
+            cursor.execute(query, (year, month))
+            for row in cursor.fetchall():
+                user_id, comment = row
+                if user_id is not None and comment:
+                    comments[user_id] = comment
+            conn.close()
+            debug_print(f"DataProvider: Pobrano {len(comments)} komentarzy do grafiku dla {year}-{month}")
+            return comments
+        except Exception as e:
+            log_error(f"DataProvider: Błąd podczas pobierania komentarzy do grafiku: {e}", exception=e)
+            return {}
 
     def get_dynamic_icons_for_cell(self, user_id: int, date_str: str) -> Dict:
         """
@@ -53,268 +110,289 @@ class DataProviderV2(QObject):
             year, month = int(year), int(month)
         except:
             return {'spotkania': 0, 'szkolenia': 0, 'nadgodziny': 0}
-        
+
         month_key = (year, month)
         cell_key = (user_id, date_str)
-        
+
         # Sprawdź cache ikon
         if month_key in self._icons_cache_by_month:
-            month_icons = self._icons_cache_by_month[month_key]
-            if cell_key in month_icons:
-                return month_icons[cell_key]
-        
-        # KLUCZOWA ZMIANA: Oblicz ikony na podstawie aktywnych zdarzeń
-        events = self.get_events_for_user_date(user_id, date_str)  # Ta metoda już filtruje aktywne
-        
-        has_spotkania = any(
-            e.get('type') == 'Spotkanie' 
-            for e in events
-        )
-        has_szkolenia = any(
-            e.get('type') == 'Szkolenie' 
-            for e in events
-        )
-        has_nadgodziny = any(
-            e.get('type') == 'Nadgodziny' 
-            for e in events
-        )
-        
+            month_icons_cache = self._icons_cache_by_month[month_key]
+            if cell_key in month_icons_cache:
+                return month_icons_cache[cell_key]
+
+        # Oblicz ikony na podstawie aktywnych zdarzeń (jeśli nie ma w cache)
+        # Ta metoda powinna korzystać z events_cache w odpowiednim kontenerze miesięcznym
+        container = self.monthly_cache.get(month_key)
+        events = []
+        if container and container.events_cache:
+            events = container.events_cache.get(cell_key, [])
+        else:  # Fallback jeśli kontenera lub events_cache nie ma (nie powinno się zdarzyć przy poprawnym przepływie)
+            events = self.get_events_for_user_date(user_id, date_str)
+
+        active_events = [e for e in events if str(e.get('status', '1')) != '0']
+
+        has_spotkania = any(e.get('type') == 'Spotkanie' for e in active_events)
+        has_szkolenia = any(e.get('type') == 'Szkolenie' for e in active_events)
+        has_nadgodziny = any(e.get('type') == 'Nadgodziny' for e in active_events)
+
         result = {
             'spotkania': 1 if has_spotkania else 0,
             'szkolenia': 1 if has_szkolenia else 0,
             'nadgodziny': 1 if has_nadgodziny else 0
         }
-        
-        # Zapisz w cache
+
+        # Zapisz w cache ikon
         if month_key not in self._icons_cache_by_month:
             self._icons_cache_by_month[month_key] = {}
         self._icons_cache_by_month[month_key][cell_key] = result
-        
-        # Debug dla pierwszych wywołań
-        if user_id <= 100:  # Loguj tylko dla pierwszych użytkowników
-            debug_print(f"Ikony dla {user_id}, {date_str}: {result} (na podstawie {len(events)} aktywnych zdarzeń)")
-        
+
         return result
 
-    def invalidate_specific_icons(self, user_date_pairs):
+    def invalidate_specific_icons(self, user_date_pairs: List[Tuple[int, str]]):
         """
-        POPRAWIONA WERSJA: Wyczyść cache i wymuś przeładowanie
+        Wyczyszczenie cache ikon dla konkretnych par użytkownik-data.
+        Nie powinno już być potrzebne pełne czyszczenie cache miesiąca tutaj.
         """
         if not user_date_pairs:
             return
-            
-        # Wyczyść cache dla zmienionych miesięcy
-        months_to_clear = set()
+
+        affected_months = set()
         for user_id, date_str in user_date_pairs:
             try:
                 year, month, _ = date_str.split('-')
-                months_to_clear.add((int(year), int(month)))
-            except:
+                month_key = (int(year), int(month))
+                affected_months.add(month_key)
+
+                if month_key in self._icons_cache_by_month:
+                    cell_key = (user_id, date_str)
+                    if cell_key in self._icons_cache_by_month[month_key]:
+                        del self._icons_cache_by_month[month_key][cell_key]
+
+                # Zresetuj flagę obliczonych ikon dla kontenera, jeśli istnieje
+                if month_key in self.monthly_cache:
+                    self.monthly_cache[month_key]._icons_calculated_on_this_instance = False
+
+            except ValueError:
+                log_warning(f"Nieprawidłowy format daty w invalidate_specific_icons: {date_str}")
                 continue
-        
-        # KLUCZOWE: Wyczyść cały cache miesięczny dla zmienionych miesięcy
-        for year, month in months_to_clear:
-            month_key = (year, month)
-            if month_key in self.monthly_cache:
-                del self.monthly_cache[month_key]
-            if month_key in self._icons_cache_by_month:
-                del self._icons_cache_by_month[month_key]
-            
-            debug_print(f"Wyczyszczono kompletny cache dla {year}-{month}")
-        
-        # Emituj sygnał odświeżenia
-        for year, month in months_to_clear:
+
+        for year, month in affected_months:
+            debug_print(f"Invalidate specific icons: Zresetowano cache ikon dla komórek w {year}-{month}")
             self.data_changed.emit("icons", year, month)
 
     def invalidate_icons_cache(self, year: int, month: int):
         """
-        ZMODYFIKOWANA: Czyści cache ikon dla miesiąca - BEZ NADMIERNEGO ODŚWIEŻANIA
-        Używana tylko przy pełnym odświeżeniu danych (start, zmiana miesiąca, przycisk odśwież)
+        Czyści *tylko* cache ikon dla danego miesiąca.
+        Używane, gdy wiemy, że zdarzenia mogły się zmienić, ale dane grafiku nie.
         """
         month_key = (year, month)
-        
-        # Wyczyść cache ikon
+
         if month_key in self._icons_cache_by_month:
             del self._icons_cache_by_month[month_key]
-            debug_print(f"Wyczyszczono cache ikon dla {year}-{month}")
-        
-        # Odśwież dane zdarzeń w kontenerze
+            debug_print(f"DataProvider: Wyczyścił _icons_cache_by_month dla {year}-{month}")
+
         if month_key in self.monthly_cache:
-            container = self.monthly_cache[month_key]
-            
-            try:
-                fresh_events = self._fetch_events_data(year, month)
-                fresh_events_cache = self._build_events_cache(fresh_events)
-                
-                container.events_data = fresh_events
-                container.events_cache = fresh_events_cache
-                container.last_updated = time.time()
-                
-                debug_print(f"Odświeżono dane zdarzeń dla {year}-{month}")
-                
-            except Exception as e:
-                log_error(f"Błąd podczas odświeżania zdarzeń dla {year}-{month}: {e}")
-                if month_key in self.monthly_cache:
-                    del self.monthly_cache[month_key]
-        
+            # Ważne: zresetuj flagę, aby ikony zostały przeliczone przy następnym żądaniu get_processed_data
+            self.monthly_cache[month_key]._icons_calculated_on_this_instance = False
+            debug_print(f"DataProvider: Zresetował flagę _icons_calculated_on_this_instance dla {year}-{month}")
+
+            # Można też rozważyć odświeżenie events_data i events_cache w kontenerze, jeśli to konieczne
+            # np. container = self.monthly_cache[month_key]
+            # container.events_data = self._fetch_events_data(year, month)
+            # container.events_cache = self._build_events_cache(container.events_data)
+            # container.last_updated = time.time()
+
         self.data_changed.emit("icons", year, month)
 
-    def _get_or_load_monthly_data(self, year: int, month: int, use_cache: bool = True) -> Optional[MonthlyDataContainer]:
-        """
-        UPROSZCZONA WERSJA: Bez automatycznego wygasania cache
-        """
+    def get_forecast_data(self, year, month):
+        """Pobiera dane prognozy dla danego miesiąca."""
+        cache_key = (year, month)
+        if cache_key in self.forecast_cache:
+            debug_print(f"Używam cache dla prognozy dla {year}-{month}")
+            return self.forecast_cache[cache_key]
+
+        try:
+            conn = self.db_connector.get_connection()
+            cursor = conn.cursor()
+            query = "SELECT * FROM [dbo].[fn_GetForecastData] (?, ?)"
+            cursor.execute(query, (year, month))
+
+            # Mapowanie na podstawie nazw kolumn zwróconych przez bazę
+            columns = [column[0] for column in cursor.description]
+            data = [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+            conn.close()
+            debug_print(f"Pobrano {len(data)} wierszy prognozy dla {year}-{month}")
+            self.forecast_cache[cache_key] = data
+            return data
+        except Exception as e:
+            log_error(f"Błąd podczas pobierania danych prognozy: {e}", exception=e)
+            return []
+
+    def _get_or_load_monthly_data(self, year: int, month: int, use_cache: bool = True) -> Optional[
+        MonthlyDataContainer]:
         self._current_year = year
         self._current_month = month
-
         cache_key = (year, month)
 
-        # Jeśli użytkownik chce użyć cache i istnieje - użyj go
         if use_cache and cache_key in self.monthly_cache:
-            container = self.monthly_cache[cache_key]
-            # ZMIANA: Zawsze zwróć cache jeśli istnieje (bez sprawdzania czasu)
-            if not hasattr(self, '_last_cache_log') or time.time() - self._last_cache_log > 30:
-                debug_print(f"Używam cache'owanych danych dla {year}-{month}")
-                self._last_cache_log = time.time()
-            return container
+            return self.monthly_cache[cache_key]
 
-        # Ładuj dane tylko gdy:
-        # 1. Nie ma cache (pierwszy raz)
-        # 2. Użytkownik wymusił odświeżenie (use_cache=False)
-        debug_print(f"Ładuję {'świeże' if cache_key in self.monthly_cache else 'nowe'} dane dla {year}-{month}")
-        
+        debug_print(f"DataProvider: Tworzę nowy kontener dla {year}-{month} (use_cache={use_cache})")
+
         try:
+            # --- ZMIANA: Pobranie komentarzy ---
             schedule_data = self._fetch_schedule_data(year, month)
             events_data = self._fetch_events_data(year, month)
+            comments_data = self._fetch_schedule_comments(year, month)  # NOWA LINIA
+
+            # --- ZMIANA: Przekazanie komentarzy do buildera ---
             events_cache = self._build_events_cache(events_data)
-            processed_data = self._build_processed_data_without_icons(schedule_data)
+            processed_data_base = self._build_processed_data_without_icons(schedule_data, comments_data)  # ZMIANA
 
             container = MonthlyDataContainer(
                 schedule_data=schedule_data,
                 events_data=events_data,
-                processed_data=processed_data,
+                processed_data_base=processed_data_base,
                 events_cache=events_cache,
-                last_updated=time.time()  # Zachowaj dla informacji, ale nie używaj do wygasania
+                last_updated=time.time()
             )
 
             self.monthly_cache[cache_key] = container
-
-            debug_print(f"Załadowano dane: {len(schedule_data)} wierszy grafiku, "
-                        f"{len(events_data)} zdarzeń, {len(processed_data)} użytkowników")
-
+            debug_print(f"DataProvider: Stworzono i zapisano w cache nowy kontener dla {year}-{month}.")
             return container
 
         except Exception as e:
-            log_error(f"Błąd podczas ładowania danych dla {year}-{month}: {e}", exception=e)
+            log_error(f"DataProvider: Błąd podczas ładowania danych dla {year}-{month}: {e}", exception=e)
+            if cache_key in self.monthly_cache:
+                del self.monthly_cache[cache_key]
             return None
-        
+
+        except Exception as e:
+            log_error(
+                f"DataProvider: Błąd podczas ładowania danych dla {year}-{month} w _get_or_load_monthly_data: {e}",
+                exception=e)
+            # Jeśli wystąpił błąd, usuń potencjalnie niekompletny wpis z cache
+            if cache_key in self.monthly_cache:
+                del self.monthly_cache[cache_key]
+            return None
+
     def get_schedule_data(self, year: int, month: int, use_cache: bool = True) -> List[Any]:
         """Pobiera dane grafiku"""
         container = self._get_or_load_monthly_data(year, month, use_cache)
         return container.schedule_data if container else []
 
-    def get_events_data(self, year: int, month: int, use_cache: bool = True,
-                        as_dict: bool = True, build_index: bool = True) -> List[Dict]:
+    def get_events_data(self, year: int, month: int, use_cache: bool = True) -> List[Dict]:
         """Pobiera dane zdarzeń"""
+        # Usunięto nieużywane parametry as_dict, build_index
         container = self._get_or_load_monthly_data(year, month, use_cache)
         return container.events_data if container else []
 
     def get_processed_data(self, year: int, month: int) -> Dict:
-        """Zwraca processed_data z dynamicznie obliczonymi ikonami"""
-        container = self._get_or_load_monthly_data(year, month)
+        """
+        Zwraca processed_data z dynamicznie obliczonymi ikonami.
+        Ta metoda jest odpowiedzialna za nałożenie ikon na `processed_data_base` z kontenera.
+        """
+        container = self._get_or_load_monthly_data(year, month, use_cache=True)  # Zawsze próbuj użyć cache najpierw
         if not container:
             return {}
 
-        if not hasattr(container, '_icons_calculated'):
-            self._update_dynamic_icons(container.processed_data, container.events_cache)
-            container._icons_calculated = True
-            debug_print("Obliczono ikony dynamicznie (pierwszy raz)")
+        # Sprawdź, czy ikony zostały już obliczone DLA TEJ INSTANCJI KONTENERA W PAMIĘCI.
+        # `processed_data_base` w kontenerze jest zawsze bez ikon.
+        if not container._icons_calculated_on_this_instance:
+            debug_print(f"DataProvider: Obliczam ikony dla {year}-{month} na żądanie w get_processed_data")
+            # Modyfikuj `container.processed_data_base` w miejscu lub pracuj na kopii, jeśli to preferowane.
+            # Dla wydajności, modyfikacja w miejscu może być lepsza.
+            # _update_dynamic_icons powinna modyfikować przekazany jej słownik processed_data.
+            self._update_dynamic_icons(container.processed_data_base, container.events_cache)
+            container._icons_calculated_on_this_instance = True
+        else:
+            debug_print(
+                f"DataProvider: Ikony dla {year}-{month} były już obliczone dla tej instancji kontenera (w get_processed_data)")
 
-        return container.processed_data
+        return container.processed_data_base  # Zwróć dane z (ewentualnie właśnie) nałożonymi ikonami
 
     def refresh_data(self, year: int, month: int):
         """
-        PRZYCISK "Odśwież dane" - jedyny sposób na wymuszone przeładowanie
+        Wymusza pełne odświeżenie danych dla miesiąca (np. po kliknięciu przycisku "Odśwież").
         """
         cache_key = (year, month)
-        
-        debug_print(f"UŻYTKOWNIK wymusza odświeżenie danych dla {year}-{month}")
-        
-        # Usuń cache dla tego miesiąca
+
+        debug_print(f"DataProvider: Wymuszone odświeżenie danych dla {year}-{month} (refresh_data)")
+
         if cache_key in self.monthly_cache:
             del self.monthly_cache[cache_key]
-        
-        # Usuń cache ikon dla tego miesiąca  
+            debug_print(f"DataProvider: Usunięto stary kontener z monthly_cache dla {year}-{month}")
+
         if cache_key in self._icons_cache_by_month:
             del self._icons_cache_by_month[cache_key]
+            debug_print(f"DataProvider: Usunięto _icons_cache_by_month dla {year}-{month}")
 
-        # Wymuś przeładowanie
+        # Wywołaj _get_or_load_monthly_data z use_cache=False, aby wymusić ponowne załadowanie z DB
+        # i przetworzenie. Nowy kontener zostanie automatycznie zapisany w cache.
         container = self._get_or_load_monthly_data(year, month, use_cache=False)
 
         if container:
+            # Po świeżym załadowaniu, get_processed_data obliczy ikony, jeśli będzie to konieczne.
             self.data_changed.emit("schedule", year, month)
             self.data_changed.emit("events", year, month)
-            self.data_changed.emit("icons", year, month)
+            self.data_changed.emit("icons", year, month)  # Sygnał, że dane ikon mogły się zmienić
+        else:
+            log_error(f"DataProvider: Nie udało się odświeżyć danych dla {year}-{month}")
 
-    def _update_dynamic_icons(self, processed_data: Dict, events_cache: Dict):
+    def _update_dynamic_icons(self, processed_data_target: Dict, events_cache: Dict):
         """
-        ZOPTYMALIZOWANA WERSJA: Batch processing ikon
+        Nakłada informacje o ikonach na dostarczony słownik `processed_data_target`.
+        Modyfikuje `processed_data_target` w miejscu.
         """
-        debug_print("Obliczam ikony dynamicznie (BATCH PROCESSING)...")
+        if not self._current_year or not self._current_month:
+            log_error("DataProvider: _current_year lub _current_month nie jest ustawione w _update_dynamic_icons")
+            return
 
-        # OPTYMALIZACJA: Przygotuj batch operacje
-        icon_updates = {}  # {(user_id, day): {'spotkania': bool, 'szkolenia': bool, 'nadgodziny': bool}}
+        debug_print(
+            f"DataProvider: Rozpoczynam _update_dynamic_icons dla {self._current_year}-{self._current_month} (BATCH PROCESSING)...")
 
-        for key, user_data in processed_data.items():
+        icon_updates = {}
+
+        for key, user_data in processed_data_target.items():  # Iteruj po danych, które mają być zaktualizowane
             user_id = key[3]
             days_data = user_data.get('days', {})
 
-            for day, day_data in days_data.items():
+            for day, day_data_dict in days_data.items():  # day_data_dict to słownik dla dnia
                 date_str = f"{self._current_year}-{self._current_month:02d}-{day:02d}"
-                cache_key = (user_id, date_str)
-                events = events_cache.get(cache_key, [])
+                cache_key_event = (user_id, date_str)
+                # Użyj events_cache przekazanego do funkcji (z kontenera)
+                events_for_cell = events_cache.get(cache_key_event, [])
 
-                # Filtruj aktywne zdarzenia
-                active_events = [e for e in events if str(e.get('status', '1')) != '0']
+                active_events = [e for e in events_for_cell if str(e.get('status', '1')) != '0']
 
-                # Sprawdź typy zdarzeń w jednym przejściu
-                has_spotkania = False
-                has_szkolenia = False
-                has_nadgodziny = False
+                has_spotkania = any(e.get('type') == 'Spotkanie' for e in active_events)
+                has_szkolenia = any(e.get('type') == 'Szkolenie' for e in active_events)
+                has_nadgodziny = any(e.get('type') == 'Nadgodziny' for e in active_events)
 
-                for event in active_events:
-                    event_type = event.get('type')
-                    if event_type == 'Spotkanie':
-                        has_spotkania = True
-                    elif event_type == 'Szkolenie':
-                        has_szkolenia = True
-                    elif event_type == 'Nadgodziny':
-                        has_nadgodziny = True
-
-                # Zapisz aktualizacje
                 icon_updates[(user_id, day)] = {
                     'spotkania': has_spotkania,
                     'szkolenia': has_szkolenia,
                     'nadgodziny': has_nadgodziny,
-                    'active_events': active_events
+                    'events_list': active_events  # Przechowaj listę aktywnych zdarzeń
                 }
 
-        # BATCH UPDATE: Aplikuj wszystkie zmiany na raz
-        debug_print(f"Aplikuję {len(icon_updates)} aktualizacji ikon...")
+        debug_print(f"DataProvider: _update_dynamic_icons - przygotowano {len(icon_updates)} aktualizacji ikon.")
 
-        for key, user_data in processed_data.items():
+        for key, user_data in processed_data_target.items():
             user_id = key[3]
             days_data = user_data.get('days', {})
 
-            for day, day_data in days_data.items():
+            for day, day_data_dict in days_data.items():
                 update_key = (user_id, day)
                 if update_key in icon_updates:
                     updates = icon_updates[update_key]
-                    day_data['spotkania'] = 1 if updates['spotkania'] else 0
-                    day_data['szkolenia'] = 1 if updates['szkolenia'] else 0
-                    day_data['nadgodziny'] = 1 if updates['nadgodziny'] else 0
-                    day_data['events'] = updates['active_events']
+                    day_data_dict['spotkania'] = 1 if updates['spotkania'] else 0
+                    day_data_dict['szkolenia'] = 1 if updates['szkolenia'] else 0
+                    day_data_dict['nadgodziny'] = 1 if updates['nadgodziny'] else 0
+                    day_data_dict['events'] = updates['events_list']  # Zaktualizuj listę zdarzeń
 
-        debug_print(f"Zakończono batch processing ikon dla {len(icon_updates)} komórek")
+        debug_print(f"DataProvider: Zakończono _update_dynamic_icons dla {len(icon_updates)} komórek")
 
     def get_performance_stats(self):
         """
@@ -328,144 +406,122 @@ class DataProviderV2(QObject):
 
         # Dodaj statystyki cache symboli
         try:
-            from symbol_parser import get_cache_info
-            stats['symbol_cache'] = get_cache_info()
-        except:
-            stats['symbol_cache'] = "Niedostępne"
+            # Zmieniono import na zgodny z plikiem symbol_parser.py
+            from symbol_parser import get_cache_stats
+            stats['symbol_cache'] = get_cache_stats()
+        except ImportError:
+            log_warning("Nie można zaimportować get_cache_stats z symbol_parser.py")
+            stats['symbol_cache'] = "Niedostępne (ImportError)"
+        except Exception as e:
+            log_error(f"Błąd podczas pobierania statystyk cache symboli: {e}")
+            stats['symbol_cache'] = f"Niedostępne ({type(e).__name__})"
 
         return stats
 
-    def _build_processed_data_without_icons(self, schedule_data: List[Any]) -> Dict:
-        """
-        ZOPTYMALIZOWANA WERSJA: Buduje processed_data z batch processing symboli
-        """
-        debug_print(f"Rozpoczynam przetwarzanie {len(schedule_data)} wierszy grafiku (ZOPTYMALIZOWANE)")
+    def _build_processed_data_without_icons(self, schedule_data: List[Any], comments_data: Dict[int, str]) -> Dict:
+        if not self._current_year or not self._current_month:
+            log_error("DataProvider: Rok lub miesiąc nie jest ustawiony w _build_processed_data_without_icons")
+            return {}
+
+        debug_print(
+            f"DataProvider: Rozpoczynam budowanie danych dla {self._current_year}-{self._current_month} ({len(schedule_data)} wierszy)")
 
         processed_data = {}
 
-        # NOWA OPTYMALIZACJA 1: Batch processing symboli
-        # Zbierz wszystkie unikalne symbole
-        unique_symbols = set()
-        for row in schedule_data:
-            try:
-                mapped_row = self.column_mapper.map_schedule_row_to_dict(row)
-                symbol = mapped_row.get('symbol', '')
-                if symbol:
-                    unique_symbols.add(symbol)
-            except:
-                continue
+        # --- ZMIANA: Dodano bezpieczne sprawdzanie długości wiersza ---
+        # Zbieramy unikalne symbole tylko z wierszy, które mają wystarczającą liczbę kolumn.
+        # Indeks 7 odpowiada kolumnie 'symbol'.
+        unique_symbols = {row[7] for row in schedule_data if len(row) > 7 and row[7]}
 
-        # Parsuj symbole w batchu
-        debug_print(f"Parsowanie {len(unique_symbols)} unikalnych symboli w batchu...")
+        debug_print(f"DataProvider: Parsowanie {len(unique_symbols)} unikalnych symboli...")
         symbols_cache = parse_symbols_batch(list(unique_symbols))
 
-        debug_print(f"Cache symboli utworzony: {len(symbols_cache)} wpisów")
-
-        # NOWA OPTYMALIZACJA 2: Przetwarzanie wierszy z cache symboli
         for row in schedule_data:
             try:
                 mapped_row = self.column_mapper.map_schedule_row_to_dict(row)
-
-                wydzial = mapped_row.get('wydzial', '')
-                przelozony = mapped_row.get('przelozony', '')
-                przelozony_imie_nazwisko = mapped_row.get('przelozony_imie_nazwisko', '')
-                uzytkownik_dane = mapped_row.get('uzytkownik_dane', '')
                 uzytkownik_id = mapped_row.get('uzytkownik_id', 0)
-                nr_kadrowy = mapped_row.get('nr_kadrowy', '')
-                data_str = mapped_row.get('data_str', '')
-                symbol = mapped_row.get('symbol', '')
 
-                id_wpisu = mapped_row.get('id_wpisu', '')
-                rola_nazwa = mapped_row.get('rola_nazwa', '')
-                pod_rola_nazwa = mapped_row.get('pod_rola_nazwa', '')
-                etat = mapped_row.get('etat', '')
-                jezyk = mapped_row.get('jezyk', '')
-                korekta = mapped_row.get('korekta', '')
-                dtn = mapped_row.get('dtn', '')
-                lokalizacja_domyslna = mapped_row.get('lokalizacja_domyslna', '')
+                system_czasu_pracy = mapped_row.get('system_czasu_pracy', '')
 
-                # OPTYMALIZACJA: Użyj cache symboli zamiast parsowania za każdym razem
-                if symbol and symbol in symbols_cache:
-                    parsed_symbol = symbols_cache[symbol]
-                else:
-                    # Fallback - parsuj bezpośrednio jeśli nie ma w cache
-                    from symbol_parser import parse_symbol
-                    parsed_symbol = parse_symbol(symbol)
-
-                start_hour = parsed_symbol.get('start_hour')
-                hours = parsed_symbol.get('work_hours')
-
-                key = (wydzial, przelozony, uzytkownik_dane, uzytkownik_id)
+                key = (
+                    mapped_row.get('wydzial', ''),
+                    mapped_row.get('przelozony', ''),
+                    mapped_row.get('uzytkownik_dane', ''),
+                    uzytkownik_id
+                )
 
                 if key not in processed_data:
                     processed_data[key] = {
-                        'days': {},
-                        'total_hours': 0,
-                        'rola_nazwa': rola_nazwa,
-                        'pod_rola_nazwa': pod_rola_nazwa,
-                        'etat': etat,
-                        'jezyk': jezyk,
-                        'korekta': korekta,
-                        'dtn': dtn,
-                        'przelozony_imie_nazwisko': przelozony_imie_nazwisko,
-                        'nr_kadrowy': nr_kadrowy,
-                        'lokalizacja_domyslna': lokalizacja_domyslna
+                        'days': {}, 'total_hours': 0,
+                        'rola_nazwa': mapped_row.get('rola_nazwa', ''),
+                        'pod_rola_nazwa': mapped_row.get('pod_rola_nazwa', ''),
+                        'etat': mapped_row.get('etat', ''),
+                        'jezyk': mapped_row.get('jezyk', ''),
+                        'korekta': mapped_row.get('korekta', ''),
+                        'dtn': mapped_row.get('dtn', ''),
+                        'przelozony_imie_nazwisko': mapped_row.get('przelozony_imie_nazwisko', ''),
+                        'nr_kadrowy': mapped_row.get('nr_kadrowy', ''),
+                        'lokalizacja_domyslna': mapped_row.get('lokalizacja_domyslna', ''),
+                        'komentarz_grafik': comments_data.get(uzytkownik_id, ''),
+                        'system_czasu_pracy': system_czasu_pracy
                     }
 
+                data_str = mapped_row.get('data_str', '')
                 if data_str:
                     day = int(data_str.split('-')[2])
+                    symbol = mapped_row.get('symbol', '')
+                    parsed_symbol = symbols_cache.get(symbol, {})
+                    hours = parsed_symbol.get('work_hours')
 
                     processed_data[key]['days'][day] = {
                         'symbol': symbol,
                         'hours': hours if hours is not None else 0,
-                        'id': id_wpisu,
-                        'start_hour': start_hour,
-                        'nr_kadrowy': nr_kadrowy,
-                        'spotkania': 0,  # Placeholder - będzie obliczone dynamicznie
-                        'szkolenia': 0,  # Placeholder
-                        'nadgodziny': 0,  # Placeholder
-                        'events': []  # Placeholder
-                    }
+                        'id': mapped_row.get('id_wpisu', ''),
+                        'start_hour': parsed_symbol.get('start_hour'),
+                        'nr_kadrowy': mapped_row.get('nr_kadrowy', ''),
+                        'spotkania': 0, 'szkolenia': 0, 'nadgodziny': 0, 'events': []
 
+                    }
                     if hours is not None:
                         processed_data[key]['total_hours'] += hours
-
             except Exception as e:
-                log_error(f"Błąd podczas przetwarzania wiersza: {e}")
+                log_error(f"DataProvider: Błąd przetwarzania wiersza {row}: {e}", exception=e)
                 continue
 
-        debug_print(f"OPTYMALIZACJA: Przetworzono {len(processed_data)} użytkowników z cache symboli")
+        debug_print(f"DataProvider: Zakończono budowanie danych dla {len(processed_data)} użytkowników.")
         return processed_data
 
-    @lru_cache(maxsize=100)
+    @lru_cache(maxsize=100)  # Cache dla kluczy miesięcy
     def _get_month_cache_key(self, year: int, month: int) -> tuple:
         """Cache key dla miesiąca"""
         return (year, month)
 
     def clear_symbol_cache(self):
         """
-        NOWA METODA: Czyści cache symboli gdy jest za duży
+        Czyści cache symboli, jeśli jest taka potrzeba.
         """
         try:
-            from symbol_parser import clear_symbol_cache, get_cache_info
+            from symbol_parser import clear_cache as clear_symbol_parser_cache, \
+                get_cache_stats  # Zmieniono nazwę importu
 
-            cache_info = get_cache_info()
-            debug_print(f"Cache symboli przed czyszczeniem: {cache_info}")
+            cache_stats = get_cache_stats()  # Użyj nowej nazwy funkcji
+            debug_print(f"DataProvider: Cache symboli przed czyszczeniem: {cache_stats}")
 
-            # Wyczyść cache jeśli jest za duży
-            parse_cache = cache_info.get('parse_symbol')
-            if parse_cache and parse_cache.currsize > 1500:  # Jeśli cache > 1500 wpisów
-                clear_symbol_cache()
-                debug_print("Wyczyszczono cache symboli (był za duży)")
+            # Dostosuj warunki czyszczenia cache, jeśli potrzebne
+            # Np. jeśli parse_cache_size jest większe niż pewien próg
+            if cache_stats.get('parse_cache_size', 0) > 1500:
+                clear_symbol_parser_cache()  # Użyj nowej nazwy funkcji
+                debug_print("DataProvider: Wyczyszczono cache symboli (był za duży)")
 
+        except ImportError:
+            log_warning("DataProvider: Nie można zaimportować funkcji z symbol_parser.py do zarządzania cache.")
         except Exception as e:
-            log_error(f"Błąd czyszczenia cache symboli: {e}")
+            log_error(f"DataProvider: Błąd czyszczenia cache symboli: {e}")
 
     def get_events_for_user_date(self, user_id: int, date_str: str) -> List[Dict]:
         """
-        ZOPTYMALIZOWANA WERSJA: Lepsze cache i walidacja
+        Zwraca listę *aktywnych* zdarzeń dla danego użytkownika i daty.
         """
-        # Szybka walidacja
         if not date_str or not user_id or date_str.count('-') != 2:
             return []
 
@@ -475,31 +531,31 @@ class DataProviderV2(QObject):
         except (ValueError, TypeError):
             return []
 
-        # Optymalizacja: użyj cached month key
-        month_key = self._get_month_cache_key(year, month)
+        month_key_tuple = self._get_month_cache_key(year, month)
+        container = self.monthly_cache.get(month_key_tuple)
 
-        # Pobierz kontener z cache
-        container = self.monthly_cache.get(month_key)
         if not container:
-            # Spróbuj załadować dane
-            container = self._get_or_load_monthly_data(year, month)
-            if not container:
-                return []
+            # Jeśli kontener nie istnieje, to nie ma zdarzeń w cache dla tego miesiąca
+            # Nie powinno się to zdarzyć, jeśli _get_or_load_monthly_data jest zawsze wołane pierwsze.
+            # Można rozważyć próbę załadowania, ale to może spowolnić.
+            # Na razie zwracamy pustą listę, zakładając, że dane są ładowane spójnie.
+            # debug_print(f"DataProvider: Brak kontenera dla {year}-{month} w get_events_for_user_date. Ładowanie...")
+            # container = self._get_or_load_monthly_data(year, month, use_cache=True)
+            # if not container:
+            #     return []
+            return []
 
-        cache_key = (user_id, self._standardize_date(date_str))
-        events = container.events_cache.get(cache_key, [])
+        standardized_date = self._standardize_date(date_str)
+        cache_key_event = (user_id, standardized_date)
 
-        # OPTYMALIZACJA: Filtruj w jednym przejściu
-        active_events = []
-        for event in events:
-            status = str(event.get('status', '1'))
-            if status != '0':  # Tylko aktywne zdarzenia
-                active_events.append(event)
+        # Użyj events_cache z kontenera
+        events_for_cell = container.events_cache.get(cache_key_event, [])
 
-        # Debug tylko dla pierwszych wywołań
-        if user_id <= 10 and len(events) != len(active_events):
-            debug_print(
-                f"DataProvider: Przefiltrowano {len(events)} -> {len(active_events)} aktywnych zdarzeń dla ({user_id}, {date_str})")
+        active_events = [e for e in events_for_cell if str(e.get('status', '1')) != '0']
+
+        # Ograniczenie logowania, aby nie zaśmiecać konsoli
+        # if user_id < 5 and month == self._current_month and year == self._current_year : # Loguj tylko dla kilku pierwszych userów i aktualnego miesiąca
+        #     debug_print(f"DataProvider: get_events_for_user_date({user_id}, {date_str}) -> {len(active_events)} aktywnych z {len(events_for_cell)} (cache: {cache_key_event in container.events_cache})")
 
         return active_events
 
@@ -509,13 +565,24 @@ class DataProviderV2(QObject):
         SELECT * FROM [dbo].[fn_GetScheduleData](?, ?) 
         ORDER BY WydzialGrafik, PrzelozonyDane, UzytkownikDane, Data
         """
-
         conn = self.db_connector.get_connection()
         cursor = conn.cursor()
-        cursor.execute(query, (year, month))
-        schedule_data = cursor.fetchall()
-        conn.close()
+        debug_print(f"DataProvider: Wykonuję SQL fn_GetScheduleData dla {year}-{month}")
 
+        sql_exec_start_time = time.time()
+        cursor.execute(query, (year, month))
+        sql_exec_end_time = time.time()
+        debug_print(f"DataProvider: SQL fn_GetScheduleData wykonane w {sql_exec_end_time - sql_exec_start_time:.4f}s")
+
+        fetchall_start_time = time.time()
+        schedule_data = cursor.fetchall()
+        fetchall_end_time = time.time()
+        debug_print(
+            f"DataProvider: cursor.fetchall() dla schedule_data zajęło {fetchall_end_time - fetchall_start_time:.4f}s dla {len(schedule_data)} wierszy.")
+
+        conn.close()
+        debug_print(
+            f"DataProvider: Pobrane dane grafiku: {len(schedule_data)} wierszy (całkowity czas fetch: {fetchall_end_time - sql_exec_start_time:.4f}s).")
         return schedule_data
 
     def _fetch_events_data(self, year: int, month: int) -> List[Dict]:
@@ -523,22 +590,33 @@ class DataProviderV2(QObject):
         query = """
         SELECT * FROM [dbo].[fn_GetEventsData](?, ?) 
         """
-
         conn = self.db_connector.get_connection()
         cursor = conn.cursor()
+        debug_print(f"DataProvider: Wykonuję SQL fn_GetEventsData dla {year}-{month}")
+
+        sql_exec_start_time = time.time()
         cursor.execute(query, (year, month))
+        sql_exec_end_time = time.time()
+        debug_print(f"DataProvider: SQL fn_GetEventsData wykonane w {sql_exec_end_time - sql_exec_start_time:.4f}s")
+
+        fetchall_start_time = time.time()
         raw_events = cursor.fetchall()
+        fetchall_end_time = time.time()
+        debug_print(
+            f"DataProvider: cursor.fetchall() dla raw_events zajęło {fetchall_end_time - fetchall_start_time:.4f}s dla {len(raw_events)} wierszy.")
+
         conn.close()
+        debug_print(
+            f"DataProvider: Pobrane surowe zdarzenia: {len(raw_events)} wierszy (całkowity czas fetch: {fetchall_end_time - sql_exec_start_time:.4f}s).")
 
         events_dicts = []
-        for row in raw_events:
+        mapping_start_time = time.time()
+        for row_idx, row_data in enumerate(raw_events):
             try:
-                event = self.column_mapper.map_events_row_to_dict(row)
+                event = self.column_mapper.map_events_row_to_dict(row_data)
 
-                if 'event_type' in event:
-                    event['type'] = event['event_type']
-                if 'event_id' in event:
-                    event['id'] = event['event_id']
+                if 'event_type' in event: event['type'] = event['event_type']
+                if 'event_id' in event: event['id'] = event['event_id']
 
                 raw_date = event.get('date', '')
                 if hasattr(raw_date, 'strftime'):
@@ -548,162 +626,200 @@ class DataProviderV2(QObject):
                     event['date_display'] = self._format_date_display(raw_date)
                     event['date_key'] = self._standardize_date(raw_date)
 
-                time_from = event.get('time_from')
-                time_to = event.get('time_to')
-
-                if hasattr(time_from, 'strftime'):
-                    event['time_from'] = time_from.strftime('%H:%M')
-                elif isinstance(time_from, str) and 'T' in time_from:
-                    event['time_from'] = time_from.split(' ')[1][:5]
-                elif time_from:
-                    event['time_from'] = str(time_from)
-
-                if hasattr(time_to, 'strftime'):
-                    event['time_to'] = time_to.strftime('%H:%M')
-                elif isinstance(time_to, str) and 'T' in time_to:
-                    event['time_to'] = time_to.split(' ')[1][:5]
-                elif time_to:
-                    event['time_to'] = str(time_to)
+                for time_key in ['time_from', 'time_to']:
+                    time_val = event.get(time_key)
+                    if hasattr(time_val, 'strftime'):
+                        event[time_key] = time_val.strftime('%H:%M')
+                    elif isinstance(time_val, str):
+                        if 'T' in time_val:
+                            event[time_key] = time_val.split('T')[1][:5]
+                        elif ' ' in time_val and ':' in time_val:
+                            event[time_key] = time_val.split(' ')[1][:5]
 
                 if event.get('type') and event.get('id') is not None:
                     events_dicts.append(event)
-
+                else:
+                    log_warning(
+                        f"DataProvider: Pominięto zdarzenie z brakiem typu lub ID: {event} (wiersz {row_idx})")
             except Exception as e:
-                log_error(f"Błąd konwersji zdarzenia: {e}")
+                log_error(
+                    f"DataProvider: Błąd mapowania wiersza zdarzenia w _fetch_events_data: {e}, wiersz: {row_data} (indeks: {row_idx})")
                 continue
-
+        mapping_end_time = time.time()
+        debug_print(
+            f"DataProvider: Mapowanie {len(raw_events)} zdarzeń zajęło {mapping_end_time - mapping_start_time:.4f}s.")
+        debug_print(f"DataProvider: Przetworzone zdarzenia: {len(events_dicts)} słowników.")
         return events_dicts
 
     def _build_events_cache(self, events_data: List[Dict]) -> Dict[Tuple[int, str], List[Dict]]:
-        """Buduje cache zdarzeń"""
+        """Buduje cache zdarzeń (user_id, date_key) -> [list_of_events]"""
         events_cache = {}
-
         for event in events_data:
             user_id = event.get('user_id')
-            date_key = self._standardize_date(event.get('date_key', ''))
+            date_key = self._standardize_date(event.get('date_key', ''))  # Użyj znormalizowanej daty
 
             if user_id and date_key:
-                cache_key = (user_id, date_key)
-                if cache_key not in events_cache:
-                    events_cache[cache_key] = []
-                events_cache[cache_key].append(event)
-
+                cache_key_event = (user_id, date_key)  # Poprawiono nazwę zmiennej
+                if cache_key_event not in events_cache:
+                    events_cache[cache_key_event] = []
+                events_cache[cache_key_event].append(event)
+        debug_print(f"DataProvider: Zbudowano events_cache z {len(events_cache)} wpisami.")
         return events_cache
 
     def clear_cache(self):
         """
-        Tylko do czyszczenia przy STARCIE aplikacji lub ZMIANIE miesiąca
+        Czyści cały cache danych miesięcznych i ikon.
+        Wywoływane przy starcie aplikacji lub gdy jest to absolutnie konieczne.
         """
         cache_count = len(self.monthly_cache)
         icons_count = len(self._icons_cache_by_month)
-        
+
         self.monthly_cache.clear()
         self._icons_cache_by_month.clear()
-        
-        debug_print(f"Wyczyszczono cache przy starcie/zmianie miesiąca: {cache_count} miesięcy, {icons_count} cache ikon")
+
+        debug_print(
+            f"DataProvider: Wyczyszczono CAŁY cache: {cache_count} kontenerów, {icons_count} wpisów cache ikon")
 
     def on_month_change(self, new_year: int, new_month: int):
         """
-        NOWA METODA: Wywoływana przy zmianie miesiąca w interface
+        Wywoływane przy zmianie miesiąca w interfejsie.
+        Czyści cache dla *innych* miesięcy, aby oszczędzać pamięć.
         """
-        debug_print(f"ZMIANA MIESIĄCA na {new_year}-{new_month}")
-        
-        # Przy zmianie miesiąca możemy wyczyścić cache innych miesięcy żeby oszczędzić pamięć
-        # ale ZACHOWAĆ cache aktualnego miesiąca jeśli istnieje
-        current_key = (new_year, new_month)
-        
-        # Zachowaj cache aktualnego miesiąca
-        current_cache = self.monthly_cache.get(current_key)
-        current_icons = self._icons_cache_by_month.get(current_key, {})
-        
-        # Wyczyść wszystkie inne
-        self.monthly_cache.clear()
-        self._icons_cache_by_month.clear()
-        
-        # Przywróć cache aktualnego miesiąca jeśli istniał
-        if current_cache:
-            self.monthly_cache[current_key] = current_cache
-            self._icons_cache_by_month[current_key] = current_icons
-            debug_print(f"Zachowano cache dla aktualnego miesiąca {new_year}-{new_month}")
-        
-        debug_print(f"Wyczyszczono cache przy zmianie miesiąca, pozostawiono cache dla {new_year}-{new_month}")
+        debug_print(f"DataProvider: ZMIANA MIESIĄCA na {new_year}-{new_month}")
+
+        current_key_tuple = (new_year, new_month)  # Poprawiono nazwę zmiennej
+
+        # Stwórz listę kluczy do usunięcia, aby uniknąć modyfikacji słownika podczas iteracji
+        keys_to_remove_monthly = [k for k in self.monthly_cache if k != current_key_tuple]
+        keys_to_remove_icons = [k for k in self._icons_cache_by_month if k != current_key_tuple]
+
+        for key in keys_to_remove_monthly:
+            del self.monthly_cache[key]
+        for key in keys_to_remove_icons:
+            del self._icons_cache_by_month[key]
+
+        if keys_to_remove_monthly or keys_to_remove_icons:
+            debug_print(
+                f"DataProvider: Wyczyszczono cache dla poprzednich miesięcy, pozostawiono dla {new_year}-{new_month} (jeśli istniał).")
+        else:
+            debug_print(f"DataProvider: Cache był pusty lub zawierał tylko dane dla {new_year}-{new_month}.")
+
+        # Ustaw aktualny miesiąc/rok dla _build_processed_data_without_icons
+        self._current_year = new_year
+        self._current_month = new_month
 
     def _format_date_display(self, date_str: str) -> str:
         """Formatuje datę z YYYY-MM-DD na DD.MM.YYYY"""
-        if not date_str:
-            return ""
+        if not date_str: return ""
         try:
-            if '-' in date_str and len(date_str.split('-')) == 3:
-                year, month, day = date_str.split('-')
+            if isinstance(date_str, str) and '-' in date_str and len(date_str.split('-')) == 3:
+                year, month, day_part = date_str.split('-')
+                day = day_part.split(' ')[0].split('T')[0]  # Dodatkowe czyszczenie dla formatów z czasem
                 return f"{day}.{month}.{year}"
         except Exception as e:
-            log_warning(f"Błąd formatowania daty: {e}")
-        return date_str
+            log_warning(f"DataProvider: Błąd formatowania daty '{date_str}': {e}")
+        return date_str  # Zwróć oryginał w razie problemu
 
     def _standardize_date(self, date_obj) -> str:
         """Standaryzuje format daty do 'YYYY-MM-DD'"""
-        if not date_obj:
-            return ''
-
+        if not date_obj: return ''
         if isinstance(date_obj, str):
-            if 'T' in date_obj:
-                return date_obj.split('T')[0]
-            elif ' ' in date_obj:
-                return date_obj.split(' ')[0]
-            elif len(date_obj) == 10 and date_obj.count('-') == 2:
-                return date_obj
-            elif len(date_obj) == 10 and date_obj.count('.') == 2:
-                parts = date_obj.split('.')
-                if len(parts) == 3:
-                    return f"{parts[2]}-{parts[1]}-{parts[0]}"
-            return date_obj
+            date_part = date_obj.split(' ')[0].split('T')[0]  # Weź część daty przed czasem
+            if len(date_part) == 10:
+                if date_part.count('-') == 2:  # Format YYYY-MM-DD
+                    try:  # Sprawdź czy to poprawna data
+                        datetime.strptime(date_part, '%Y-%m-%d')
+                        return date_part
+                    except ValueError:
+                        pass
+                elif date_part.count('.') == 2:  # Format DD.MM.YYYY
+                    try:
+                        d, m, y = date_part.split('.')
+                        if len(y) == 4 and len(m) == 2 and len(d) == 2:
+                            datetime.strptime(date_part, '%d.%m.%Y')  # Sprawdź poprawność
+                            return f"{y}-{m}-{d}"
+                    except ValueError:
+                        pass
+            # Jeśli nie udało się sparsować, zaloguj i zwróć pusty string lub oryginalną wartość
+            log_warning(f"DataProvider: Nie udało się znormalizować daty: '{date_obj}'")
+            return date_obj  # Lub '' jeśli preferowane jest czyszczenie niepoprawnych dat
 
-        if hasattr(date_obj, 'strftime'):
+        if hasattr(date_obj, 'strftime'):  # Dla obiektów date/datetime
             return date_obj.strftime('%Y-%m-%d')
 
+        log_warning(f"DataProvider: Nieznany typ daty do standaryzacji: {type(date_obj)}, wartość: {date_obj}")
         return ''
-    
 
-
-    def invalidate_complete_cache_for_pairs(self, user_date_pairs):
+    def invalidate_complete_cache_for_pairs(self, user_date_pairs: List[Tuple[int, str]]):
         """
-        NOWA METODA: Kompletne czyszczenie cache dla par (user_id, date_str)
-        Usuwa z wszystkich poziomów cache'owania
+        Kompleksowe unieważnienie cache dla określonych par (user_id, date_str).
+        Wymusza ponowne załadowanie danych o zdarzeniach dla dotkniętych miesięcy.
         """
         if not user_date_pairs:
             return
-            
-        # Wyczyść cache miesięczny
-        months_to_clear = set()
+
+        affected_months_to_refresh_events = set()
+        affected_months_for_icons_signal = set()
+
         for user_id, date_str in user_date_pairs:
             try:
-                year, month, _ = date_str.split('-')
-                months_to_clear.add((int(year), int(month)))
-            except:
+                std_date_str = self._standardize_date(date_str)
+                if not std_date_str or std_date_str.count('-') != 2:
+                    log_warning(
+                        f"DataProvider: Nieprawidłowy format daty w invalidate_complete_cache_for_pairs: '{date_str}'")
+                    continue
+
+                year, month, day = map(int, std_date_str.split('-'))
+                month_key = (year, month)
+
+                affected_months_to_refresh_events.add(
+                    month_key)  # Zawsze oznaczamy miesiąc do odświeżenia danych zdarzeń
+                affected_months_for_icons_signal.add(month_key)
+
+                # Unieważnij cache ikon dla konkretnej komórki
+                if month_key in self._icons_cache_by_month:
+                    cell_key = (user_id, std_date_str)
+                    if cell_key in self._icons_cache_by_month[month_key]:
+                        del self._icons_cache_by_month[month_key][cell_key]
+                        # debug_print(f"DataProvider: Usunięto z _icons_cache_by_month dla {cell_key}")
+
+                # Zresetuj flagę obliczonych ikon dla kontenera
+                if month_key in self.monthly_cache:
+                    self.monthly_cache[month_key]._icons_calculated_on_this_instance = False
+                    # debug_print(f"DataProvider: Zresetowano _icons_calculated_on_this_instance dla {month_key}")
+
+            except (ValueError, TypeError) as e:
+                log_warning(
+                    f"DataProvider: Błąd w invalidate_complete_cache_for_pairs przy przetwarzaniu ({user_id}, {date_str}): {e}")
                 continue
-        
-        # Wyczyść kompletny cache miesięczny
-        for year, month in months_to_clear:
-            month_key = (year, month)
-            if month_key in self.monthly_cache:
-                # Usuń z kontenera miesięcznego
-                container = self.monthly_cache[month_key]
-                
-                # Przebuduj events_cache bez usuniętych zdarzeń
-                new_events_cache = {}
-                for cache_key, events in container.events_cache.items():
-                    if cache_key not in user_date_pairs:
-                        new_events_cache[cache_key] = events
-                
-                container.events_cache = new_events_cache
+
+        # Kluczowa zmiana: Ponownie załaduj dane o zdarzeniach dla wszystkich dotkniętych miesięcy
+        for year, month in affected_months_to_refresh_events:
+            month_key_tuple = (year, month)
+            if month_key_tuple in self.monthly_cache:
+                debug_print(
+                    f"DataProvider: Wymuszone ponowne ładowanie events_data dla kontenera {year}-{month} w invalidate_complete_cache_for_pairs.")
+                container = self.monthly_cache[month_key_tuple]
+
+                # Pobierz świeże dane o zdarzeniach z bazy
+                fresh_events_data = self._fetch_events_data(year, month)
+                container.events_data = fresh_events_data
+
+                # Przebuduj cache zdarzeń na podstawie świeżych danych
+                container.events_cache = self._build_events_cache(fresh_events_data)
+
                 container.last_updated = time.time()
-            
-            # Wyczyść cache ikon
-            if month_key in self._icons_cache_by_month:
-                month_icons = self._icons_cache_by_month[month_key]
-                for user_id, date_str in user_date_pairs:
-                    cell_key = (user_id, date_str)
-                    if cell_key in month_icons:
-                        del month_icons[cell_key]
-        
-        debug_print(f"Kompletnie wyczyszczono cache dla {len(user_date_pairs)} par")
+                container._icons_calculated_on_this_instance = False  # Ikony również będą wymagały ponownego przeliczenia
+
+                debug_print(
+                    f"DataProvider: Zakończono odświeżanie events_data i events_cache dla {year}-{month}. Nowych zdarzeń: {len(fresh_events_data)}")
+                self.data_changed.emit("events", year, month)  # Sygnalizuj zmianę danych zdarzeń
+            else:
+                # Jeśli kontenera nie ma w cache, zostanie załadowany przy następnym żądaniu
+                debug_print(
+                    f"DataProvider: Kontener dla {year}-{month} nie istnieje w cache, zostanie załadowany przy potrzebie.")
+
+        for year, month in affected_months_for_icons_signal:
+            debug_print(
+                f"DataProvider: Sygnalizowanie zmiany ikon dla miesiąca {year}-{month} po invalidate_complete_cache_for_pairs.")
+            self.data_changed.emit("icons", year, month)
