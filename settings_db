@@ -3,6 +3,7 @@ import os
 import getpass
 from debug_utils import debug_print, log_warning, log_error
 
+
 class SettingsDatabase:
     """Klasa do obsługi bazy danych ustawień użytkownika w SQL Server"""
 
@@ -12,16 +13,13 @@ class SettingsDatabase:
     def get_current_username(self):
         """Pobiera nazwę użytkownika używając getpass"""
         try:
-            import getpass
             return getpass.getuser()
         except:
-            try:
-                import os
-                return os.environ.get('USER') or os.environ.get('USERNAME') or 'unknown_user'
-            except:
-                return 'unknown_user'
+            return os.environ.get('USERNAME') or 'unknown_user'
 
-    def save_settings(self, theme, font_family, font_size, load_all_events=True, visible_columns=None, username=None):
+    # --- ZMIANA: Dodano parametr `show_schedule_comment` ---
+    def save_settings(self, theme, font_family, font_size, load_all_events=True, visible_columns=None,
+                      show_schedule_comment=False, username=None):
         """Zapisuje ustawienia użytkownika do bazy danych SQL Server"""
         if username is None:
             username = self.get_current_username()
@@ -30,23 +28,21 @@ class SettingsDatabase:
             conn = DatabaseConnector.get_connection()
             cursor = conn.cursor()
 
-            # Konwersja listy widocznych kolumn na string (format CSV), jeśli podano
-            columns_str = None
-            if visible_columns:
-                columns_str = ','.join(visible_columns)
+            columns_str = ','.join(visible_columns) if visible_columns else None
 
-            # Użyj procedury składowanej do zapisu ustawień
+            # --- ZMIANA: Zaktualizowano wywołanie procedury ---
+            # Założenie: procedura SaveUserSettings została zaktualizowana o nowy parametr @show_schedule_comment
             cursor.execute("""
-                EXEC SaveUserSettings @username=?, @theme=?, @font_family=?, @font_size=?, @load_all_events=?, @visible_columns=?
-            """, (username, theme, font_family, font_size, load_all_events, columns_str))
+                EXEC SaveUserSettings @username=?, @theme=?, @font_family=?, @font_size=?, @load_all_events=?, @visible_columns=?, @show_schedule_comment=?
+            """, (username, theme, font_family, font_size, load_all_events, columns_str, show_schedule_comment))
 
             conn.commit()
             conn.close()
             debug_print(
-                f"Ustawienia zapisane dla użytkownika {username}: {theme}, {font_family}, {font_size}, visible_columns={visible_columns}")
+                f"Ustawienia zapisane dla {username}: motyw={theme}, kolumny={visible_columns}, komentarz={show_schedule_comment}")
             return True
         except Exception as e:
-            print(f"Błąd podczas zapisywania ustawień: {e}")
+            log_error(f"Błąd podczas zapisywania ustawień: {e}", exception=e)
             return False
 
     def load_settings(self, username=None):
@@ -58,45 +54,33 @@ class SettingsDatabase:
             conn = DatabaseConnector.get_connection()
             cursor = conn.cursor()
 
-            # Użyj procedury składowanej do odczytu ustawień
-            cursor.execute("""
-                EXEC GetUserSettings @username=?
-            """, (username,))
-
+            cursor.execute("EXEC GetUserSettings @username=?", (username,))
             result = cursor.fetchone()
             conn.close()
 
             if result:
-                # Konwersja string (CSV) na listę dla visible_columns, jeśli istnieje
-                visible_columns = None
-                if len(result) >= 5 and result[4]:  # Sprawdź czy jest piąta kolumna i czy nie jest NULL
-                    visible_columns = result[4].split(',')
+                visible_columns = result[4].split(',') if len(result) >= 5 and result[4] else None
 
-                # Zwróć wszystkie ustawienia w słowniku
+                # --- ZMIANA: Dodano wczytywanie nowej opcji ---
+                show_comment = result[5] if len(result) >= 6 and result[5] is not None else False
+
                 return {
                     'theme': result[0],
                     'font_family': result[1],
                     'font_size': result[2],
                     'load_all_events': result[3] if len(result) >= 4 else True,
-                    'visible_columns': visible_columns
+                    'visible_columns': visible_columns,
+                    'show_schedule_comment': bool(show_comment)
                 }
             else:
                 # Domyślne ustawienia
                 return {
-                    'theme': 'dark',
-                    'font_family': 'Arial',
-                    'font_size': 9,
-                    'load_all_events': True,
-                    'visible_columns': None
+                    'theme': 'dark', 'font_family': 'Arial', 'font_size': 9,
+                    'load_all_events': True, 'visible_columns': None, 'show_schedule_comment': False
                 }
         except Exception as e:
-            print(f"Błąd podczas ładowania ustawień: {e}")
-            # Zwróć domyślne wartości w przypadku błędu
+            log_error(f"Błąd podczas ładowania ustawień: {e}", exception=e)
             return {
-                'theme': 'dark',
-                'font_family': 'Arial',
-                'font_size': 9,
-                'load_all_events': True,
-                'visible_columns': None
+                'theme': 'dark', 'font_family': 'Arial', 'font_size': 9,
+                'load_all_events': True, 'visible_columns': None, 'show_schedule_comment': False
             }
-
