@@ -9,7 +9,7 @@ Narzędzia do debugowania i logowania z opcją zapisu do pliku.
 """
 
 # Globalny przełącznik dla trybu debug
-DEBUG_MODE = True  # Ustaw na False w produkcji
+DEBUG_MODE = False  # Ustaw na False w produkcji
 
 # Konfiguracja logowania do pliku
 LOG_TO_FILE = False  # Czy zapisywać logi do pliku
