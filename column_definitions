@@ -2,16 +2,19 @@ from dataclasses import dataclass
 from typing import Dict, List, Any, Optional
 from enum import Enum
 
+
 class ColumnType(Enum):
     SCHEDULE = "schedule"
-    EVENTS = "events" 
+    EVENTS = "events"
     UI_DISPLAY = "ui_display"
+
 
 class DataType(Enum):
     STRING = str
     INTEGER = int
     FLOAT = float
     BOOLEAN = bool
+
 
 @dataclass
 class ColumnDefinition:
@@ -22,79 +25,88 @@ class ColumnDefinition:
     description: str
     width: Optional[int] = 100
     required: bool = False
+    selectable_in_ui: bool = True
+
 
 class ColumnDefinitions:
+    # Słownik definicji kolumn ODCZYTYWANYCH Z `fn_GetScheduleData`
     SCHEDULE_COLUMNS = {
         'wydzial': ColumnDefinition(
             id='wydzial', name='WydzialGrafik', data_type=DataType.STRING,
-            default_value='', description='WydzialGrafik', width=150, required=True
+            default_value='', description='WydzialGrafik', width=150, required=True, selectable_in_ui=True
         ),
         'przelozony': ColumnDefinition(
             id='przelozony', name='PrzelozonyDane', data_type=DataType.STRING,
-            default_value='', description='PrzelozonyDane', width=150
+            default_value='', description='PrzelozonyDane', width=150, selectable_in_ui=True
         ),
         'przelozony_imie_nazwisko': ColumnDefinition(
             id='przelozony_imie_nazwisko', name='PrzelozonyImieNazwisko', data_type=DataType.STRING,
-            default_value='', description='PrzelozonyImieNazwisko', width=100
+            default_value='', description='PrzelozonyImieNazwisko', width=100, selectable_in_ui=True
         ),
         'uzytkownik_dane': ColumnDefinition(
             id='uzytkownik_dane', name='UzytkownikDane', data_type=DataType.STRING,
-            default_value='', description='UzytkownikDane', width=150, required=True
+            default_value='', description='UzytkownikDane', width=150, required=True, selectable_in_ui=True
         ),
         'uzytkownik_id': ColumnDefinition(
             id='uzytkownik_id', name='Uzytkownik', data_type=DataType.INTEGER,
-            default_value=0, description='Uzytkownik', width=80, required=True
+            default_value=0, description='Uzytkownik', width=80, required=True, selectable_in_ui=True
         ),
         'nr_kadrowy': ColumnDefinition(
             id='nr_kadrowy', name='NumerKadrowy', data_type=DataType.STRING,
-            default_value='', description='NumerKadrowy', width=100
+            default_value='', description='NumerKadrowy', width=100, selectable_in_ui=True
         ),
         'data_str': ColumnDefinition(
             id='data_str', name='Data', data_type=DataType.STRING,
-            default_value='', description='Data w formacie string', required=True
+            default_value='', description='Data w formacie string', required=True, selectable_in_ui=True
         ),
         'symbol': ColumnDefinition(
             id='symbol', name='GrafikSymbol', data_type=DataType.STRING,
-            default_value='', description='GrafikSymbol'
+            default_value='', description='GrafikSymbol', selectable_in_ui=False
         ),
         'id_wpisu': ColumnDefinition(
             id='id_wpisu', name='ID wpisu', data_type=DataType.INTEGER,
-            default_value=0, description='ID wpisu w grafiku'
+            default_value=0, description='ID wpisu w grafiku', selectable_in_ui=False
         ),
         'rola_nazwa': ColumnDefinition(
             id='rola_nazwa', name='RolaNazwa', data_type=DataType.STRING,
-            default_value='', description='RolaNazwa', width=120
+            default_value='', description='RolaNazwa', width=120, selectable_in_ui=True
         ),
         'pod_rola_nazwa': ColumnDefinition(
             id='pod_rola_nazwa', name='PodRolaNazwa', data_type=DataType.STRING,
-            default_value='', description='PodRolaNazwa', width=120
+            default_value='', description='PodRolaNazwa', width=120, selectable_in_ui=True
         ),
         'etat': ColumnDefinition(
             id='etat', name='Etat', data_type=DataType.FLOAT,
-            default_value=0.0, description='Etat', width=60
+            default_value=8, description='Etat', width=60, selectable_in_ui=True
         ),
         'jezyk': ColumnDefinition(
             id='jezyk', name='Jezyk', data_type=DataType.STRING,
-            default_value='', description='Jezyk', width=60
+            default_value='', description='Jezyk', width=60, selectable_in_ui=True
         ),
         'korekta': ColumnDefinition(
             id='korekta', name='Korekta', data_type=DataType.FLOAT,
-            default_value=0.0, description='Korekta', width=60
+            default_value=0, description='Korekta', width=60, selectable_in_ui=True
         ),
         'dtn': ColumnDefinition(
             id='dtn', name='DTN', data_type=DataType.INTEGER,
-            default_value=0, description='DTN', width=50
+            default_value=0, description='DTN', width=50, selectable_in_ui=True
         ),
         'lokalizacja_domyslna': ColumnDefinition(
             id='lokalizacja_domyslna', name='LokalizacjaDomyslna', data_type=DataType.STRING,
-            default_value='', description='LokalizacjaDomyslna', width=100
+            default_value='', description='LokalizacjaDomyslna', width=100, selectable_in_ui=True
         ),
-        'komentarz_grafik': ColumnDefinition(
-            id='komentarz_grafik', name='KomentarzGrafik', data_type=DataType.STRING,
-            default_value='', description='KomentarzGrafik', width=500
+        'system_czasu_pracy': ColumnDefinition(
+            id='system_czasu_pracy', name='System Pracy', data_type=DataType.STRING,
+            default_value='', description='System Pracy', width=120, selectable_in_ui=True
         )
+        # ,
+        # 'data_modyfikacji': ColumnDefinition(
+        #     id='data_modyfikacji', name='DataModyfikacji', data_type=DataType.STRING,
+        #     default_value=None, description='DataModyfikacji', width=None
+        # )
+
     }
-    
+
     EVENTS_COLUMNS = {
         'event_type': ColumnDefinition(
             id='event_type', name='Typ zdarzenia', data_type=DataType.STRING,
@@ -132,15 +144,22 @@ class ColumnDefinitions:
             id='status', name='Status zdarzenia', data_type=DataType.STRING,
             default_value='', description='Status zdarzenia'
         )
+        # ,
+        # 'data_modyfikacji': ColumnDefinition(
+        #     id='data_modyfikacji', name='DataModyfikacji', data_type=DataType.STRING,
+        #     default_value=None, description='DataModyfikacji', width=None
+        # )
     }
 
     DEFAULT_VISIBLE_COLUMNS = ['wydzial', 'przelozony_imie_nazwisko', 'uzytkownik_dane']
 
     @classmethod
     def get_ui_display_columns(cls):
-        return [(col_def.id, col_def.name, col_def.width) 
-                for col_def in cls.SCHEDULE_COLUMNS.values() 
-                if col_def.width is not None]
+        # Ta metoda zwraca teraz tylko kolumny zdefiniowane w SCHEDULE_COLUMNS, co jest poprawne.
+        # Kolumna 'komentarz_grafik' jest zarządzana oddzielnie.
+        return [(col_def.id, col_def.name, col_def.width)
+                for col_def in cls.SCHEDULE_COLUMNS.values()
+                if col_def.width is not None and col_def.selectable_in_ui]
 
     @classmethod
     def get_required_columns(cls, column_type):
