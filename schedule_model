@@ -1,12 +1,11 @@
-# schedule_model.py - ZMODYFIKOWANA WERSJA z dynamicznymi ikonami
-
+# schedule_model.py - ZMODYFIKOWANA WERSJA
 from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QDate
 from PySide6.QtGui import QColor, QBrush
 from debug_utils import debug_print, log_warning, log_error
 from symbol_parser import parse_symbol
 from column_definitions import ColumnDefinitions
 
-# Role danych
+# Definicje ról danych
 ROLE_DATA = Qt.UserRole
 ROLE_ID = Qt.UserRole + 1
 ROLE_TYPE = Qt.UserRole + 2
@@ -16,82 +15,76 @@ ROLE_HAS_OVERTIME = Qt.UserRole + 4
 
 class ScheduleTableModel(QAbstractTableModel):
     """
-    Model danych z dynamicznymi ikonami
+    Model danych z dynamicznymi ikonami i opcjonalną kolumną komentarza.
     """
-
-    # Definicje ról danych
     ROLE_DATA = ROLE_DATA
     ROLE_ID = ROLE_ID
     ROLE_TYPE = ROLE_TYPE
     ROLE_HAS_MEETING = ROLE_HAS_MEETING
     ROLE_HAS_OVERTIME = ROLE_HAS_OVERTIME
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, user_role=None):
         super().__init__(parent)
-        # Podstawowe dane
         self._data = []
         self._processed_data = {}
         self._keys = []
-
-        # Informacje o strukturze
         self._column_headers = []
         self._row_count = 0
         self._column_count = 0
         self._weekend_columns = []
-
-        # Informacje o pracownikach
+        self._show_comment_column = False
         self._employee_columns = []
         self._visible_columns = []
-
-        # Informacje o miesiącu
         self._year = None
         self._month = None
         self._days_in_month = 0
         self._working_days = 0
-
-        # Ustawienia wyglądu
         self._is_dark_theme = False
-
-        # NOWE: Referencja do DataProvider dla dynamicznych ikon
         self._data_provider = None
 
-        # ZMODYFIKOWANE: Inicjalizacja ColumnDefinitions
+        self.user_role = user_role
+        self.keyboard_edit_roles = ["Pracownik WPR", "Lider OUT"]
+
         self.column_definitions = ColumnDefinitions()
         self._visible_columns = self.column_definitions.DEFAULT_VISIBLE_COLUMNS.copy()
         self._employee_columns = self.column_definitions.get_ui_display_columns()
         self._update_column_structure()
-
-        # Lokalny cache ikon
-        self._icons_cache = {}  # {(user_id, date_str): {'spotkania': 0, 'szkolenia': 0, 'nadgodziny': 0}}
+        self._icons_cache = {}
         self._icons_cache_valid = False
 
     def data(self, index, role=Qt.DisplayRole):
-        """Zwraca dane dla określonego indeksu i roli - POPRAWIONA WERSJA"""
+        """Zwraca dane dla określonego indeksu i roli, z poprawnym wyrównaniem."""
         if not index.isValid():
             return None
 
-        row = index.row()
-        col = index.column()
+        row, col = index.row(), index.column()
 
-        if row < 0 or row >= self._row_count or col < 0 or col >= self._column_count:
-            return None
-
-        if row >= len(self._keys):
+        if row < 0 or row >= self._row_count or col < 0 or col >= self._column_count or row >= len(self._keys):
             return None
 
         key = self._keys[row]
         row_data = self._processed_data.get(key, {})
         is_employee_column = col < len(self._visible_columns)
 
-        # Obsługa różnych ról
+        # --- NOWA LOGIKA DLA WYRÓWNANIA ---
+        if role == Qt.TextAlignmentRole:
+            if is_employee_column:
+                return Qt.AlignLeft | Qt.AlignVCenter
+            else:
+                schedule_col = col - len(self._visible_columns)
+                komentarz_col_idx = self._days_in_month + 2
+                # Sprawdzamy, czy to widoczna kolumna komentarza
+                if self._show_comment_column and schedule_col == komentarz_col_idx:
+                    return Qt.AlignLeft | Qt.AlignVCenter # Wyrównaj do lewej
+                else:
+                    return Qt.AlignCenter # Reszta kolumn grafiku na środek
+
         if role == Qt.DisplayRole:
             return self._get_display_data(row_data, key, col, is_employee_column)
         elif role == Qt.BackgroundRole:
             return self._get_background_color(row_data, key, col, is_employee_column)
         elif role == Qt.ForegroundRole:
             return self._get_foreground_color(row_data, key, col, is_employee_column)
-        elif role == Qt.TextAlignmentRole:
-            return self._get_text_alignment(col, is_employee_column)
         elif role == self.ROLE_DATA:
             return self._get_user_data(row_data, key, col, is_employee_column)
         elif role == self.ROLE_ID:
@@ -109,13 +102,13 @@ class ScheduleTableModel(QAbstractTableModel):
     def _get_user_data(self, row_data, key, col, is_employee_column):
         """
         Zwraca dane użytkownika dla danej komórki - NOWA METODA
-        
+
         Args:
             row_data: Dane wiersza z processed_data
             key: Klucz wiersza (wydzial, przelozony, uzytkownik_dane, uzytkownik_id)
             col: Indeks kolumny
             is_employee_column: Czy to kolumna pracownika
-            
+
         Returns:
             dict: Słownik z danymi komórki
         """
@@ -141,16 +134,16 @@ class ScheduleTableModel(QAbstractTableModel):
         else:
             # Dane dla kolumn grafiku (dni)
             schedule_col = col - len(self._visible_columns)
-            
+
             if schedule_col < self._days_in_month:
                 # Kolumna dnia
                 day = schedule_col + 1
                 days_data = row_data.get('days', {})
                 day_data = days_data.get(day, {})
-                
+
                 # Przygotuj datę w formacie YYYY-MM-DD
                 date_str = f"{self._year}-{self._month:02d}-{day:02d}" if self._year and self._month else ''
-                
+
                 return {
                     'wydzial': key[0] or '',
                     'przelozony': key[1] or '',
@@ -186,7 +179,7 @@ class ScheduleTableModel(QAbstractTableModel):
                 total_hours = row_data.get('total_hours', 0) or 0
                 expected_hours = etat * self._working_days if hasattr(self, '_working_days') else 0
                 balance = expected_hours - total_hours
-                
+
                 return {
                     'uzytkownik_id': key[3] or 0,
                     'uzytkownik_dane': key[2] or '',
@@ -196,7 +189,7 @@ class ScheduleTableModel(QAbstractTableModel):
                     'balance': balance,
                     'column_type': 'bilans_rbh'
                 }
-        
+
         # Fallback - zwróć podstawowe dane
         return {
             'uzytkownik_id': key[3] or 0,
@@ -208,76 +201,76 @@ class ScheduleTableModel(QAbstractTableModel):
         """POPRAWIONA: Używa tylko lokalnego cache, nie pyta DataProvider"""
         if is_employee_column:
             return False
-        
+
         schedule_col = col - len(self._visible_columns)
         if schedule_col >= self._days_in_month:
             return False
-            
+
         day = schedule_col + 1
         user_id = key[3]
-        
+
         if not self._year or not self._month:
             return False
-            
+
         # KLUCZOWA ZMIANA: Sprawdź processed_data zamiast pytać DataProvider
         row_data = self._processed_data.get(key, {})
         days_data = row_data.get('days', {})
         day_data = days_data.get(day, {})
-        
+
         # Pobierz z lokalnych danych w processed_data
         has_meetings = day_data.get('spotkania', 0) > 0
         has_trainings = day_data.get('szkolenia', 0) > 0
-        
+
         return has_meetings or has_trainings
 
     def _get_dynamic_overtime_icon(self, key, col, is_employee_column):
         """POPRAWIONA: Używa tylko lokalnego cache, nie pyta DataProvider"""
         if is_employee_column:
             return False
-        
+
         schedule_col = col - len(self._visible_columns)
         if schedule_col >= self._days_in_month:
             return False
-            
+
         day = schedule_col + 1
         user_id = key[3]
-        
+
         if not self._year or not self._month:
             return False
-            
+
         # KLUCZOWA ZMIANA: Sprawdź processed_data zamiast pytać DataProvider
         row_data = self._processed_data.get(key, {})
         days_data = row_data.get('days', {})
         day_data = days_data.get(day, {})
-        
+
         # Pobierz z lokalnych danych w processed_data
         has_overtime = day_data.get('nadgodziny', 0) > 0
-        
+
         return has_overtime
-        
+
     def refresh_specific_icons(self, user_date_pairs):
         """
         NOWA METODA: Odświeża ikony tylko dla określonych par (user_id, date_str)
         """
         if not user_date_pairs or not self._data_provider:
             return
-        
+
         affected_cells = []
-        
+
         for user_id, date_str in user_date_pairs:
             # Wyczyść z lokalnego cache
             cache_key = (user_id, date_str)
             if hasattr(self, '_icons_cache') and cache_key in self._icons_cache:
                 del self._icons_cache[cache_key]
-            
+
             # Znajdź pozycję w modelu
             try:
                 year, month, day_str = date_str.split('-')
                 day = int(day_str)
-                
+
                 if int(year) != self._year or int(month) != self._month:
                     continue
-                    
+
                 # Znajdź wiersz użytkownika
                 for idx, key in enumerate(self._keys):
                     if str(key[3]) == str(user_id):
@@ -293,40 +286,26 @@ class ScheduleTableModel(QAbstractTableModel):
             model_index = self.index(row, col)
             roles = [self.ROLE_HAS_MEETING, self.ROLE_HAS_OVERTIME]
             self.dataChanged.emit(model_index, model_index, roles)
-        
+
         debug_print(f"Model: Odświeżono ikony dla {len(affected_cells)} komórek")
 
     def update_data(self, data_provider_v2, year, month):
-        """
-        ZMODYFIKOWANA METODA: Przechowuje referencję do DataProvider
-        """
-        # Zapisz poprzedni stan
-        old_row_count = self._row_count
-        old_column_count = self._column_count
-
-        # NOWE: Zapisz referencję do DataProvider
+        """ZMODYFIKOWANA METODA: Przechowuje referencję do DataProvider"""
+        self.beginResetModel()
         self._data_provider = data_provider_v2
-
-        # Ustaw rok i miesiąc
         self._year = year
         self._month = month
         self._days_in_month = self._get_days_in_month(year, month)
         self._working_days = self._fetch_working_days(year, month)
 
-        # Pobierz processed_data z DataProvider (z dynamicznymi ikonami)
-        new_processed_data = data_provider_v2.get_processed_data(year, month)
+        self._processed_data = data_provider_v2.get_processed_data(year, month)
         self._data = data_provider_v2.get_schedule_data(year, month)
 
-        debug_print(f"Model: Otrzymano processed_data z {len(new_processed_data)} użytkownikami")
-
-        # Reset modelu
-        self.beginResetModel()
-        self._processed_data = new_processed_data
-        self._keys = list(new_processed_data.keys())
-        self._update_column_structure()
+        self._keys = list(self._processed_data.keys())
         self._row_count = len(self._keys)
-        self.endResetModel()
+        self._update_column_structure()  # Przebuduj kolumny po załadowaniu danych
 
+        self.endResetModel()
         debug_print(f"Model zaktualizowany: {self._row_count} wierszy, {self._column_count} kolumn")
 
     def update_event_indicator(self, user_id, date_str, event_type, is_active=True):
@@ -431,36 +410,43 @@ class ScheduleTableModel(QAbstractTableModel):
         return self._row_count
 
     def columnCount(self, parent=QModelIndex()):
-        """Zwraca liczbę kolumn w modelu"""
-        if parent.isValid():
-            return 0
-        return self._column_count
+        return self._column_count # Zawsze zwracamy aktualną liczbę kolumn
+
+    def set_show_comment_column(self, visible: bool):
+        """Ustawia widoczność opcjonalnej kolumny komentarza."""
+        if self._show_comment_column != visible:
+            self.beginResetModel()
+            self._show_comment_column = visible
+            self._update_column_structure()
+            self.endResetModel()
 
     def headerData(self, section, orientation, role=Qt.DisplayRole):
-        """Zwraca dane nagłówka"""
+        """Zwraca dane nagłówka dla kolumn i wierszy."""
         if orientation == Qt.Horizontal:
             if role == Qt.DisplayRole:
-                if section < len(self._visible_columns):
-                    column_id = self._visible_columns[section]
-                    # ZMODYFIKOWANE: Użyj column_definitions zamiast _employee_columns
-                    col_def = self.column_definitions.SCHEDULE_COLUMNS.get(column_id)
-                    if col_def:
-                        return col_def.name
-                    return column_id
-                else:
-                    if section < len(self._column_headers):
-                        return self._column_headers[section]
+                # Zwraca nazwę nagłówka z dynamicznie generowanej listy.
+                # Ta lista już uwzględnia, czy kolumna komentarza ma być widoczna.
+                if section < len(self._column_headers):
+                    return self._column_headers[section]
+
             elif role == Qt.BackgroundRole:
+                # Kolorowanie tła dla weekendów.
                 visible_columns_count = len(self._visible_columns)
                 if section >= visible_columns_count:
+                    # Obliczamy indeks kolumny w części grafiku (0 = pierwszy dzień miesiąca)
                     schedule_column = section - visible_columns_count
                     if schedule_column in self._weekend_columns:
                         return QBrush(QColor(120, 40, 40) if self._is_dark_theme else QColor(255, 200, 200))
+
             elif role == Qt.TextAlignmentRole:
+                # Wszystkie nagłówki poziome są wyśrodkowane.
                 return Qt.AlignCenter
+
         elif orientation == Qt.Vertical:
             if role == Qt.DisplayRole:
+                # Zwraca numer wiersza.
                 return str(section + 1)
+
         return None
 
     def setData(self, index, value, role=Qt.EditRole):
@@ -528,18 +514,24 @@ class ScheduleTableModel(QAbstractTableModel):
         return False
 
     def flags(self, index):
-        """Zwraca flagi określające możliwe operacje na elemencie"""
+        """Zwraca flagi komórki, uwzględniając uprawnienia do edycji."""
         if not index.isValid():
             return Qt.NoItemFlags
 
+        # Domyślne flagi dla wszystkich komórek
         flags = Qt.ItemIsEnabled | Qt.ItemIsSelectable
-        col = index.column()
-        if col >= len(self._visible_columns):
-            schedule_col = col - len(self._visible_columns)
-            if schedule_col < self._days_in_month:
-                flags |= Qt.ItemIsEditable
-        return flags
 
+        # Sprawdzamy, czy użytkownik ma rolę uprawniającą do edycji
+        if self.user_role in self.keyboard_edit_roles:
+            # Jeśli tak, sprawdzamy, czy jest to komórka grafiku
+            col = index.column()
+            if col >= len(self._visible_columns):
+                schedule_col = col - len(self._visible_columns)
+                # Komórki dni są edytowalne
+                if schedule_col < self._days_in_month:
+                    flags |= Qt.ItemIsEditable
+
+        return flags
 
     def _get_display_data(self, row_data, key, col, is_employee_column):
         """Zwraca dane do wyświetlenia dla danej komórki"""
@@ -559,23 +551,26 @@ class ScheduleTableModel(QAbstractTableModel):
                 return str(row_data.get(col_id, ''))
             return ''
         else:
-            days_data = row_data.get('days', {})
             schedule_col = col - len(self._visible_columns)
 
-            if schedule_col == self._days_in_month + 1:
-                # BilansRBH
+            # --- ZMIANA: Sprawdzanie indeksów względem stałych wartości
+            suma_col_idx = self._days_in_month
+            bilans_col_idx = self._days_in_month + 1
+            komentarz_col_idx = self._days_in_month + 2
+
+            if schedule_col == suma_col_idx:
+                return str(row_data.get('total_hours', 0))
+            elif schedule_col == bilans_col_idx:
                 etat = float(row_data.get('etat', 0) or 0)
                 total_hours = row_data.get('total_hours', 0) or 0
                 expected_hours = etat * self._working_days
                 balance = expected_hours - total_hours
                 return f"{balance:.1f}"
-            elif schedule_col == self._days_in_month:
-                # SumaRBH
-                return str(row_data.get('total_hours', 0))
+            elif self._show_comment_column and schedule_col == komentarz_col_idx:
+                return row_data.get('komentarz_grafik', '')
             elif 0 <= schedule_col < self._days_in_month:
                 day = schedule_col + 1
-                day_data = days_data.get(day, {})
-                return day_data.get('symbol', '')
+                return row_data.get('days', {}).get(day, {}).get('symbol', '')
             return ''
 
     def _get_background_color(self, row_data, key, col, is_employee_column):
@@ -583,20 +578,26 @@ class ScheduleTableModel(QAbstractTableModel):
         if not is_employee_column:
             schedule_col = col - len(self._visible_columns)
 
+            # Kolumna BilansRBH
             if schedule_col == self._days_in_month + 1:
                 # Kolorowanie bilansu RBH
                 etat = float(row_data.get('etat', 0) or 0)
                 total_hours = row_data.get('total_hours', 0) or 0
-                expected_hours = etat * self._working_days
+                # Sprawdzenie czy _working_days istnieje i jest > 0
+                expected_hours_base = self._working_days if hasattr(self,
+                                                                    '_working_days') and self._working_days > 0 else 21
+                expected_hours = etat * expected_hours_base
+
                 balance = expected_hours - total_hours
-
                 if balance < 0:
-                    return QBrush(QColor(255, 200, 200) if not self._is_dark_theme else QColor(120, 40, 40))
+                    return QBrush(QColor(120, 40, 40) if self._is_dark_theme else QColor(255, 200, 200))
                 elif balance > 0:
-                    return QBrush(QColor(255, 200, 200) if not self._is_dark_theme else QColor(120, 40, 40))
-                elif balance == 0:
-                    return QBrush(QColor(200, 255, 200) if not self._is_dark_theme else QColor(40, 120, 40))
+                    return QBrush(QColor(120, 40, 40) if self._is_dark_theme else QColor(255, 200, 200))
+                elif balance == 0 and expected_hours > 0:
+                    return QBrush(QColor(40, 120, 40) if self._is_dark_theme else QColor(200, 255, 200))
+                return None
 
+            # Kolumny dni miesiąca
             if schedule_col < self._days_in_month:
                 day = schedule_col + 1
                 days_data = row_data.get('days', {})
@@ -613,7 +614,14 @@ class ScheduleTableModel(QAbstractTableModel):
                     if start_hour is None:
                         start_hour = day_data.get('start_hour')
                     if start_hour is not None:
-                        return QBrush(self._get_color_by_start_hour(start_hour))
+                        color = self._get_color_by_start_hour(start_hour)
+                        return QBrush(color)
+                    else:
+                        neutral_symbol_bg = QColor(65, 65, 65) if self._is_dark_theme else QColor(225, 225, 225)
+                        return QBrush(neutral_symbol_bg)
+                else:
+                    empty_day_cell_bg = QColor(55, 55, 55) if self._is_dark_theme else QColor(240, 240, 240)
+                    return QBrush(empty_day_cell_bg)
         return None
 
     def _get_foreground_color(self, row_data, key, col, is_employee_column):
@@ -636,7 +644,7 @@ class ScheduleTableModel(QAbstractTableModel):
                     if start_hour is None:
                         start_hour = day_data.get('start_hour')
                     if start_hour is not None:
-                        if 5 <= start_hour <= 19:
+                        if 5 <= start_hour <= 14:
                             return QBrush(QColor(0, 0, 0))
                         else:
                             return QBrush(QColor(255, 255, 255))
@@ -649,7 +657,6 @@ class ScheduleTableModel(QAbstractTableModel):
         else:
             return Qt.AlignCenter
 
-    
     def _get_color_by_start_hour(self, hour):
         """Zwraca kolor dla danej godziny rozpoczęcia"""
         if hour is None or hour < 0 or hour > 23:
@@ -789,29 +796,30 @@ class ScheduleTableModel(QAbstractTableModel):
             return 21
 
     def _update_column_structure(self):
-        """Aktualizuje strukturę kolumn i nagłówków"""
+        """Aktualizuje strukturę kolumn i nagłówków, uwzględniając kolumnę komentarza."""
         self._column_headers = []
 
+        # Kolumny pracowników
+        visible_employee_cols_map = {col[0]: col[1] for col in self._employee_columns}
         for col_id in self._visible_columns:
-            col_info = None
-            for c in self._employee_columns:
-                if c[0] == col_id:
-                    col_info = c
-                    break
-            if col_info:
-                self._column_headers.append(col_info[1])
-            else:
-                self._column_headers.append(col_id)
+            self._column_headers.append(visible_employee_cols_map.get(col_id, col_id))
 
-        for day in range(1, self._days_in_month + 1):
-            date = QDate(self._year, self._month, day)
-            day_of_week = date.dayOfWeek()
-            day_labels = ["Pn", "Wt", "Śr", "Cz", "Pt", "So", "Nd"]
-            day_label = day_labels[day_of_week - 1]
-            self._column_headers.append(f"{day}\n{day_label}")
+        # Kolumny dni
+        if self._year and self._month:
+            for day in range(1, self._days_in_month + 1):
+                date = QDate(self._year, self._month, day)
+                day_label = ["Pn", "Wt", "Śr", "Cz", "Pt", "So", "Nd"][date.dayOfWeek() - 1]
+                self._column_headers.append(f"{day}\n{day_label}")
 
+        # Kolumny podsumowujące
         self._column_headers.append("Suma\nRBH")
         self._column_headers.append("Bilans\nRBH")
+
+        # --- ZMIANA: Dodanie nagłówka kolumny komentarza ---
+        if self._show_comment_column:
+            col_def = self.column_definitions.SCHEDULE_COLUMNS.get('komentarz_grafik')
+            self._column_headers.append(col_def.name if col_def else "Komentarz")
+
         self._column_count = len(self._column_headers)
 
     def _get_days_in_month(self, year, month):
@@ -839,53 +847,54 @@ class ScheduleTableModel(QAbstractTableModel):
             if day_of_week >= 6:
                 weekend_columns.append(day - 1)
         return weekend_columns
-    
-    def update_cell_icons_directly(self, user_id, date_str, has_meetings=False, has_trainings=False, has_overtime=False):
+
+    def update_cell_icons_directly(self, user_id, date_str, has_meetings=False, has_trainings=False,
+                                   has_overtime=False):
         """
         NOWA METODA: Bezpośrednio aktualizuje ikony w processed_data bez pytania bazy
         """
         if not self._year or not self._month or not date_str:
             return False
-            
+
         try:
             year, month, day_str = date_str.split('-')
             day = int(day_str)
             year, month = int(year), int(month)
-            
+
             if year != self._year or month != self._month:
                 return False
-                
+
             # Znajdź wiersz użytkownika
             target_key = None
             for key in self._keys:
                 if str(key[3]) == str(user_id):
                     target_key = key
                     break
-                    
+
             if not target_key:
                 return False
-                
+
             # Aktualizuj bezpośrednio w processed_data
             if target_key in self._processed_data:
                 days_data = self._processed_data[target_key].setdefault('days', {})
                 day_data = days_data.setdefault(day, {})
-                
+
                 # Ustaw ikony bezpośrednio
                 day_data['spotkania'] = 1 if has_meetings else 0
                 day_data['szkolenia'] = 1 if has_trainings else 0
                 day_data['nadgodziny'] = 1 if has_overtime else 0
-                
+
                 # Emituj sygnał zmiany
                 row_index = self._keys.index(target_key)
                 col = len(self._visible_columns) + day - 1
                 model_index = self.index(row_index, col)
                 roles = [self.ROLE_HAS_MEETING, self.ROLE_HAS_OVERTIME]
                 self.dataChanged.emit(model_index, model_index, roles)
-                
+
                 debug_print(f"Model: Bezpośrednio zaktualizowano ikony dla {user_id}, {date_str}")
                 return True
-                
+
         except Exception as e:
             log_error(f"Błąd aktualizacji ikon: {e}")
-            
+
         return False
