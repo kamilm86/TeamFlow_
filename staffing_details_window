@@ -1,0 +1,1114 @@
+from PySide6.QtWidgets import (QDialog, QVBoxLayout, QTableView, QPushButton, QComboBox,
+                               QHeaderView, QLabel, QHBoxLayout, QSplitter, QWidget, QTabWidget, QCheckBox, QFrame,
+                               QToolTip)
+from PySide6.QtCore import Qt, QAbstractTableModel, QDate, QDateTime
+from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QCursor
+from PySide6.QtCharts import QChartView, QChart, QLineSeries, QValueAxis, QPieSeries, QDateTimeAxis, QStackedBarSeries, \
+    QBarSet, QBarCategoryAxis
+
+from collections import defaultdict
+import datetime as dt
+import traceback
+from debug_utils import debug_print, log_error
+from symbol_parser import parse_symbol
+
+
+# ==============================================================================
+# === MODELE TABEL
+# ==============================================================================
+class BaseMatrixTableModel(QAbstractTableModel):
+    def __init__(self, year, month, row_header_title="Row", parent=None):
+        super().__init__(parent)
+        self._year, self._month, self._row_header_title = year, month, row_header_title
+        self._is_dark_theme = parent.is_dark_theme if hasattr(parent, 'is_dark_theme') else False
+        self._days_in_month = self._get_days_in_month(year, month)
+        self._row_labels, self._matrix_data, self._daily_totals = [], {}, [0.0] * self._days_in_month
+
+    def _get_days_in_month(self, year, month):
+        return QDate(year, month, 1).daysInMonth() if year and month else 31
+
+    def set_theme(self, is_dark_theme):
+        if self._is_dark_theme != is_dark_theme: self._is_dark_theme = is_dark_theme; self.layoutChanged.emit()
+
+    def rowCount(self, parent=None):
+        return len(self._row_labels) + 1
+
+    def columnCount(self, parent=None):
+        return self._days_in_month + 1
+
+    def headerData(self, section, orientation, role):
+        if orientation == Qt.Horizontal:
+            if role == Qt.DisplayRole:
+                if section == 0: return self._row_header_title
+                day = section
+                if self._year and self._month and 1 <= day <= self._days_in_month:
+                    date_obj = QDate(self._year, self._month, day)
+                    day_names = ["Pn", "Wt", "Śr", "Cz", "Pt", "So", "Nd"]
+                    return f"{day_names[date_obj.dayOfWeek() - 1]}\n{day}"
+            if role == Qt.BackgroundRole and 0 < section <= self._days_in_month:
+                if self._year and self._month and QDate(self._year, self._month,
+                                                        section).dayOfWeek() >= 6: return QBrush(
+                    QColor(255, 220, 220) if not self._is_dark_theme else QColor(80, 50, 50))
+            if role == Qt.TextAlignmentRole: return Qt.AlignCenter
+        return None
+
+    def _get_total_row_style(self, role):
+        if role == Qt.FontRole: font = QFont(); font.setBold(True); return font
+        if role == Qt.BackgroundRole: return QBrush(
+            QColor(225, 225, 235) if not self._is_dark_theme else QColor(55, 55, 65))
+        if role == Qt.TextAlignmentRole: return Qt.AlignCenter
+        return None
+
+    def update_data(self, year, month, new_data):
+        self.beginResetModel()
+        self._year, self._month, self._matrix_data = year, month, new_data
+        self._days_in_month = self._get_days_in_month(year, month)
+        self._row_labels = sorted(new_data.keys())
+        self._daily_totals = [0.0] * self._days_in_month
+        for row_label in self._row_labels:
+            if row_label in self._matrix_data:
+                for day_idx, value in enumerate(self._matrix_data[row_label]):
+                    val_to_sum = value if isinstance(value, (int, float)) else (
+                        value[0] if isinstance(value, tuple) else 0)
+                    if val_to_sum: self._daily_totals[day_idx] += val_to_sum
+        self.endResetModel()
+
+
+class HourlyStaffingTableModel(BaseMatrixTableModel):
+    def __init__(self, year, month, parent=None):
+        super().__init__(year, month, "Godz. (RBH)", parent)
+        self._max_staffing_count = 1.0
+
+    def columnCount(self, parent=None):
+        return self._days_in_month + 1 + 1
+
+    def rowCount(self, parent=None):
+        return 24 + 1
+
+    def data(self, index, role=Qt.DisplayRole):
+        row, col = index.row(), index.column()
+        is_total_row, is_total_col = (row == 24), (col == self._days_in_month + 1)
+        if is_total_row and is_total_col:
+            if role == Qt.DisplayRole: return f"{sum(self._daily_totals):.1f}"
+            return self._get_total_row_style(role)
+        if is_total_row:
+            if role == Qt.DisplayRole:
+                if col == 0: return "Suma"
+                total = self._daily_totals[col - 1] if col - 1 < len(self._daily_totals) else 0;
+                return f"{total:.1f}" if total > 0 else ""
+            return self._get_total_row_style(role)
+        if is_total_col:
+            if role == Qt.DisplayRole:
+                total = sum(self._matrix_data[row]) if row < len(self._matrix_data) and self._matrix_data[row] else 0;
+                return f"{total:.1f}" if total > 0 else ""
+            return self._get_total_row_style(role)
+        if role == Qt.DisplayRole:
+            if col == 0: return f"{row:02d}:00"
+            count = self._matrix_data[row][col - 1] if row < len(self._matrix_data) and col - 1 < len(
+                self._matrix_data[row]) else 0;
+            return f"{count:.1f}" if count > 0 else ""
+        if role == Qt.TextAlignmentRole: return Qt.AlignCenter
+        if role == Qt.BackgroundRole and col > 0:
+            count = self._matrix_data[row][col - 1] if row < len(self._matrix_data) and col - 1 < len(
+                self._matrix_data[row]) else 0
+            if count <= 0: return QBrush(QColor(255, 235, 235) if not self._is_dark_theme else QColor(70, 40, 40))
+            factor = min(count / self._max_staffing_count, 1.0) if self._max_staffing_count > 0 else 0
+            if self._is_dark_theme:
+                start_color, end_color = (QColor(20, 60, 20), QColor(80, 180, 80))
+            else:
+                start_color, end_color = (QColor(230, 255, 230), QColor(0, 100, 0))
+            r, g, b = int(start_color.red() + (end_color.red() - start_color.red()) * factor), int(
+                start_color.green() + (end_color.green() - start_color.green()) * factor), int(
+                start_color.blue() + (end_color.blue() - start_color.blue()) * factor)
+            return QBrush(QColor(r, g, b))
+        if role == Qt.ForegroundRole and col > 0:
+            count = self._matrix_data[row][col - 1] if row < len(self._matrix_data) else 0
+            if count > 0:
+                factor = min(count / self._max_staffing_count, 1.0) if self._max_staffing_count > 0 else 0
+                if factor > 0.6: return QBrush(QColor(240, 240, 240))
+                return QBrush(QColor(0, 0, 0) if not self._is_dark_theme else QColor(220, 220, 220))
+        return None
+
+    def headerData(self, section, orientation, role):
+        if orientation == Qt.Horizontal and role == Qt.DisplayRole and section == self._days_in_month + 1: return "Suma\nM-c"
+        return super().headerData(section, orientation, role)
+
+    def update_data(self, year, month, new_data):
+        self.beginResetModel()
+        self._year, self._month = year, month;
+        self._days_in_month = self._get_days_in_month(year, month)
+        self._matrix_data = new_data if new_data else [([0.0] * self._days_in_month) for _ in range(24)]
+        self._row_labels = [f"{h:02d}:00" for h in range(24)]
+        self._daily_totals = [sum(col) for col in zip(*self._matrix_data)] if self._matrix_data and self._matrix_data[
+            0] else [0.0] * self._days_in_month
+        self._max_staffing_count = max((max(row) for row in self._matrix_data if row), default=1.0)
+        if self._max_staffing_count == 0: self._max_staffing_count = 1.0
+        self.endResetModel()
+
+
+class DailyStaffingTableModel(BaseMatrixTableModel):
+    def data(self, index, role):
+        row, col = index.row(), index.column()
+        is_total_row = (row == len(self._row_labels))
+        if is_total_row:
+            if role == Qt.DisplayRole:
+                if col == 0: return "Suma"
+                total = self._daily_totals[col - 1];
+                return f"{total:.1f}" if total > 0 else ""
+            return self._get_total_row_style(role)
+        row_label = self._row_labels[row]
+        if role == Qt.DisplayRole:
+            if col == 0: return row_label
+            count = self._matrix_data.get(row_label, [0.0] * self._days_in_month)[col - 1];
+            return f"{count:.1f}" if count > 0 else ""
+        if role == Qt.TextAlignmentRole: return Qt.AlignCenter
+        return None
+
+
+class SymbolMatrixTableModel(BaseMatrixTableModel):
+    def data(self, index, role):
+        row, col = index.row(), index.column()
+        is_total_row = (row == len(self._row_labels))
+        if is_total_row:
+            if role == Qt.DisplayRole:
+                if col == 0: return "Suma"
+                total = self._daily_totals[col - 1];
+                return str(int(round(total))) if total > 0 else ""
+            return self._get_total_row_style(role)
+        row_label = self._row_labels[row]
+        if role == Qt.DisplayRole:
+            if col == 0: return row_label
+            value = self._matrix_data.get(row_label, [0] * self._days_in_month)[col - 1]
+            if isinstance(value, tuple):
+                count, hours = value;
+                return f"{count} ({int(round(hours))}h)" if count > 0 else ""
+            else:
+                return str(int(round(value))) if value > 0 else ""
+        if role == Qt.TextAlignmentRole: return Qt.AlignCenter
+        return None
+
+
+class OvertimeSummaryTableModel(QAbstractTableModel):
+    def __init__(self, parent=None):
+        super().__init__(parent); self._data, self._headers = [], ["Wydział", "Pracownik", "Do wypłaty", "Do odbioru",
+                                                                   "Odpracowanie", "Suma godzin"]
+
+    def rowCount(self, parent=None):
+        return len(self._data)
+
+    def columnCount(self, parent=None):
+        return len(self._headers)
+
+    def data(self, index, role=Qt.DisplayRole):
+        if not index.isValid() or role != Qt.DisplayRole: return None
+        value = self._data[index.row()][index.column()];
+        return f"{value:.2f}" if isinstance(value, float) else value
+
+    def headerData(self, section, orientation, role=Qt.DisplayRole):
+        if role == Qt.DisplayRole and orientation == Qt.Horizontal: return self._headers[section]
+
+    def update_data(self, new_data):
+        self.beginResetModel(); self._data = new_data; self.endResetModel()
+
+
+class WorkTimeAnalysisTableModel(QAbstractTableModel):
+    def __init__(self, parent=None):
+        super().__init__(parent); self._data, self._headers = [], ["Wydział", "Pracownik", "Planowane RBH",
+                                                                   "Godziny spotkań", "% spotkań", "Godziny szkoleń",
+                                                                   "% szkoleń"]
+
+    def rowCount(self, parent=None):
+        return len(self._data)
+
+    def columnCount(self, parent=None):
+        return len(self._headers)
+
+    def data(self, index, role=Qt.DisplayRole):
+        if not index.isValid(): return None
+        value = self._data[index.row()][index.column()]
+        if role == Qt.DisplayRole:
+            if isinstance(value, float): return f"{value:.1f}%" if index.column() in [4, 6] else f"{value:.2f}"
+            return value
+        if role == Qt.TextAlignmentRole:
+            if index.column() > 1: return Qt.AlignRight | Qt.AlignVCenter
+            return Qt.AlignLeft | Qt.AlignVCenter
+
+    def headerData(self, section, orientation, role=Qt.DisplayRole):
+        if role == Qt.DisplayRole and orientation == Qt.Horizontal: return self._headers[section]
+
+    def update_data(self, new_data):
+        self.beginResetModel(); self._data = new_data; self.endResetModel()
+
+
+class AbsenceSummaryTableModel(QAbstractTableModel):
+    def __init__(self, parent=None):
+        super().__init__(parent); self._data, self._headers = [], ["Typ absencji (Symbol)", "Suma godzin",
+                                                                   "Liczba wystąpień"]
+
+    def rowCount(self, parent=None):
+        return len(self._data)
+
+    def columnCount(self, parent=None):
+        return len(self._headers)
+
+    def data(self, index, role=Qt.DisplayRole):
+        if not index.isValid() or role != Qt.DisplayRole: return None
+        value = self._data[index.row()][index.column()];
+        return f"{value:.1f}" if isinstance(value, float) else value
+
+    def headerData(self, section, orientation, role=Qt.DisplayRole):
+        if role == Qt.DisplayRole and orientation == Qt.Horizontal: return self._headers[section]
+
+    def update_data(self, new_data):
+        self.beginResetModel(); self._data = new_data; self.endResetModel()
+
+
+class FlexibilitySummaryTableModel(QAbstractTableModel):
+    def __init__(self, parent=None):
+        super().__init__(parent); self._data, self._headers = [], ["Lokalizacja", "Suma Godzin", "Udział Procentowy"]
+
+    def rowCount(self, parent=None):
+        return len(self._data)
+
+    def columnCount(self, parent=None):
+        return len(self._headers)
+
+    def data(self, index, role=Qt.DisplayRole):
+        if not index.isValid() or role != Qt.DisplayRole: return None
+        value = self._data[index.row()][index.column()]
+        if isinstance(value, float): return f"{value:.1f}%" if index.column() == 2 else f"{value:.1f}"
+        return value
+
+    def headerData(self, section, orientation, role=Qt.DisplayRole):
+        if role == Qt.DisplayRole and orientation == Qt.Horizontal: return self._headers[section]
+
+    def update_data(self, new_data):
+        self.beginResetModel(); self._data = new_data; self.endResetModel()
+
+
+# --- ZMIANA: Modyfikacja modelu tabeli prognozy ---
+class ForecastComparisonTableModel(BaseMatrixTableModel):
+    def __init__(self, year, month, parent=None):
+        super().__init__(year, month, "Godzina", parent)
+        self._view_mode = "forecast"
+        self._forecast_data, self._actual_data = [], []
+        self._max_abs_diff, self._max_value = 1.0, 1.0
+
+    def rowCount(self, parent=None):
+        return 24 + 1
+
+    def data(self, index, role):
+        if not index.isValid(): return None
+        row, col = index.row(), index.column()
+        is_total_row = (row == 24)
+
+        # --- Logika dla wiersza sumy ---
+        if is_total_row:
+            if col > 0:
+                day_idx = col - 1
+                if 0 <= day_idx < self._days_in_month:
+                    forecast_total = sum(self._forecast_data[h][day_idx] for h in range(24))
+                    actual_total = sum(self._actual_data[h][day_idx] for h in range(24))
+                    if role == Qt.DisplayRole:
+                        val = 0
+                        # --- DODANO logikę dla widoku pokrycia w wierszu sumy ---
+                        if self._view_mode == "coverage":
+                            val = (actual_total / forecast_total * 100) if forecast_total > 0 else 0
+                            return f"{val:.0f}%" if actual_total > 0 or forecast_total > 0 else ""
+                        elif self._view_mode == "forecast":
+                            val = forecast_total
+                        elif self._view_mode == "actual":
+                            val = actual_total
+                        elif self._view_mode == "diff":
+                            val = actual_total - forecast_total
+                        return str(int(round(val))) if val != 0 else ""
+            elif col == 0 and role == Qt.DisplayRole:
+                return "Suma"
+            return self._get_total_row_style(role)
+
+        # --- Logika dla standardowych wierszy danych ---
+        if col == 0:
+            if role == Qt.DisplayRole: return f"{row:02d}:00"
+            if role == Qt.TextAlignmentRole: return Qt.AlignCenter
+            return None
+
+        day_idx = col - 1
+        forecast_val = self._forecast_data[row][day_idx] if row < len(self._forecast_data) and day_idx < len(
+            self._forecast_data[row]) else 0
+        actual_val = self._actual_data[row][day_idx] if row < len(self._actual_data) and day_idx < len(
+            self._actual_data[row]) else 0
+
+        # Wyświetlanie wartości
+        if role == Qt.DisplayRole:
+            # --- DODANO logikę dla widoku pokrycia ---
+            if self._view_mode == "coverage":
+                val_to_show = (actual_val / forecast_val * 100) if forecast_val > 0 else 0
+                return f"{val_to_show:.0f}%" if actual_val > 0 or forecast_val > 0 else ""
+
+            val_to_show = 0
+            if self._view_mode == "forecast":
+                val_to_show = forecast_val
+            elif self._view_mode == "actual":
+                val_to_show = actual_val
+            elif self._view_mode == "diff":
+                val_to_show = actual_val - forecast_val
+            return str(int(round(val_to_show))) if val_to_show != 0 else ""
+
+        # Kolorowanie tła
+        if role == Qt.BackgroundRole:
+            # --- DODANO logikę kolorowania dla widoku pokrycia ---
+            if self._view_mode == "coverage":
+                coverage = (actual_val / forecast_val * 100) if forecast_val > 0 else 0
+                if actual_val == 0 and forecast_val == 0: return None  # Puste komórki bez koloru
+
+                if coverage < 90:  # Niedobór
+                    return QBrush(QColor(255, 220, 220) if not self._is_dark_theme else QColor(100, 40, 40))
+                elif coverage > 110:  # Nadmiar
+                    return QBrush(QColor(255, 255, 210) if not self._is_dark_theme else QColor(100, 100, 40))
+                else:  # Dobre pokrycie
+                    return QBrush(QColor(220, 255, 220) if not self._is_dark_theme else QColor(40, 80, 40))
+
+            if self._view_mode == "diff":
+                diff = actual_val - forecast_val
+                if diff != 0:
+                    factor = min(abs(diff) / self._max_abs_diff, 1.0) if self._max_abs_diff > 0 else 0
+                    if diff < 0:
+                        start_color, end_color = (
+                        QColor(255, 230, 230), QColor(200, 0, 0)) if not self._is_dark_theme else (
+                        QColor(80, 50, 50), QColor(180, 40, 40))
+                    else:
+                        start_color, end_color = (
+                        QColor(230, 255, 230), QColor(0, 128, 0)) if not self._is_dark_theme else (
+                        QColor(40, 80, 40), QColor(100, 200, 100))
+                    r, g, b = int(start_color.red() + (end_color.red() - start_color.red()) * factor), int(
+                        start_color.green() + (end_color.green() - start_color.green()) * factor), int(
+                        start_color.blue() + (end_color.blue() - start_color.blue()) * factor)
+                    return QBrush(QColor(r, g, b))
+
+            elif self._view_mode in ["forecast", "actual"]:
+                value = forecast_val if self._view_mode == "forecast" else actual_val
+                if value > 0:
+                    factor = min(value / self._max_value, 1.0) if self._max_value > 0 else 0
+                    if self._is_dark_theme:
+                        start_color, end_color = (QColor(40, 70, 90), QColor(90, 160, 230))
+                    else:
+                        start_color, end_color = (QColor(235, 245, 255), QColor(60, 120, 180))
+                    r, g, b = int(start_color.red() + (end_color.red() - start_color.red()) * factor), int(
+                        start_color.green() + (end_color.green() - start_color.green()) * factor), int(
+                        start_color.blue() + (end_color.blue() - start_color.blue()) * factor)
+                    return QBrush(QColor(r, g, b))
+
+        if role == Qt.TextAlignmentRole: return Qt.AlignCenter
+        return None
+
+    def update_data(self, year, month, forecast_matrix, actual_matrix, view_mode):
+        self.beginResetModel()
+        self._year, self._month, self._view_mode = year, month, view_mode
+        self._days_in_month = self._get_days_in_month(year, month)
+        self._forecast_data = forecast_matrix
+        self._actual_data = actual_matrix
+        self._row_labels = [f"{h:02d}:00" for h in range(24)]
+        max_f = max((max(r, default=0) for r in forecast_matrix), default=0)
+        max_a = max((max(r, default=0) for r in actual_matrix), default=0)
+        self._max_value = max(max_f, max_a, 1.0)
+        max_diff = max(
+            (abs(actual_matrix[r][c] - forecast_matrix[r][c]) for r in range(24) for c in range(self._days_in_month)),
+            default=1.0)
+        self._max_abs_diff = max_diff if max_diff > 0 else 1.0
+        self.endResetModel()
+
+    def columnCount(self, parent=None):
+        return self._days_in_month + 1
+
+
+# ==============================================================================
+# === GŁÓWNE OKNO DIALOGOWE
+# ==============================================================================
+class StaffingDetailsWindow(QDialog):
+    def __init__(self, parent, data_provider, year, month):
+        super().__init__(parent)
+        self.parent_widget, self.data_provider, self._year, self._month = parent, data_provider, year, month
+        self.is_dark_theme = parent.is_dark_theme if hasattr(parent, 'is_dark_theme') else False
+        self.setWindowTitle(f"Szczegóły obsady i analizy dla {month:02}/{year}")
+        self.setMinimumSize(1300, 800)
+        self.setup_ui()
+        self.apply_styles()
+        self.load_and_display_data()
+
+    def setup_ui(self):
+        main_layout = QVBoxLayout(self);
+        main_layout.setContentsMargins(5, 5, 5, 5);
+        main_layout.setSpacing(5)
+        self.info_label = QLabel(f"Analiza obsady i zdarzeń dla miesiąca: {self._month:02}.{self._year}")
+        self.info_label.setAlignment(Qt.AlignCenter);
+        main_layout.addWidget(self.info_label)
+        self.tabs = QTabWidget();
+        main_layout.addWidget(self.tabs)
+        self._create_forecast_tab()
+        self._create_hourly_staffing_tab()
+        self._create_daily_staffing_tab()
+        self._create_overtime_tab()
+        self._create_symbols_tab()
+        self._create_work_time_analysis_tab()
+        self._create_absence_analysis_tab()
+        self._create_flexibility_analysis_tab()
+        buttons_layout = QHBoxLayout();
+        buttons_layout.addStretch()
+        self.refresh_button = QPushButton("Odśwież");
+        self.refresh_button.clicked.connect(self.load_and_display_data)
+        self.close_button = QPushButton("Zamknij");
+        self.close_button.clicked.connect(self.accept)
+        buttons_layout.addWidget(self.refresh_button);
+        buttons_layout.addWidget(self.close_button)
+        main_layout.addLayout(buttons_layout)
+
+    def apply_styles(self):
+        from styles import AppStyles
+        theme = "dark" if self.is_dark_theme else "light";
+        self.setStyleSheet(AppStyles.get_dialog_style(theme));
+        table_style = AppStyles.get_table_style(theme)
+        all_views = [self.staffing_table_view, self.daily_staffing_view, self.symbols_count_view, self.symbols_rbh_view,
+                     self.overtime_summary_view, self.work_time_analysis_view, self.absence_summary_view,
+                     self.flexibility_table_view, self.forecast_table_view]
+        for view in all_views:
+            if isinstance(view, QTableView): view.setStyleSheet(table_style); view.horizontalHeader().setFixedHeight(38)
+        button_style = AppStyles.get_button_style(theme)
+        self.refresh_button.setStyleSheet(button_style);
+        self.close_button.setStyleSheet(button_style)
+        self.tabs.setStyleSheet(AppStyles.get_tab_widget_style(theme));
+        combo_style = AppStyles.get_combobox_style(theme)
+        self.hourly_staffing_options_combo.setStyleSheet(combo_style);
+        self.daily_staffing_options_combo.setStyleSheet(combo_style)
+        self.forecast_group_combo.setStyleSheet(combo_style);
+        self.forecast_view_mode_combo.setStyleSheet(combo_style)
+
+    def load_and_display_data(self):
+        filtered_schedule_data = self.parent_widget.filter_processed_data() if self.parent_widget else {}
+        all_events = self.data_provider.get_events_data(self._year, self._month)
+        forecast_data = self.data_provider.get_forecast_data(self._year, self._month)
+
+        if self.forecast_group_combo.count() == 0 and forecast_data:
+            all_groups = sorted(list(set(row['GrupaNazwa'] for row in forecast_data if row.get('GrupaNazwa'))))
+            self.forecast_group_combo.addItem("-Wszystkie Grupy-", "all")
+            for group in all_groups: self.forecast_group_combo.addItem(group, group)
+
+        hourly_option = self.hourly_staffing_options_combo.currentData();
+        daily_option = self.daily_staffing_options_combo.currentData()
+        selected_forecast_group = self.forecast_group_combo.currentData();
+        forecast_view_mode = self.forecast_view_mode_combo.currentData()
+        actual_hourly = self._calculate_hourly_staffing(filtered_schedule_data, all_events, "all")
+        processed_forecast = self._process_forecast_for_table(forecast_data, selected_forecast_group)
+        self._forecast_model.update_data(self._year, self._month, processed_forecast, actual_hourly, forecast_view_mode)
+
+        hourly_for_display = self._calculate_hourly_staffing(filtered_schedule_data, all_events, hourly_option)
+        self._hourly_staffing_model.update_data(self._year, self._month, hourly_for_display)
+
+        daily = self._calculate_daily_staffing(filtered_schedule_data, all_events, daily_option)
+        self._daily_staffing_model.update_data(self._year, self._month, daily)
+
+        counts, rbh = self._calculate_special_symbols_summary(filtered_schedule_data)
+        self._symbols_count_model.update_data(self._year, self._month, counts);
+        self._symbols_rbh_model.update_data(self._year, self._month, rbh)
+
+        overtime_data = self._calculate_overtime_summary_detailed(filtered_schedule_data, all_events)
+        self._overtime_model.update_data(overtime_data)
+
+        work_time = self._calculate_work_time_analysis(filtered_schedule_data, all_events)
+        self._work_time_model.update_data(work_time)
+
+        absence_data = self._calculate_absence_analysis(filtered_schedule_data)
+        self._absence_summary_model.update_data(absence_data['summary_table'])
+
+        flexibility_data = self._calculate_flexibility_analysis(filtered_schedule_data)
+        self._flexibility_model.update_data(flexibility_data['table_data'])
+
+        self._adjust_columns()
+        self._update_daily_staffing_chart(daily)
+        self.total_absence_hours_label.value_label.setText(f"{absence_data['total_hours']:.1f} h");
+        self.absence_rate_label.value_label.setText(f"{absence_data['rate']:.2f}%")
+        self._update_absence_chart(absence_data['daily_trend'])
+        self._update_flexibility_chart(flexibility_data['chart_data'])
+        self._update_overtime_charts(overtime_data)
+        self._update_work_time_chart(work_time)
+
+    def _adjust_columns(self):
+        for view in [self.staffing_table_view, self.forecast_table_view]:
+            model = view.model()
+            view.horizontalHeader().setSectionResizeMode(QHeaderView.Fixed)
+            view.horizontalHeader().resizeSection(0, 55)
+            day_cols = model.columnCount() - (2 if isinstance(model, HourlyStaffingTableModel) else 1)
+            for i in range(1, day_cols + 1):
+                view.setColumnWidth(i, 40)
+            if isinstance(model, HourlyStaffingTableModel):
+                view.horizontalHeader().setSectionResizeMode(model.columnCount() - 1, QHeaderView.ResizeToContents)
+            view.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
+            view.verticalHeader().setDefaultSectionSize(20)
+        for view in [self.daily_staffing_view, self.symbols_count_view, self.symbols_rbh_view,
+                     self.overtime_summary_view, self.work_time_analysis_view, self.absence_summary_view,
+                     self.flexibility_table_view]:
+            view.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+            for i in range(1, view.model().columnCount()):
+                view.horizontalHeader().setSectionResizeMode(i, QHeaderView.Stretch)
+
+    def _update_overtime_charts(self, overtime_data):
+        # 1. Wykres słupkowy wg wydziału
+        by_dept_chart = QChart(); by_dept_chart.setTitle("Nadgodziny wg wydziału"); by_dept_chart.setTheme(QChart.ChartThemeDark if self.is_dark_theme else QChart.ChartThemeLight); by_dept_chart.legend().hide()
+        series_dept = QStackedBarSeries(); bar_set = QBarSet("Suma godzin"); categories = []
+        dept_hours = defaultdict(float)
+        for row in overtime_data: dept_hours[row[0]] += row[5]
+        for dept, hours in sorted(dept_hours.items()): bar_set.append(hours); categories.append(dept)
+        bar_set.hovered.connect(lambda status, index, s=bar_set, c=categories: QToolTip.showText(QCursor.pos(), f"{c[index]}<br>{s.at(index):.2f} h") if status else QToolTip.hideText())
+        series_dept.append(bar_set); by_dept_chart.addSeries(series_dept)
+        axis_x_dept = QBarCategoryAxis(); axis_x_dept.append(categories); by_dept_chart.addAxis(axis_x_dept, Qt.AlignBottom); series_dept.attachAxis(axis_x_dept)
+        axis_y_dept = QValueAxis(); axis_y_dept.setMin(0); by_dept_chart.addAxis(axis_y_dept, Qt.AlignLeft); series_dept.attachAxis(axis_y_dept)
+        self.overtime_by_dept_chart_view.setChart(by_dept_chart)
+        # 2. Wykres kołowy wg typu
+        by_type_chart = QChart(); by_type_chart.setTitle("Podział nadgodzin wg typu"); by_type_chart.setTheme(QChart.ChartThemeDark if self.is_dark_theme else QChart.ChartThemeLight); by_type_chart.legend().setAlignment(Qt.AlignBottom)
+        series_type = QPieSeries()
+        type_hours = defaultdict(float)
+        for row in overtime_data: type_hours["Do wypłaty"] += row[2]; type_hours["Do odbioru"] += row[3]; type_hours["Odpracowanie"] += row[4]
+        for name, value in type_hours.items():
+            if value > 0:
+                sl = series_type.append(f"{name} ({value:.1f}h)", value)
+                sl.hovered.connect(lambda state, s=sl: QToolTip.showText(QCursor.pos(), f"{s.label()} - {s.percentage()*100:.1f}%") if state else QToolTip.hideText())
+        series_type.setLabelsVisible(); by_type_chart.addSeries(series_type)
+        self.overtime_by_type_chart_view.setChart(by_type_chart)
+
+    def _create_forecast_tab(self):
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 5, 0, 0)
+        options_layout = QHBoxLayout()
+        options_layout.addStretch()
+        self.forecast_group_combo = QComboBox()
+        self.forecast_group_combo.setSizeAdjustPolicy(QComboBox.AdjustToContents)
+        self.forecast_group_combo.setMinimumWidth(200)
+        self.forecast_group_combo.currentIndexChanged.connect(self.load_and_display_data)
+        self.forecast_view_mode_combo = QComboBox()
+        self.forecast_view_mode_combo.addItem("Pokaż: Prognozę", "forecast")
+        self.forecast_view_mode_combo.addItem("Pokaż: Obsadę rzeczywistą", "actual")
+        self.forecast_view_mode_combo.addItem("Pokaż: Różnicę (Obsada - Prog.)", "diff")
+        self.forecast_view_mode_combo.addItem("Pokaż: Pokrycie (%)", "coverage") # NOWA OPCJA
+        self.forecast_view_mode_combo.currentIndexChanged.connect(self.load_and_display_data)
+        options_layout.addWidget(QLabel("Grupa:"))
+        options_layout.addWidget(self.forecast_group_combo)
+        options_layout.addWidget(QLabel("Widok:"))
+        options_layout.addWidget(self.forecast_view_mode_combo)
+        layout.addLayout(options_layout)
+        self.forecast_table_view = QTableView()
+        self._forecast_model = ForecastComparisonTableModel(self._year, self._month, self)
+        self.forecast_table_view.setModel(self._forecast_model)
+        layout.addWidget(self.forecast_table_view)
+        self.tabs.addTab(widget, "Prognoza vs. Rzeczywistość")
+
+    def _create_hourly_staffing_tab(self):
+        widget = QWidget();
+        layout = QVBoxLayout(widget);
+        layout.setContentsMargins(0, 5, 0, 0);
+        options_layout = QHBoxLayout();
+        options_layout.addStretch();
+        self.hourly_staffing_options_combo = self._create_staffing_options_combo()
+        options_layout.addWidget(QLabel("Pokaż dane dla:"));
+        options_layout.addWidget(self.hourly_staffing_options_combo)
+        layout.addLayout(options_layout);
+        self._hourly_staffing_model = HourlyStaffingTableModel(self._year, self._month, self)
+        self.staffing_table_view = self._create_tab_widget(self._hourly_staffing_model, layout);
+        self.tabs.addTab(widget, "Obsada Godzinowa (RBH)")
+
+    def _create_daily_staffing_tab(self):
+        widget = QWidget();
+        layout = QVBoxLayout(widget);
+        layout.setContentsMargins(0, 5, 0, 0);
+        options_layout = QHBoxLayout();
+        options_layout.addStretch();
+        self.daily_staffing_options_combo = self._create_staffing_options_combo()
+        options_layout.addWidget(QLabel("Pokaż dane dla:"));
+        options_layout.addWidget(self.daily_staffing_options_combo)
+        layout.addLayout(options_layout);
+        splitter = QSplitter(Qt.Vertical);
+        self.daily_staffing_view = QTableView()
+        self._daily_staffing_model = DailyStaffingTableModel(self._year, self._month, "Wydział", self)
+        self.daily_staffing_view.setModel(self._daily_staffing_model);
+        splitter.addWidget(self.daily_staffing_view)
+        self.daily_staffing_chart_view = QChartView();
+        self.daily_staffing_chart_view.setRenderHint(QPainter.Antialiasing)
+        splitter.addWidget(self.daily_staffing_chart_view);
+        splitter.setSizes([200, 300]);
+        layout.addWidget(splitter);
+        self.tabs.addTab(widget, "Obsada Dzienna (RBH)")
+
+    def _create_staffing_options_combo(self):
+        combo = QComboBox();
+        combo.addItem("Grafik i Nadgodziny", "all");
+        combo.addItem("Tylko Grafik", "schedule_only");
+        combo.addItem("Tylko Nadgodziny", "overtime_only")
+        combo.currentIndexChanged.connect(self.load_and_display_data);
+        return combo
+
+    def _create_tab_widget(self, model, parent_tab_layout):
+        view = QTableView();
+        view.setModel(model);
+        parent_tab_layout.addWidget(view);
+        return view
+
+    def _create_symbols_tab(self):
+        widget = QWidget();
+        layout = QVBoxLayout(widget);
+        layout.setContentsMargins(0, 0, 0, 0);
+        splitter = QSplitter(Qt.Vertical)
+        count_widget = QWidget();
+        count_layout = QVBoxLayout(count_widget);
+        count_layout.addWidget(QLabel("Liczba symboli [szt.]"));
+        self.symbols_count_view = QTableView();
+        count_layout.addWidget(self.symbols_count_view)
+        rbh_widget = QWidget();
+        rbh_layout = QVBoxLayout(rbh_widget);
+        rbh_layout.addWidget(QLabel("Suma godzin dla symboli [RBH]"));
+        self.symbols_rbh_view = QTableView();
+        rbh_layout.addWidget(self.symbols_rbh_view)
+        splitter.addWidget(count_widget);
+        splitter.addWidget(rbh_widget);
+        layout.addWidget(splitter)
+        self._symbols_count_model = SymbolMatrixTableModel(self._year, self._month, "Symbol", self);
+        self._symbols_rbh_model = SymbolMatrixTableModel(self._year, self._month, "Symbol", self)
+        self.symbols_count_view.setModel(self._symbols_count_model);
+        self.symbols_rbh_view.setModel(self._symbols_rbh_model);
+        self.tabs.addTab(widget, "Symbole Specjalne")
+
+    def _create_overtime_tab(self):
+        widget = QWidget();
+        layout = QVBoxLayout(widget);
+        layout.setContentsMargins(0, 0, 0, 0);
+        splitter = QSplitter(Qt.Horizontal)
+        self._overtime_model = OvertimeSummaryTableModel(self);
+        self.overtime_summary_view = QTableView();
+        self.overtime_summary_view.setModel(self._overtime_model)
+        charts_widget = QWidget();
+        charts_layout = QVBoxLayout(charts_widget);
+        self.overtime_by_dept_chart_view = QChartView();
+        self.overtime_by_type_chart_view = QChartView()
+        charts_layout.addWidget(self.overtime_by_dept_chart_view);
+        charts_layout.addWidget(self.overtime_by_type_chart_view)
+        splitter.addWidget(self.overtime_summary_view);
+        splitter.addWidget(charts_widget);
+        splitter.setSizes([600, 400]);
+        layout.addWidget(splitter)
+        self.tabs.addTab(widget, "Nadgodziny")
+
+    def _create_work_time_analysis_tab(self):
+        widget = QWidget();
+        layout = QHBoxLayout(widget);
+        layout.setContentsMargins(0, 0, 0, 0);
+        splitter = QSplitter(Qt.Horizontal)
+        self._work_time_model = WorkTimeAnalysisTableModel(self);
+        self.work_time_analysis_view = QTableView();
+        self.work_time_analysis_view.setModel(self._work_time_model)
+        self.work_time_chart_view = QChartView();
+        self.work_time_chart_view.setRenderHint(QPainter.Antialiasing)
+        splitter.addWidget(self.work_time_analysis_view);
+        splitter.addWidget(self.work_time_chart_view)
+        splitter.setSizes([600, 400]);
+        layout.addWidget(splitter)
+        self.tabs.addTab(widget, "Analiza Czasu Pracy")
+
+    def _create_absence_analysis_tab(self):
+        widget = QWidget();
+        main_tab_layout = QVBoxLayout(widget);
+        main_tab_layout.setContentsMargins(0, 5, 0, 0);
+        kpi_layout = QHBoxLayout()
+        self.total_absence_hours_label = self._create_kpi_box("Całkowite godziny absencji");
+        self.absence_rate_label = self._create_kpi_box("Wskaźnik absencji")
+        kpi_layout.addWidget(self.total_absence_hours_label);
+        kpi_layout.addWidget(self.absence_rate_label);
+        kpi_layout.addStretch()
+        main_tab_layout.addLayout(kpi_layout);
+        splitter = QSplitter(Qt.Horizontal)
+        self._absence_summary_model = AbsenceSummaryTableModel(self);
+        self.absence_summary_view = QTableView();
+        self.absence_summary_view.setModel(self._absence_summary_model)
+        splitter.addWidget(self.absence_summary_view);
+        self.absence_chart_view = QChartView();
+        self.absence_chart_view.setRenderHint(QPainter.Antialiasing)
+        splitter.addWidget(self.absence_chart_view);
+        splitter.setSizes([300, 500]);
+        main_tab_layout.addWidget(splitter);
+        self.tabs.addTab(widget, "Analiza Absencji")
+
+    def _create_flexibility_analysis_tab(self):
+        widget = QWidget();
+        layout = QHBoxLayout(widget);
+        layout.setContentsMargins(5, 5, 5, 5)
+        self._flexibility_model = FlexibilitySummaryTableModel(self);
+        self.flexibility_table_view = QTableView()
+        self.flexibility_table_view.setModel(self._flexibility_model);
+        self.flexibility_table_view.setFixedWidth(300)
+        self.flexibility_chart_view = QChartView();
+        self.flexibility_chart_view.setRenderHint(QPainter.Antialiasing)
+        layout.addWidget(self.flexibility_table_view);
+        layout.addWidget(self.flexibility_chart_view);
+        self.tabs.addTab(widget, "Elastyczność Pracy")
+
+    def _create_kpi_box(self, title):
+        frame = QFrame();
+        frame.setFrameShape(QFrame.StyledPanel);
+        frame.setLineWidth(1);
+        layout = QVBoxLayout(frame)
+        title_label = QLabel(title);
+        title_label.setAlignment(Qt.AlignCenter);
+        title_label.setStyleSheet("font-size: 10pt; color: gray;")
+        value_label = QLabel("0");
+        value_label.setAlignment(Qt.AlignCenter);
+        value_label.setStyleSheet("font-size: 18pt; font-weight: bold;")
+        layout.addWidget(title_label);
+        layout.addWidget(value_label);
+        frame.value_label = value_label;
+        return frame
+
+    def _update_work_time_chart(self, work_time_data):
+        chart = QChart();
+        chart.setTitle("Struktura czasu pracy wg wydziałów");
+        chart.setTheme(QChart.ChartThemeDark if self.is_dark_theme else QChart.ChartThemeLight);
+        chart.legend().setAlignment(Qt.AlignBottom)
+        series = QStackedBarSeries()
+        set_meetings = QBarSet("Spotkania");
+        set_training = QBarSet("Szkolenia");
+        set_effective = QBarSet("Praca efektywna")
+        categories = []
+        by_dept = defaultdict(lambda: {'planned': 0.0, 'meetings': 0.0, 'training': 0.0})
+        for row in work_time_data: by_dept[row[0]]['planned'] += row[2]; by_dept[row[0]]['meetings'] += row[3];
+        by_dept[row[0]]['training'] += row[5]
+
+        for dept, data in sorted(by_dept.items()):
+            effective_hours = data['planned'] - data['meetings'] - data['training']
+            set_meetings.append(data['meetings']);
+            set_training.append(data['training']);
+            set_effective.append(max(0, effective_hours))
+            categories.append(dept)
+
+        for s in [set_effective, set_meetings, set_training]:
+            s.hovered.connect(lambda status, index, bar_set=s, cats=categories: QToolTip.showText(QCursor.pos(),
+                                                                                                  f"{cats[index]}<br>{bar_set.label()}: {bar_set.at(index):.1f} h") if status else QToolTip.hideText())
+            series.append(s)
+
+        chart.addSeries(series)
+        axis_x = QBarCategoryAxis();
+        axis_x.append(categories);
+        chart.addAxis(axis_x, Qt.AlignBottom);
+        series.attachAxis(axis_x)
+        axis_y = QValueAxis();
+        axis_y.setTitleText("Suma RBH");
+        chart.addAxis(axis_y, Qt.AlignLeft);
+        series.attachAxis(axis_y)
+        self.work_time_chart_view.setChart(chart)
+
+
+    def _update_forecast_chart(self, forecast_data):
+        pass
+        # chart = QChart();
+        # chart.setTitle("Prognoza obsady wg grup")
+        # chart.setTheme(QChart.ChartThemeDark if self.is_dark_theme else QChart.ChartThemeLight)
+        #
+        # series_by_group = defaultdict(QLineSeries)
+        # for row in forecast_data:
+        #     group = row.get("GrupaNazwa")
+        #     timestamp = QDateTime(row.get("DataOd")).toMSecsSinceEpoch()
+        #     value = row.get("Prognoza")
+        #     if group is not None and timestamp is not None and value is not None:
+        #         series = series_by_group[group]
+        #         if not series.name(): series.setName(group)
+        #         series.append(timestamp, value)
+        #
+        # axis_x = QDateTimeAxis();
+        # axis_x.setFormat("dd.MM hh:mm");
+        # axis_x.setTitleText("Data i godzina")
+        # chart.addAxis(axis_x, Qt.AlignBottom)
+        # axis_y = QValueAxis();
+        # axis_y.setTitleText("Prognozowana obsada");
+        # axis_y.setMin(0)
+        # chart.addAxis(axis_y, Qt.AlignLeft)
+        #
+        # for group_name, series in series_by_group.items():
+        #     chart.addSeries(series);
+        #     series.attachAxis(axis_x);
+        #     series.attachAxis(axis_y)
+        #
+        # chart.legend().setVisible(True);
+        # chart.legend().setAlignment(Qt.AlignBottom)
+        # self.forecast_chart_view.setChart(chart)
+
+    def _update_daily_staffing_chart(self, daily_staffing_data):
+        chart = QChart(); chart.setTitle("Dzienna suma roboczogodzin (RBH) wg wydziałów")
+        chart.setTheme(QChart.ChartThemeDark if self.is_dark_theme else QChart.ChartThemeLight); chart.legend().setAlignment(Qt.AlignBottom)
+        axis_x = QValueAxis(); axis_x.setTickCount(self._daily_staffing_model.columnCount()); axis_x.setLabelFormat("%d"); chart.addAxis(axis_x, Qt.AlignBottom)
+        axis_y = QValueAxis(); axis_y.setTitleText("Suma RBH"); chart.addAxis(axis_y, Qt.AlignLeft)
+        max_y = 0
+        for dept, daily_data in daily_staffing_data.items():
+            series = QLineSeries(); series.setName(dept)
+            for day, hours in enumerate(daily_data):
+                series.append(day + 1, hours)
+                if hours > max_y: max_y = hours
+            chart.addSeries(series); series.attachAxis(axis_x); series.attachAxis(axis_y)
+            series.hovered.connect(lambda point, state, s=series: QToolTip.showText(QCursor.pos(), f"{s.name()}<br>Dzień {int(point.x())}: {point.y():.1f} RBH") if state else QToolTip.hideText())
+        axis_y.setMax(max_y * 1.1 if max_y > 0 else 10)
+        self.daily_staffing_chart_view.setChart(chart)
+
+    def _update_absence_chart(self, daily_trend_data):
+        chart = QChart(); chart.setTitle("Trend absencji w miesiącu (suma godzin)"); chart.setTheme(QChart.ChartThemeDark if self.is_dark_theme else QChart.ChartThemeLight); chart.legend().hide()
+        series = QLineSeries(); series.setName("Godziny absencji"); max_y = 0
+        for day, hours in enumerate(daily_trend_data):
+            series.append(day + 1, hours)
+            if hours > max_y: max_y = hours
+        series.hovered.connect(lambda point, state: QToolTip.showText(QCursor.pos(), f"Dzień {int(point.x())}: {point.y():.1f} h") if state else QToolTip.hideText())
+        chart.addSeries(series); axis_x = QValueAxis(); axis_x.setTickCount(len(daily_trend_data)+1); axis_x.setLabelFormat("%d")
+        chart.addAxis(axis_x, Qt.AlignBottom); series.attachAxis(axis_x)
+        axis_y = QValueAxis(); axis_y.setTitleText("Suma godzin"); axis_y.setMin(0); axis_y.setMax(max_y * 1.1 if max_y > 0 else 10)
+        chart.addAxis(axis_y, Qt.AlignLeft); series.attachAxis(axis_y)
+        self.absence_chart_view.setChart(chart)
+
+    def _update_flexibility_chart(self, chart_data):
+        series = QPieSeries()
+        for name, value in chart_data.items():
+            if value > 0:
+                sl = series.append(name, value)
+                sl.hovered.connect(lambda state, s=sl: QToolTip.showText(QCursor.pos(), f"{s.label()}: {s.value():.1f} RBH") if state else QToolTip.hideText())
+        for slice in series.slices():
+            slice.setLabel(f"{slice.label()} {slice.percentage()*100:.1f}%"); slice.setLabelVisible()
+        chart = QChart(); chart.setTitle("Podział godzin pracy wg lokalizacji"); chart.addSeries(series); chart.setTheme(QChart.ChartThemeDark if self.is_dark_theme else QChart.ChartThemeLight); chart.legend().setAlignment(Qt.AlignBottom)
+        self.flexibility_chart_view.setChart(chart)
+
+
+    def _adjust_hourly_table_columns(self):
+        self.staffing_table_view.horizontalHeader().setSectionResizeMode(QHeaderView.Fixed)
+        self.staffing_table_view.horizontalHeader().resizeSection(0, 55)
+        for i in range(1, self._hourly_staffing_model.columnCount() - 1): self.staffing_table_view.setColumnWidth(i, 42)
+        self.staffing_table_view.horizontalHeader().setSectionResizeMode(self._hourly_staffing_model.columnCount() - 1,
+                                                                         QHeaderView.ResizeToContents)
+        self.staffing_table_view.verticalHeader().setSectionResizeMode(QHeaderView.Fixed);
+        self.staffing_table_view.verticalHeader().setDefaultSectionSize(20)
+
+    # --- METODY OBLICZENIOWE ---
+    def _process_forecast_for_table(self, forecast_data, selected_group):
+        days = QDate(self._year, self._month, 1).daysInMonth()
+        matrix = [[0.0] * days for _ in range(24)]
+
+        for row in forecast_data:
+            if selected_group != "all" and row.get("GrupaNazwa") != selected_group:
+                continue
+
+            try:
+                # DataOd jest obiektem datetime, Data jest obiektem date
+                start_dt = row.get("DataOd")
+                if not isinstance(start_dt, dt.datetime): continue
+
+                day_idx = start_dt.day - 1
+                hour = start_dt.hour
+                value = row.get("Prognoza", 0)
+
+                if 0 <= day_idx < days and 0 <= hour < 24:
+                    matrix[hour][day_idx] += float(value)
+            except Exception as e:
+                log_error(f"Błąd przetwarzania wiersza prognozy: {row}. Błąd: {e}")
+                continue
+        return matrix
+
+    def _calculate_hourly_staffing(self, schedule_data, all_events, option):
+        days = QDate(self._year, self._month, 1).daysInMonth(); matrix = [[0.0] * days for _ in range(24)]
+        if option in ['all', 'schedule_only']:
+            for user_schedule in schedule_data.values():
+                for day, day_info in user_schedule.get('days', {}).items():
+                    parsed = parse_symbol(day_info.get('symbol', ''));
+                    if parsed.get('special_symbol') and any(s in parsed['special_symbol'] for s in ["U","CO","UZ","CR","NN","NW","Z","UB"]): continue
+                    start, hours = parsed.get('start_hour'), parsed.get('work_hours')
+                    if start is not None and hours is not None and hours > 0:
+                        for h in range(int(hours)): matrix[(start + h) % 24][day - 1] += 1.0
+        if option in ['all', 'overtime_only']:
+            filtered_user_ids = {k[3] for k in schedule_data.keys()}
+            for event in all_events:
+                if event.get('type') == 'Nadgodziny' and event.get('user_id') in filtered_user_ids:
+                    try:
+                        day = int(event.get('date_key', '').split('-')[2])
+                        t_from = dt.datetime.strptime(event.get('time_from', '00:00'), '%H:%M'); t_to = dt.datetime.strptime(event.get('time_to', '00:00'), '%H:%M')
+                        duration_s = (t_to - t_from).total_seconds();
+                        if duration_s < 0: duration_s += 86400
+                        current_time = t_from
+                        while duration_s > 1:
+                            hour_slot, minutes_in_slot = current_time.hour, 60 - current_time.minute
+                            seconds_in_slot = min(minutes_in_slot * 60, duration_s)
+                            matrix[hour_slot][day - 1] += seconds_in_slot / 3600.0; duration_s -= seconds_in_slot
+                            current_time += dt.timedelta(seconds=seconds_in_slot)
+                    except (ValueError, IndexError): continue
+        return matrix
+
+    def _calculate_daily_staffing(self, schedule_data, all_events, option):
+        summary = defaultdict(lambda: defaultdict(float))
+        if option in ['all', 'schedule_only']:
+            for user_key, user_schedule in schedule_data.items():
+                wydzial = user_key[0] or "Brak";
+                for day, day_info in user_schedule.get('days', {}).items():
+                    hours = parse_symbol(day_info.get('symbol', '')).get('work_hours')
+                    if hours: summary[wydzial][day - 1] += float(hours)
+        if option in ['all', 'overtime_only']:
+            user_to_dept = {user_key[3]: user_key[0] or "Brak" for user_key in schedule_data.keys()}
+            for event in all_events:
+                if event.get('type') == 'Nadgodziny' and event.get('user_id') in user_to_dept:
+                    try:
+                        day = int(event.get('date_key', '').split('-')[2])
+                        t_from = dt.datetime.strptime(event.get('time_from', '00:00'), '%H:%M');
+                        t_to = dt.datetime.strptime(event.get('time_to', '00:00'), '%H:%M')
+                        duration = (t_to - t_from).total_seconds() / 3600.0
+                        if duration < 0: duration += 24.0
+                        summary[user_to_dept[event.get('user_id')]][day - 1] += duration
+                    except (ValueError, IndexError):
+                        continue
+        days_in_month = QDate(self._year, self._month, 1).daysInMonth()
+        return {dept: [daily_data.get(d, 0) for d in range(days_in_month)] for dept, daily_data in summary.items()}
+
+    def _calculate_special_symbols_summary(self, schedule_data):
+        summary = defaultdict(lambda: defaultdict(lambda: {'count': 0, 'hours': 0.0}))
+        for user_schedule in schedule_data.values():
+            for day, day_info in user_schedule.get('days', {}).items():
+                parsed = parse_symbol(day_info.get('symbol', ''));
+                symbol = parsed.get('special_symbol')
+                if symbol:
+                    summary[symbol][day - 1]['count'] += 1
+                    summary[symbol][day - 1]['hours'] += float(parsed.get('work_hours') or 8.0)
+        days = QDate(self._year, self._month, 1).daysInMonth()
+        counts_matrix = {s: [d.get(i, {}).get('count', 0) for i in range(days)] for s, d in summary.items()}
+        rbh_matrix = {s: [int(round(d.get(i, {}).get('hours', 0))) for i in range(days)] for s, d in summary.items()}
+        return counts_matrix, rbh_matrix
+
+    def _calculate_overtime_summary_detailed(self, schedule_data, all_events):
+        summary = defaultdict(lambda: {"wypłata": 0.0, "odbiór": 0.0, "odpracowanie": 0.0})
+        user_info = {key[3]: (key[0] or "Brak", key[2] or "Brak") for key in schedule_data.keys()}
+        for event in all_events:
+            if event.get('type') == 'Nadgodziny':
+                user_id = event.get('user_id')
+                if user_id in user_info:
+                    try:
+                        t_from = dt.datetime.strptime(event.get('time_from', '00:00'), '%H:%M');
+                        t_to = dt.datetime.strptime(event.get('time_to', '00:00'), '%H:%M')
+                        duration = (t_to - t_from).total_seconds() / 3600.0
+                        if duration < 0: duration += 24.0
+                        status = event.get('status', '').lower()
+                        if 'wypłata' in status:
+                            summary[user_id]['wypłata'] += duration
+                        elif 'odbiór' in status:
+                            summary[user_id]['odbiór'] += duration
+                        elif 'odpracowanie' in status:
+                            summary[user_id]['odpracowanie'] += duration
+                        else:
+                            summary[user_id]['wypłata'] += duration
+                    except (ValueError, IndexError):
+                        continue
+        result = []
+        for user_id, hours in summary.items():
+            if sum(hours.values()) > 0:
+                wydzial, nazwa = user_info.get(user_id, ("N/A", "N/A"))
+                result.append(
+                    [wydzial, nazwa, hours['wypłata'], hours['odbiór'], hours['odpracowanie'], sum(hours.values())])
+        return sorted(result, key=lambda x: (x[0], x[1]))
+
+    def _calculate_work_time_analysis(self, schedule_data, all_events):
+        summary = defaultdict(lambda: {'planned': 0.0, 'meetings': 0.0, 'training': 0.0})
+        user_info = {key[3]: (key[0] or "Brak", key[2] or "Brak") for key in schedule_data.keys()}
+
+        # Zlicz planowane godziny pracy z grafiku
+        for user_id_key, user_schedule in schedule_data.items():
+            user_id = user_id_key[3]
+            if user_id in user_info:
+                # POPRAWKA: Iterujemy po .values() zamiast .items()
+                total_hours = sum((parse_symbol(day_info.get('symbol', '')).get('work_hours') or 0) for day_info in
+                                  user_schedule.get('days', {}).values())
+                summary[user_id]['planned'] = float(total_hours)
+
+        # Zlicz godziny ze spotkań i szkoleń
+        for event in all_events:
+            user_id = event.get('user_id')
+            event_type = event.get('type')
+            if user_id in user_info and event_type in ['Spotkanie', 'Szkolenie']:
+                try:
+                    t_from = dt.datetime.strptime(event.get('time_from', '00:00'), '%H:%M')
+                    t_to = dt.datetime.strptime(event.get('time_to', '00:00'), '%H:%M')
+                    duration = (t_to - t_from).total_seconds() / 3600.0
+                    if duration < 0: duration += 24.0
+
+                    if event_type == 'Spotkanie':
+                        summary[user_id]['meetings'] += duration
+                    elif event_type == 'Szkolenie':
+                        summary[user_id]['training'] += duration
+                except (ValueError, IndexError):
+                    continue
+
+        # Przygotuj dane dla modelu tabeli
+        result = []
+        for user_id, data in summary.items():
+            wydzial, nazwa = user_info.get(user_id, ("N/A", "N/A"))
+            planned, meetings, training = data['planned'], data['meetings'], data['training']
+
+            percent_meetings = (meetings / planned * 100) if planned > 0 else 0.0
+            percent_training = (training / planned * 100) if planned > 0 else 0.0
+
+            result.append([wydzial, nazwa, planned, meetings, percent_meetings, training, percent_training])
+
+        return sorted(result, key=lambda x: (x[0], x[1]))
+
+    def _calculate_absence_analysis(self, schedule_data):
+        absence_symbols = {"U", "CO", "UZ", "CR", "NN", "NW", "Z", "UB", "UM", "UO", "UOD", "US", "UT", "UW", "UOP",
+                           "USW"}
+        summary = defaultdict(lambda: {'count': 0, 'hours': 0.0})
+        days_in_month = QDate(self._year, self._month, 1).daysInMonth()
+        daily_trend = [0.0] * days_in_month;
+        total_planned_hours = 0.0
+        for user_schedule in schedule_data.values():
+            for day, day_info in user_schedule.get('days', {}).items():
+                parsed = parse_symbol(day_info.get('symbol', ''))
+                work_hours = parsed.get('work_hours')
+                if work_hours: total_planned_hours += work_hours
+                symbol = parsed.get('special_symbol')
+                if symbol and symbol in absence_symbols:
+                    absence_hours = work_hours or 8.0
+                    summary[symbol]['count'] += 1;
+                    summary[symbol]['hours'] += absence_hours
+                    if 0 <= day - 1 < len(daily_trend): daily_trend[day - 1] += absence_hours
+        total_absence_hours = sum(d['hours'] for d in summary.values())
+        absence_rate = (total_absence_hours / total_planned_hours * 100) if total_planned_hours > 0 else 0.0
+        summary_table_data = sorted([[symbol, data['hours'], data['count']] for symbol, data in summary.items()])
+        return {'total_hours': total_absence_hours, 'rate': absence_rate, 'summary_table': summary_table_data,
+                'daily_trend': daily_trend}
+
+    def _calculate_flexibility_analysis(self, schedule_data):
+        summary = defaultdict(float)
+        location_map = {'h': 'Home Office', 's': 'Stacjonarnie', 'p': 'mPrzystanek'}
+        for user_schedule in schedule_data.values():
+            default_loc = user_schedule.get('lokalizacja_domyslna', 'h')
+            for day_info in user_schedule.get('days', {}).values():
+                parsed = parse_symbol(day_info.get('symbol', '')); hours = parsed.get('work_hours')
+                if hours:
+                    loc = parsed.get('location') or default_loc; summary[location_map.get(loc, "Inna")] += hours
+        total_hours = sum(summary.values()); table_data = []
+        for loc, hours in summary.items():
+            percent = (hours / total_hours * 100) if total_hours > 0 else 0
+            table_data.append([loc, hours, percent])
+        return {'table_data': sorted(table_data, key=lambda x: x[1], reverse=True), 'chart_data': summary}
+
+    def update_for_new_month_or_filters(self, year, month):
+        self._year, self._month = year, month
+        self.setWindowTitle(f"Szczegóły obsady i analizy dla {month:02}/{year}")
+        self.info_label.setText(f"Analiza obsady i zdarzeń dla miesiąca: {self._month:02}.{self._year}")
+        self.load_and_display_data()
+
+    def set_current_theme(self, is_dark_theme):
+        if self.is_dark_theme != is_dark_theme:
+            self.is_dark_theme = is_dark_theme
+            # Wywołaj apply_styles, aby odświeżyć wygląd
+            self.apply_styles()
+
+            # Zaktualizuj motyw dla wszystkich modeli, które go wspierają
+            for model_attr in ['_hourly_staffing_model', '_daily_staffing_model', '_symbols_count_model',
+                               '_symbols_rbh_model']:
+                if hasattr(self, model_attr):
+                    # Klasy dziedziczące z BaseMatrixTableModel mają metodę set_theme
+                    getattr(self, model_attr).set_theme(is_dark_theme)
+
+            # Dla modeli, które nie dziedziczą z BaseMatrixTableModel, trzeba by dodać metodę set_theme,
+            # lub po prostu zresetować widok, aby odczytał nowe kolory. Na razie zostawiamy bez zmian.
