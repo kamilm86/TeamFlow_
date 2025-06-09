@@ -97,37 +97,41 @@ class DatabaseConnector:
             raise
 
 
-# Funkcja zwracająca informacje o użytkowniku (ID, NumerKadrowy, RolaNazwa)
 def get_modifier_id():
     """
-    Pobiera ID, numer kadrowy i rolę użytkownika zalogowanego do systemu.
+    Pobiera informacje o zalogowanym użytkowniku za pomocą funkcji bazodanowej GetUserAppInfo,
+    przekazując do niej nazwę użytkownika systemu.
 
     Returns:
-        tuple: (user_id, user_app_id, user_app_role) - ID użytkownika, numer kadrowy, nazwa roli
+        tuple: (user_id, user_app_id, user_app_role, visible_next_month)
     """
+    # --- ZMIANA: Pobieramy nazwę użytkownika na samym początku ---
     username = getpass.getuser()
+
     try:
         conn = DatabaseConnector.get_connection()
         cursor = conn.cursor()
 
-        # Pobierz informacje o użytkowniku na podstawie jego nazwy
-        query = "SELECT Id, NumerKadrowy, RolaNazwa FROM [dbo].[p_T_DO_KontaUzytkownikow] WHERE NumerKadrowy = '000001' or Imie = ? "
+        query = "SELECT * FROM [dbo].[GetUserAppInfo](?)"
+
         cursor.execute(query, (username,))
         result = cursor.fetchone()
         conn.close()
 
         if result:
             user_id = result[0]
-            user_app_id = result[1]  # NumerKadrowy
-            user_app_role = result[2]  # RolaNazwa
-            return user_id, user_app_id, user_app_role
+            user_app_id = result[1]
+            user_app_role = result[2]
+            visible_next_month = result[3]
 
-        # Wartości domyślne gdy nie znaleziono użytkownika
-        return "System", username, "Użytkownik"
+            return user_id, user_app_id, user_app_role, bool(visible_next_month)
+
+        # Wartości domyślne, gdy nie znaleziono użytkownika
+        return "System", username, "Użytkownik", False
 
     except Exception as e:
-        debug_print(f"Błąd podczas pobierania informacji o użytkowniku: {e}")
+        log_error(f"Błąd podczas pobierania informacji o użytkowniku ({username}): {e}", exception=e)
         # Wartości domyślne w przypadku błędu
-        return "System", username, "Użytkownik"
+        return "System", username, "Użytkownik", False
 
 
