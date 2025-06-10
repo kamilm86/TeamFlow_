@@ -315,16 +315,14 @@ class ScheduleKeyboardFilter(QObject):
 
 
 class CustomMultiComboBox(QComboBox):
-    """Niestandardowy ComboBox z obsługą wielokrotnego wyboru"""
+    """Niestandardowy ComboBox z obsługą wielokrotnego wyboru (wersja poprawiona)."""
+    selection_changed = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        # Inicjalizacja wszystkich zmiennych
         self._selected_items = set()
         self._select_all_text = "-Wszystkie-"
-        self._popup_visible = False
-        self._block_hide = False
 
         # Konfiguracja modelu
         self.setModel(QStandardItemModel(self))
@@ -332,265 +330,145 @@ class CustomMultiComboBox(QComboBox):
         # Konfiguracja wyglądu
         self.setEditable(True)
         self.lineEdit().setReadOnly(True)
-        self.setEditText("-Wszystkie-")  # Początkowy tekst
-        self.setStyleSheet("QComboBox::drop-down { border: none; }")
+        self.setEditText("-Wszystkie-")
         self.setSizeAdjustPolicy(QComboBox.AdjustToContents)
-        self.view().setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.view().setItemDelegate(QStyledItemDelegate())
 
-        # Konfiguracja timera
-        self._reopen_timer = QTimer(self)
-        self._reopen_timer.setSingleShot(True)
-        self._reopen_timer.setInterval(5)  # 5ms wystarczy
-        self._reopen_timer.timeout.connect(self._reopen_popup)
-
-        # Zainstaluj filtry zdarzeń i połącz sygnały
+        # Używamy filtra zdarzeń do przechwytywania kliknięć, co zapobiega zamykaniu listy
+        self.view().viewport().installEventFilter(self)
         self.lineEdit().installEventFilter(self)
-        self.view().pressed.connect(self.handle_item_pressed)
-        QApplication.instance().installEventFilter(self)
 
-    def _reopen_popup(self):
-        """Ponownie otwiera popup jeśli powinien być otwarty"""
-        if self._block_hide:
-            self._block_hide = False
-            self.showPopup()
+        # Delegat jest potrzebny do poprawnego renderowania
+        self.setItemDelegate(QStyledItemDelegate(self))
 
     def eventFilter(self, obj, event):
-        """
-        Obserwuje zdarzenia dla różnych obiektów:
-        1. Dla lineEdit przechwytuje kliknięcia myszą
-        2. Dla aplikacji wykrywa kliknięcie poza listą
-        """
-        # Obsługa kliknięć w pole tekstowe (lineEdit)
+        # Przechwytujemy kliknięcie myszą w polu tekstowym, aby pokazać listę
         if obj == self.lineEdit() and event.type() == QEvent.MouseButtonPress:
-            # Przekieruj kliknięcie do głównej kontrolki ComboBox
-            self.mousePressEvent(event)
-            return True  # Zatrzymaj dalsze przetwarzanie
-
-        # Obsługa kliknięć poza listą (dla całej aplikacji)
-        if self._popup_visible and event.type() == QEvent.MouseButtonPress:
-            # Używaj globalPosition() zamiast przestarzałego globalPos()
-            pos = event.globalPosition().toPoint()
-
-            # Pobierz geometrię listy i comboboxa
-            view_rect = QRect(self.view().mapToGlobal(QPoint(0, 0)), self.view().size())
-            combo_rect = QRect(self.mapToGlobal(QPoint(0, 0)), self.size())
-
-            # Sprawdź, czy kliknięcie było poza listą i poza samym comboboxem
-            if not view_rect.contains(pos) and not combo_rect.contains(pos):
-                self._popup_visible = False
-                self._block_hide = False  # Pozwól na zamknięcie popupu
-                super().hidePopup()
-                return True  # Pochłońmy zdarzenie, jeśli faktycznie zamknęliśmy popup
-
-        return False  # Przekaż zdarzenie dalej
-
-    def mousePressEvent(self, event):
-        """Obsługa kliknięcia na ComboBox - otwiera lub zamyka listę"""
-        if self._popup_visible:
-            self._popup_visible = False
-            self._block_hide = False  # Pozwól na zamknięcie popupu
-            self.hidePopup()
-        else:
-            self._popup_visible = True
             self.showPopup()
+            return True
 
-        # Nie przekazuj zdarzenia do QComboBox
-        event.accept()
+        # Przechwytujemy zwolnienie przycisku myszy na liście (widoku)
+        if obj == self.view().viewport() and event.type() == QEvent.MouseButtonRelease:
+            index = self.view().indexAt(event.position().toPoint())  # Użyj .position().toPoint() zamiast .pos()
+            if index.isValid():
+                self.handle_item_pressed(index)
+            return True
+
+        return False
 
     def handle_item_pressed(self, index):
-        """Obsługa naciśnięcia na element listy"""
+        """Logika zaznaczania/odznaczania elementu."""
         item = self.model().itemFromIndex(index)
-
         if not item:
             return
 
-        # Jeśli to element "Zaznacz wszystkie"
         if item.text() == self._select_all_text:
-            all_checked = all(self.model().item(i).checkState() == Qt.Checked
-                            for i in range(1, self.model().rowCount()))
-
-            # Przełącz stan - jeśli wszystkie są zaznaczone, odznacz wszystkie
-            new_state = Qt.Unchecked if all_checked else Qt.Checked
-
-            # Ustaw stan dla wszystkich elementów (poza "Zaznacz wszystkie")
+            # Logika dla przycisku "Zaznacz wszystkie"
+            is_checked = (item.checkState() == Qt.Checked)
+            new_state = Qt.Unchecked if is_checked else Qt.Checked
             for i in range(1, self.model().rowCount()):
                 self.model().item(i).setCheckState(new_state)
-                text = self.model().item(i).text()
-                if new_state == Qt.Checked:
-                    self._selected_items.add(text)
-                else:
-                    self._selected_items.discard(text)
         else:
-            # Przełącz stan zaznaczenia dla zwykłego elementu
-            if item.checkState() == Qt.Checked:
-                item.setCheckState(Qt.Unchecked)
-                self._selected_items.discard(item.text())
-            else:
-                item.setCheckState(Qt.Checked)
-                self._selected_items.add(item.text())
+            # Logika dla zwykłego elementu
+            current_state = item.checkState()
+            item.setCheckState(Qt.Checked if current_state == Qt.Unchecked else Qt.Unchecked)
 
-            # Aktualizuj stan elementu "Zaznacz wszystkie"
-            if self.model().rowCount() > 0:
-                all_checked = all(self.model().item(i).checkState() == Qt.Checked
-                                for i in range(1, self.model().rowCount()))
-                if self.model().item(0).text() == self._select_all_text:
-                    self.model().item(0).setCheckState(Qt.Checked if all_checked else Qt.Unchecked)
-
-        # KLUCZOWA ZMIANA: Przebudowa _selected_items na podstawie aktualnego stanu modelu
         self._rebuild_selected_items()
-
-        # Aktualizuj wyświetlany tekst
         self.update_display_text()
 
-        # Odśwież widok
-        self.view().viewport().update()
-
-        # KLUCZOWA CZĘŚĆ: Zablokuj zamykanie popupu i zaplanuj jego przywrócenie
-        self._block_hide = True
-        self._reopen_timer.start()
-
-        # Zatrzymaj dalsze przetwarzanie
-        return True
+        self.selection_changed.emit()
 
     def _rebuild_selected_items(self):
-        """Przebudowuje zbiór _selected_items na podstawie aktualnego stanu modelu"""
+        """Przebudowuje zbiór zaznaczonych elementów na podstawie stanu modelu."""
         self._selected_items.clear()
+        all_selected = True
+        # Pętla od 1, aby pominąć element "Zaznacz wszystkie"
         for i in range(1, self.model().rowCount()):
             item = self.model().item(i)
-            if item and item.checkState() == Qt.Checked:
+            if item.checkState() == Qt.Checked:
                 self._selected_items.add(item.text())
+            else:
+                all_selected = False
 
-    def showPopup(self):
-        """Pokaż menu rozwijane"""
-        # Ustawiamy flagę PRZED pokazaniem popupu
-        self._popup_visible = True
-
-        # Ustaw szerokość widoku
-        width = self.view().sizeHintForColumn(0) + 20  # Dodaj trochę miejsca na margines
-        width = min(width, 250)  # Ogranicz szerokość do maksymalnie 250 pikseli
-        self.view().setMinimumWidth(width)
-
-        # Pokazujemy popup
-        super().showPopup()
+        # Aktualizuj stan checkboxa "Zaznacz wszystkie"
+        if self.model().rowCount() > 0:
+            select_all_item = self.model().item(0)
+            select_all_item.setCheckState(Qt.Checked if all_selected else Qt.Unchecked)
 
     def hidePopup(self):
-        """Ukryj popup z zabezpieczeniem przed automatycznym zamykaniem"""
-        # Jeśli ustawiona jest blokada, nie zamykaj popupu
-        if self._block_hide:
-            # Wykonaj tylko ukrycie, a potem zaplanuj ponowne pokazanie
-            super().hidePopup()
-            return
-
-        # Normalny przypadek - ukryj popup i ustaw flagę
-        self._popup_visible = False
+        """Aktualizuje tekst po zamknięciu listy."""
+        self.update_display_text()
         super().hidePopup()
 
-        # WAŻNE: Aktualizuj tekst po zamknięciu popupu
-        self.update_display_text()
-
-    # WAŻNE: Metoda, która powstrzymuje automatyczne zamykanie popupu po kliknięciu
-    def setCurrentIndex(self, index):
-        """Nadpisana metoda, aby zapobiec zamykaniu popupu"""
-        if self._popup_visible:
-            # Nie zmieniaj indeksu i nie zamykaj popupu
-            pass
-        else:
-            # Standardowe zachowanie
-            super().setCurrentIndex(index)
-
     def add_items(self, items):
-        """Dodaje elementy do ComboBoxa"""
+        """Dodaje elementy do ComboBoxa."""
         self.clear()
 
-        # Dodaj element "Zaznacz wszystkie"
         select_all_item = QStandardItem(self._select_all_text)
-        select_all_item.setCheckState(Qt.Unchecked)
         select_all_item.setCheckable(True)
         self.model().appendRow(select_all_item)
 
-        # Dodaj pozostałe elementy
-        for item_text in items:
+        for item_text in sorted(items):
             item = QStandardItem(item_text)
-            item.setCheckState(Qt.Unchecked)
             item.setCheckable(True)
             self.model().appendRow(item)
 
-        # Ustaw wyświetlany tekst
         self.update_display_text()
 
+    def showPopup(self):
+        """Pokaż menu rozwijane z dostosowaną szerokością."""
+        super().showPopup()  # Najpierw pokaż listę, aby można było obliczyć jej wymiary
+
+        # Oblicz wymaganą szerokość na podstawie najdłuższego elementu
+        width = self.view().sizeHintForColumn(0) + 20  # +20 na margines i pasek przewijania
+
+        # OPCJA 1: Ustawienie nowego, większego limitu szerokości
+        # Zwiększ limit z 250 do np. 450 pikseli. Można tu wpisać inną wartość.
+        width = min(width, 450)
+
+        # OPCJA 2: Całkowite usunięcie limitu (odkomentuj poniższą linię i zakomentuj powyższą)
+        # W tej opcji lista będzie tak szeroka, jak najdłuższy element.
+        # pass # Nie rób nic, aby nie ograniczać szerokości
+
+        # Ustaw obliczoną minimalną szerokość dla widoku listy
+        self.view().setMinimumWidth(width)
+
     def clear(self):
-        """Czyści listę elementów"""
-        super().clear()
+        """Czyści listę elementów."""
+        self.model().clear()
         self._selected_items.clear()
-        self.setEditText("-Wszystkie-")  # Zmieniony tekst
+        self.setEditText("-Wszystkie-")
 
     def clear_selection(self):
-        """Czyści zaznaczenie"""
-        self._selected_items.clear()
+        """Czyści zaznaczenie wszystkich elementów."""
         for i in range(self.model().rowCount()):
-            if i < self.model().rowCount():  # Dodatkowe sprawdzenie
-                item = self.model().item(i)
-                if item:
-                    item.setCheckState(Qt.Unchecked)
+            self.model().item(i).setCheckState(Qt.Unchecked)
+        self._rebuild_selected_items()
         self.update_display_text()
 
     def get_selected_items(self):
-        """
-        Zwraca listę zaznaczonych elementów (poza 'Zaznacz wszystkie').
-        POPRAWKA: Usunięto niepotrzebny argument list_widget.
-
-        Returns:
-            list: Lista zaznaczonych elementów
-        """
-        # WAŻNE: Przebuduj _selected_items dla pewności
-        self._rebuild_selected_items()
-
-        # Zwróć listę z elementów zbioru
+        """Zwraca listę zaznaczonych elementów."""
         return list(self._selected_items)
 
-    def select_items(self, items):
-        """Zaznacza określone elementy"""
-        self._selected_items = set(items)
-        all_selected = True
-
-        for i in range(1, self.model().rowCount()):  # Pomijamy pierwszy element
-            if i < self.model().rowCount():  # Dodatkowe sprawdzenie
-                item = self.model().item(i)
-                if item:
-                    if item.text() in items:
-                        item.setCheckState(Qt.Checked)
-                    else:
-                        item.setCheckState(Qt.Unchecked)
-                        all_selected = False
-
-        # Ustaw stan dla elementu "Zaznacz wszystkie"
-        if self.model().rowCount() > 0:
-            item0 = self.model().item(0)
-            if item0 and item0.text() == self._select_all_text:
-                item0.setCheckState(Qt.Checked if all_selected else Qt.Unchecked)
-
+    def select_items(self, items_to_select):
+        """Zaznacza programowo określone elementy na liście."""
+        lookup = set(items_to_select)
+        for i in range(1, self.model().rowCount()):
+            item = self.model().item(i)
+            if item.text() in lookup:
+                item.setCheckState(Qt.Checked)
+            else:
+                item.setCheckState(Qt.Unchecked)
+        self._rebuild_selected_items()
         self.update_display_text()
 
     def update_display_text(self):
-        """
-        Aktualizuje tekst wyświetlany w comboboxie na podstawie zaznaczonych elementów.
-
-        Wyświetla:
-        - "--- Wszystkie ---" gdy nie ma zaznaczonych elementów lub gdy są zaznaczone wszystkie
-        - "Wybrano {len(selected)} elementów" gdy jest zaznaczona tylko część elementów
-        """
-        # WAŻNE: Przebuduj _selected_items dla pewności
-        self._rebuild_selected_items()
-
-        selected = list(self._selected_items)
-        total_items = self.model().rowCount() - 1  # Odejmujemy element "Zaznacz wszystkie"
-
-        # Sprawdź, czy nie ma zaznaczonych elementów lub wszystkie są zaznaczone
-        if not selected or len(selected) == total_items:
+        """Aktualizuje tekst wyświetlany w comboboxie."""
+        if not self._selected_items:
+            self.setEditText("-Wszystkie-")
+        elif len(self._selected_items) == (self.model().rowCount() - 1):
             self.setEditText("-Wszystkie-")
         else:
-            self.setEditText(f"Wybrano {len(selected)} elementów")
+            self.setEditText(f"Wybrano {len(self._selected_items)} z {self.model().rowCount() - 1}")
 
 class OvertimeItemDelegate(QStyledItemDelegate):
     """
