@@ -1,6 +1,6 @@
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QTableView, QPushButton, QComboBox,
                                QHeaderView, QLabel, QHBoxLayout, QSplitter, QWidget, QTabWidget, QCheckBox, QFrame,
-                               QToolTip)
+                               QToolTip, QListWidget, QAbstractItemView)
 from PySide6.QtCore import Qt, QAbstractTableModel, QDate, QDateTime
 from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QCursor
 from PySide6.QtCharts import QChartView, QChart, QLineSeries, QValueAxis, QPieSeries, QDateTimeAxis, QStackedBarSeries, \
@@ -483,43 +483,69 @@ class StaffingDetailsWindow(QDialog):
         self.forecast_view_mode_combo.setStyleSheet(combo_style)
 
     def load_and_display_data(self):
-        filtered_schedule_data = self.parent_widget.filter_processed_data() if self.parent_widget else {}
+        # Zapisz przefiltrowane dane jako atrybut klasy, aby mieć do nich dostęp
+        self._filtered_schedule_data = self.parent_widget.filter_processed_data() if self.parent_widget else {}
+
+        # Używaj self._filtered_schedule_data zamiast filtered_schedule_data w dalszej części tej metody
         all_events = self.data_provider.get_events_data(self._year, self._month)
         forecast_data = self.data_provider.get_forecast_data(self._year, self._month)
 
+        # Sprawdzamy, czy combobox nie został już wypełniony lub czy dane prognozy są dostępne
         if self.forecast_group_combo.count() == 0 and forecast_data:
+            # 1. Zbierz wszystkie unikalne nazwy grup z danych
             all_groups = sorted(list(set(row['GrupaNazwa'] for row in forecast_data if row.get('GrupaNazwa'))))
-            self.forecast_group_combo.addItem("-Wszystkie Grupy-", "all")
-            for group in all_groups: self.forecast_group_combo.addItem(group, group)
+
+            # 2. Jeśli "TOTAL" istnieje na liście, przenieś go na początek
+            if "TOTAL" in all_groups:
+                all_groups.remove("TOTAL")
+                all_groups.insert(0, "TOTAL")
+
+            # 3. Wyczyść combobox i wypełnij go posortowaną listą
+            self.forecast_group_combo.clear()
+            for group in all_groups:
+                # Używamy nazwy grupy zarówno jako tekstu wyświetlanego, jak i danych
+                self.forecast_group_combo.addItem(group, group)
 
         hourly_option = self.hourly_staffing_options_combo.currentData();
         daily_option = self.daily_staffing_options_combo.currentData()
         selected_forecast_group = self.forecast_group_combo.currentData();
         forecast_view_mode = self.forecast_view_mode_combo.currentData()
-        actual_hourly = self._calculate_hourly_staffing(filtered_schedule_data, all_events, "all")
+        actual_hourly = self._calculate_hourly_staffing(self._filtered_schedule_data, all_events, "all")
         processed_forecast = self._process_forecast_for_table(forecast_data, selected_forecast_group)
         self._forecast_model.update_data(self._year, self._month, processed_forecast, actual_hourly, forecast_view_mode)
 
-        hourly_for_display = self._calculate_hourly_staffing(filtered_schedule_data, all_events, hourly_option)
+        hourly_for_display = self._calculate_hourly_staffing(self._filtered_schedule_data, all_events, hourly_option)
         self._hourly_staffing_model.update_data(self._year, self._month, hourly_for_display)
 
-        daily = self._calculate_daily_staffing(filtered_schedule_data, all_events, daily_option)
+        daily = self._calculate_daily_staffing(self._filtered_schedule_data, all_events, daily_option)
         self._daily_staffing_model.update_data(self._year, self._month, daily)
 
-        counts, rbh = self._calculate_special_symbols_summary(filtered_schedule_data)
+        counts, rbh = self._calculate_special_symbols_summary(self._filtered_schedule_data)
         self._symbols_count_model.update_data(self._year, self._month, counts);
         self._symbols_rbh_model.update_data(self._year, self._month, rbh)
 
-        overtime_data = self._calculate_overtime_summary_detailed(filtered_schedule_data, all_events)
+        overtime_data = self._calculate_overtime_summary_detailed(self._filtered_schedule_data, all_events)
         self._overtime_model.update_data(overtime_data)
 
-        work_time = self._calculate_work_time_analysis(filtered_schedule_data, all_events)
+        work_time = self._calculate_work_time_analysis(self._filtered_schedule_data, all_events)
         self._work_time_model.update_data(work_time)
 
-        absence_data = self._calculate_absence_analysis(filtered_schedule_data)
+        absence_data = self._calculate_absence_analysis(self._filtered_schedule_data)
         self._absence_summary_model.update_data(absence_data['summary_table'])
 
-        flexibility_data = self._calculate_flexibility_analysis(filtered_schedule_data)
+        # SEKCJA ANALIZY ABSENCJI - UPROSZCZONA
+        absence_data_full = self._calculate_absence_analysis(self._filtered_schedule_data)
+
+        # Wypełnij listę symboli (tylko raz, jeśli jest pusta)
+        if self.absence_symbols_list.count() == 0:
+            occurring_symbols = [row[0] for row in absence_data_full['summary_table']]
+            self.absence_symbols_list.addItems(sorted(occurring_symbols))
+
+        # Wywołaj dedykowaną metodę, aby wypełnić zakładkę danymi
+        self._update_absence_tab()
+        # KONIEC SEKCJI ANALIZY ABSENCJI
+
+        flexibility_data = self._calculate_flexibility_analysis(self._filtered_schedule_data)
         self._flexibility_model.update_data(flexibility_data['table_data'])
 
         self._adjust_columns()
@@ -712,26 +738,39 @@ class StaffingDetailsWindow(QDialog):
         self.tabs.addTab(widget, "Analiza Czasu Pracy")
 
     def _create_absence_analysis_tab(self):
-        widget = QWidget();
-        main_tab_layout = QVBoxLayout(widget);
-        main_tab_layout.setContentsMargins(0, 5, 0, 0);
+        widget = QWidget()
+        main_tab_layout = QVBoxLayout(widget)
+        main_tab_layout.setContentsMargins(0, 5, 0, 0)
         kpi_layout = QHBoxLayout()
-        self.total_absence_hours_label = self._create_kpi_box("Całkowite godziny absencji");
+        self.total_absence_hours_label = self._create_kpi_box("Całkowite godziny absencji")
         self.absence_rate_label = self._create_kpi_box("Wskaźnik absencji")
-        kpi_layout.addWidget(self.total_absence_hours_label);
-        kpi_layout.addWidget(self.absence_rate_label);
+        kpi_layout.addWidget(self.total_absence_hours_label)
+        kpi_layout.addWidget(self.absence_rate_label)
         kpi_layout.addStretch()
-        main_tab_layout.addLayout(kpi_layout);
+        main_tab_layout.addLayout(kpi_layout)
         splitter = QSplitter(Qt.Horizontal)
-        self._absence_summary_model = AbsenceSummaryTableModel(self);
-        self.absence_summary_view = QTableView();
+        # --- NOWA SEKCJA: Lewy panel z tabelą i listą filtrów ---
+        left_panel_widget = QWidget()
+        left_panel_layout = QVBoxLayout(left_panel_widget)
+        left_panel_layout.setContentsMargins(0, 0, 0, 0)
+        self._absence_summary_model = AbsenceSummaryTableModel(self)
+        self.absence_summary_view = QTableView()
         self.absence_summary_view.setModel(self._absence_summary_model)
-        splitter.addWidget(self.absence_summary_view);
-        self.absence_chart_view = QChartView();
+        # Nowa lista do filtrowania symboli
+        self.absence_symbols_list = QListWidget()
+        self.absence_symbols_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        self.absence_symbols_list.itemSelectionChanged.connect(self._update_absence_tab)
+        left_panel_layout.addWidget(QLabel("Podsumowanie absencji:"))
+        left_panel_layout.addWidget(self.absence_summary_view)
+        left_panel_layout.addWidget(QLabel("Filtruj trend dla symboli:"))
+        left_panel_layout.addWidget(self.absence_symbols_list)
+        # --- KONIEC NOWEJ SEKCJI ---
+        splitter.addWidget(left_panel_widget)
+        self.absence_chart_view = QChartView()
         self.absence_chart_view.setRenderHint(QPainter.Antialiasing)
-        splitter.addWidget(self.absence_chart_view);
-        splitter.setSizes([300, 500]);
-        main_tab_layout.addWidget(splitter);
+        splitter.addWidget(self.absence_chart_view)
+        splitter.setSizes([400, 600])
+        main_tab_layout.addWidget(splitter)
         self.tabs.addTab(widget, "Analiza Absencji")
 
     def _create_flexibility_analysis_tab(self):
@@ -1052,29 +1091,77 @@ class StaffingDetailsWindow(QDialog):
 
         return sorted(result, key=lambda x: (x[0], x[1]))
 
-    def _calculate_absence_analysis(self, schedule_data):
-        absence_symbols = {"U", "CO", "UZ", "CR", "NN", "NW", "Z", "UB", "UM", "UO", "UOD", "US", "UT", "UW", "UOP",
-                           "USW"}
+    def _calculate_absence_analysis(self, schedule_data, selected_symbols=None):
+        """Ulepszona wersja: filtruje WSZYSTKIE wyniki na podstawie wybranych symboli."""
+        absence_symbols_map = {"U", "CO", "UZ", "CR", "NN", "NW", "Z", "UB", "UM", "UO", "UOD", "US", "UT", "UW", "UOP",
+                               "USW"}
+
+        # Jeśli lista wybranych symboli jest pusta, traktujemy to jako "pokaż wszystko"
+        is_filtered = bool(selected_symbols)
+        symbols_to_process = selected_symbols if is_filtered else absence_symbols_map
+
         summary = defaultdict(lambda: {'count': 0, 'hours': 0.0})
         days_in_month = QDate(self._year, self._month, 1).daysInMonth()
-        daily_trend = [0.0] * days_in_month;
+        daily_trend = [0.0] * days_in_month
         total_planned_hours = 0.0
+
+        # Najpierw obliczamy wszystkie absencje i planowane godziny (dla wskaźnika %)
+        full_absence_hours = 0.0
         for user_schedule in schedule_data.values():
             for day, day_info in user_schedule.get('days', {}).items():
                 parsed = parse_symbol(day_info.get('symbol', ''))
                 work_hours = parsed.get('work_hours')
-                if work_hours: total_planned_hours += work_hours
+                if work_hours:
+                    total_planned_hours += work_hours
+
                 symbol = parsed.get('special_symbol')
-                if symbol and symbol in absence_symbols:
-                    absence_hours = work_hours or 8.0
-                    summary[symbol]['count'] += 1;
+                if symbol and symbol in absence_symbols_map:
+                    full_absence_hours += work_hours or 8.0
+
+        # Teraz przetwarzamy dane pod kątem wyświetlania (tabela, trend)
+        for user_schedule in schedule_data.values():
+            for day, day_info in user_schedule.get('days', {}).items():
+                parsed = parse_symbol(day_info.get('symbol', ''))
+                symbol = parsed.get('special_symbol')
+
+                # Sprawdzamy, czy symbol pasuje do naszego filtra
+                if symbol and symbol in symbols_to_process:
+                    absence_hours = parsed.get('work_hours') or 8.0
+                    summary[symbol]['count'] += 1
                     summary[symbol]['hours'] += absence_hours
-                    if 0 <= day - 1 < len(daily_trend): daily_trend[day - 1] += absence_hours
-        total_absence_hours = sum(d['hours'] for d in summary.values())
-        absence_rate = (total_absence_hours / total_planned_hours * 100) if total_planned_hours > 0 else 0.0
+                    if 0 <= day - 1 < len(daily_trend):
+                        daily_trend[day - 1] += absence_hours
+
+        # Sumy i wskaźniki są teraz obliczane na podstawie przefiltrowanych danych
+        total_filtered_absence_hours = sum(d['hours'] for d in summary.values())
+        # Wskaźnik % zawsze odnosimy do całości planu, aby był miarodajny
+        absence_rate = (total_filtered_absence_hours / total_planned_hours * 100) if total_planned_hours > 0 else 0.0
+
         summary_table_data = sorted([[symbol, data['hours'], data['count']] for symbol, data in summary.items()])
-        return {'total_hours': total_absence_hours, 'rate': absence_rate, 'summary_table': summary_table_data,
-                'daily_trend': daily_trend}
+
+        return {
+            'total_hours': total_filtered_absence_hours,
+            'rate': absence_rate,
+            'summary_table': summary_table_data,
+            'daily_trend': daily_trend
+        }
+
+    def _update_absence_tab(self):
+        """Dedykowana metoda do odświeżania tylko zakładki Analiza Absencji."""
+        if not hasattr(self, '_filtered_schedule_data'):
+            # Jeśli dane nie są jeszcze załadowane, nie rób nic
+            return
+
+        selected_symbols = {item.text() for item in self.absence_symbols_list.selectedItems()}
+
+        # Oblicz dane na nowo, przekazując wybrane symbole
+        absence_data = self._calculate_absence_analysis(self._filtered_schedule_data, selected_symbols)
+
+        # Zaktualizuj wszystkie elementy w zakładce
+        self._absence_summary_model.update_data(absence_data['summary_table'])
+        self.total_absence_hours_label.value_label.setText(f"{absence_data['total_hours']:.1f} h")
+        self.absence_rate_label.value_label.setText(f"{absence_data['rate']:.2f}%")
+        self._update_absence_chart(absence_data['daily_trend'])
 
     def _calculate_flexibility_analysis(self, schedule_data):
         summary = defaultdict(float)
