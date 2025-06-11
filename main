@@ -1,5 +1,6 @@
 import sys
 import time
+from collections import defaultdict
 from datetime import datetime, timedelta, date
 from typing import List, Dict, Optional, Tuple, Any 
 from PySide6.QtWidgets import (QApplication, QMainWindow, QTableWidget, QTableWidgetItem, QTableView, QItemDelegate,
@@ -68,68 +69,125 @@ class ScheduleKeyboardFilter(QObject):
         self._buffer_timer.timeout.connect(self._clear_buffer)
         self._buffer_timeout = 1500  # 1.5 sekundy na wpisanie drugiej cyfry
 
+        # Bufor dla symboli znakowych
+        self._char_buffer = ""
+        self._char_buffer_timer = QTimer()
+        self._char_buffer_timer.setSingleShot(True)
+        self._char_buffer_timer.timeout.connect(self._process_char_buffer)
+        self._char_buffer_timeout = 1500
+
     def eventFilter(self, obj, event):
         """
-        Filtr zdarzeń dla edycji klawiatury komórek grafiku
-        z obsługą dwucyfrowych godzin
+        Filtr zdarzeń dla edycji klawiatury komórek grafiku z obsługą:
+        - dwucyfrowych godzin (dla ról "Pracownik WPR" i "Lider OUT")
+        - symboli specjalnych (tylko dla roli "Pracownik WPR")
         """
-        if (hasattr(self.main_window, 'table') and
+        # 1. Sprawdzamy, czy zdarzenie dotyczy wciśnięcia klawisza w tabeli grafiku
+        if not (hasattr(self.main_window, 'table') and
                 hasattr(self.main_window.table, 'schedule_view') and
                 obj == self.main_window.table.schedule_view and
                 event.type() == QEvent.KeyPress):
+            return False  # To nie jest zdarzenie dla nas, przekaż dalej
 
-            # Sprawdź uprawnienia użytkownika
-            allowed_roles = ["Pracownik WPR", "Lider OUT"]
-            if (not hasattr(self.main_window, 'current_user_role') or
-                    self.main_window.current_user_role not in allowed_roles):
-                # --- KLUCZOWA ZMIANA ---
-                # Jeśli użytkownik nie ma uprawnień, blokujemy zdarzenie zwracając True!
-                return True
+        key = event.key()
+        role = self.main_window.current_user_role
 
-            key = event.key()
+        # 2. Sprawdzamy uprawnienia w zależności od wciśniętego klawisza
+        can_edit_hours = role in ["Pracownik WPR", "Lider OUT"]
+        can_edit_symbols = role == "Pracownik WPR"
 
-            # KLUCZOWE ZABEZPIECZENIE: Sprawdź czy zaznaczone komórki są edytowalne
+        is_digit_key = (Qt.Key_0 <= key <= Qt.Key_9)
+        is_char_key = (Qt.Key_A <= key <= Qt.Key_Z)
+        is_delete_key = key in [Qt.Key_Delete, Qt.Key_Backspace]
+        is_escape_key = key == Qt.Key_Escape
+
+        # Zablokuj akcję, jeśli użytkownik nie ma odpowiednich uprawnień
+        if (is_digit_key and not can_edit_hours) or \
+                (is_char_key and not can_edit_symbols) or \
+                (is_delete_key and not can_edit_hours):
+            return True  # Zablokuj zdarzenie (zjedz je)
+
+        # 3. Sprawdzamy, czy zaznaczone komórki są edytowalne (dla akcji modyfikujących)
+        if is_digit_key or is_char_key or is_delete_key:
             if not self._validate_selected_cells():
-                # Zablokuj WSZYSTKIE klawisze jeśli komórki nie są edytowalne
-                if (Qt.Key_0 <= key <= Qt.Key_9 or
-                        key == Qt.Key_Delete or
-                        key == Qt.Key_Backspace or
-                        key == Qt.Key_Space or
-                        key == Qt.Key_Enter or
-                        key == Qt.Key_Return or
-                        (Qt.Key_A <= key <= Qt.Key_Z)):
-                    return True  # Zablokuj zdarzenie
+                return True  # Zablokuj, jeśli komórki są nieedytowalne
 
-            # NOWA LOGIKA: Obsługa cyfr z buforem
-            if Qt.Key_0 <= key <= Qt.Key_9:
-                digit = key - Qt.Key_0
-                self._handle_digit_input(digit)
-                return True  # Zdarzenie zostało obsłużone
+        # 4. Obsługa zdarzenia w zależności od klawisza
+        if is_digit_key:
+            digit = key - Qt.Key_0
+            self._handle_digit_input(digit)
+            return True
 
-            # Obsłuż klawisze specjalne
-            elif key == Qt.Key_Delete or key == Qt.Key_Backspace:
-                # Usuń symbol z zaznaczonych komórek
-                self.main_window.clear_selected_cells()
-                self._clear_buffer()  # Wyczyść bufor
-                return True
+        if is_char_key:
+            self._handle_char_input(event.text())
+            return True
 
-            elif key == Qt.Key_Escape:
-                # Wyczyść zaznaczenie i bufor
-                self._clear_buffer_silent()  # Zatrzymaj timer bez wykonywania akcji
-                if hasattr(self.main_window.table, 'schedule_view'):
-                    self.main_window.table.schedule_view.clearSelection()
-                return True
+        if is_delete_key:
+            self.main_window.clear_selected_cells()
+            self._clear_buffer()  # Wyczyść bufor cyfr
+            # Upewnij się, że masz metodę do czyszczenia bufora znaków
+            if hasattr(self, '_char_buffer'):
+                self._char_buffer = ""
+                self._char_buffer_timer.stop()
+            return True
 
-            # BLOKUJ WSZYSTKIE INNE KLAWISZE w komórkach grafiku
-            elif (Qt.Key_A <= key <= Qt.Key_Z or
-                  key == Qt.Key_Space or
-                  key == Qt.Key_Enter or
-                  key == Qt.Key_Return or
-                  key == Qt.Key_Tab):
-                return True  # Zablokuj zdarzenie
+        if is_escape_key:
+            self._clear_buffer_silent()
+            # Upewnij się, że masz metodę do cichego czyszczenia bufora znaków
+            if hasattr(self, '_char_buffer'):
+                self._char_buffer = ""
+                self._char_buffer_timer.stop()
+            if hasattr(self.main_window.table, 'schedule_view'):
+                self.main_window.table.schedule_view.clearSelection()
+            return True
 
-        # Przekaż zdarzenie dalej, jeśli nie zostało obsłużone powyżej
+        # 5. Blokowanie pozostałych, nieobsługiwanych klawiszy
+        if key in [Qt.Key_Space, Qt.Key_Enter, Qt.Key_Return, Qt.Key_Tab]:
+            return True
+
+        # 6. Przekaż dalej wszystkie inne, nieobsłużone zdarzenia
         return False
+
+    def _handle_char_input(self, char: str):
+        """Obsługuje wprowadzanie znaków do bufora symbolu."""
+        # Wyczyść bufor cyfr, aby uniknąć konfliktu
+        if self._digit_buffer:
+            self._clear_buffer()
+
+        self._char_buffer += char.upper()
+        debug_print(f"Wprowadzono znak: {char}, bufor symbolu: '{self._char_buffer}'")
+
+        # Ustaw status bar w głównym oknie
+        self.main_window.statusBar().showMessage(f"Wpisywanie symbolu: {self._char_buffer}", 2000)
+
+        # Jeśli osiągnięto 3 znaki, przetwarzaj od razu
+        if len(self._char_buffer) >= 3:
+            self._char_buffer_timer.stop()
+            self._process_char_buffer()
+        else:
+            # W przeciwnym razie, zresetuj timer i czekaj na kolejny znak
+            self._char_buffer_timer.start(self._char_buffer_timeout)
+
+    def _process_char_buffer(self):
+        """Przetwarza wpisany symbol, waliduje go i wywołuje akcję w głównym oknie."""
+        symbol = self._char_buffer
+        self._char_buffer = ""  # Zawsze czyść bufor po przetworzeniu
+
+        if not symbol:
+            return
+
+        # Pobierz listę dozwolonych symboli
+        valid_symbols = self.main_window.get_all_valid_symbols()
+
+        if symbol in valid_symbols:
+            self.main_window.statusBar().showMessage(f"Symbol '{symbol}' jest prawidłowy. Zatwierdź zmiany.", 3000)
+            # Wywołaj metodę w głównym oknie, która pokaże dialog potwierdzenia i zapisze zmiany
+            self.main_window.apply_symbol_from_keyboard(symbol)
+        else:
+            self.main_window.statusBar().showMessage(f"Błąd: Symbol '{symbol}' jest nieprawidłowy!", 4000)
+            # Opcjonalnie można dodać QMessageBox
+            QMessageBox.warning(self.main_window, "Nieprawidłowy symbol",
+                                f"Wpisany symbol '{symbol}' nie znajduje się na liście dozwolonych.")
 
     def _handle_digit_input(self, digit):
         """
@@ -639,9 +697,28 @@ class WorkScheduleWindow(QMainWindow):
         self.check_timer.timeout.connect(self.check_for_new_data)
         self.check_timer.start(60000)
 
+        # Skrót F1 do przełączania widoczności lewego panelu filtrów
+        self.shortcut_f1 = QShortcut(QKeySequence(Qt.Key_F1), self)
+        self.shortcut_f1.activated.connect(self.toggle_left_panel)
 
-
+        # Skrót F2 do przełączania widoczności dolnego panelu zdarzeń
+        self.shortcut_f2 = QShortcut(QKeySequence(Qt.Key_F2), self)
+        self.shortcut_f2.activated.connect(self.toggle_events_panel)
+        # Skrót F12 do usuwania symbolu specjalnego z komórki
+        self.shortcut_f12 = QShortcut(QKeySequence(Qt.Key_F12), self)
+        self.shortcut_f12.activated.connect(self.clear_special_symbol_from_selected_cells)
         self._selection_debounce_delay = 50  # 50ms delay
+        # Skrót F3 do wywołania okna "Wstaw zmianę"
+        self.shortcut_f3 = QShortcut(QKeySequence(Qt.Key_F3), self)
+        self.shortcut_f3.activated.connect(self.show_insert_change_dialog)
+
+        # Skrót F4 do wywołania okna "Wstaw nieobecność"
+        self.shortcut_f4 = QShortcut(QKeySequence(Qt.Key_F4), self)
+        self.shortcut_f4.activated.connect(self.show_insert_symbol_dialog)
+
+        # Skrót F5 do wywołania akcji "Odwołaj delegacje"
+        self.shortcut_f5 = QShortcut(QKeySequence(Qt.Key_F5), self)
+        self.shortcut_f5.activated.connect(self.cancel_delegations)
 
         debug_print("=== APLIKACJA TEAMFLOW URUCHOMIONA ===")
         debug_print(f"Użytkownik: {self.current_user_app_id} ({self.current_user_role})")
@@ -1170,8 +1247,8 @@ class WorkScheduleWindow(QMainWindow):
         self.toggle_menu_button = QPushButton()
         self.toggle_menu_button.setFixedSize(32, 32)
         self.toggle_menu_button.setText("☰")
-        self.toggle_menu_button.setToolTip("Pokaż/ukryj panel filtrów")
-        self.toggle_menu_button.setStyleSheet(AppStyles.get_button_style("dark" if self.is_dark_theme else "light")) #
+        self.toggle_menu_button.setToolTip("Pokaż/ukryj panel filtrów (F1)")
+        self.toggle_menu_button.setStyleSheet(AppStyles.get_button_style("dark" if self.is_dark_theme else "light"))  #
         self.toggle_menu_button.clicked.connect(self.toggle_left_panel)
         top_bar_layout.addWidget(self.toggle_menu_button)
 
@@ -1266,7 +1343,7 @@ class WorkScheduleWindow(QMainWindow):
         # Tworzenie lewego panelu filtrów
         self.setup_left_panel()
         # Zapamiętaj standardową szerokość lewego panelu
-        self.left_panel_width = 200  # Domyślna szerokość panelu
+        self.left_panel_width = 280  # Domyślna szerokość panelu
 
         # Tworzenie prawego panelu z tabelami
         right_panel = self.setup_right_panel()
@@ -1276,7 +1353,7 @@ class WorkScheduleWindow(QMainWindow):
         main_splitter.addWidget(right_panel)
 
         # Ustaw początkowe proporcje dla głównego splittera (np. 25% lewy panel, 75% prawy panel)
-        main_splitter.setSizes([200, 800])
+        main_splitter.setSizes([280, 720])
 
         # Zapisz referencję do splittera
         self.main_splitter = main_splitter
@@ -1291,8 +1368,8 @@ class WorkScheduleWindow(QMainWindow):
         """Tworzy lewy panel z filtrami"""
         self._left_panel = QWidget()
         self._left_panel.setStyleSheet(AppStyles.get_left_panel_style("dark" if self.is_dark_theme else "light"))
-        self._left_panel.setMinimumWidth(200)  # Zwiększamy minimalną szerokość panelu
-        self._left_panel.setMaximumWidth(200)  # Zwiększamy maksymalną szerokość panelu
+        self._left_panel.setMinimumWidth(280)  # Zwiększamy minimalną szerokość panelu
+        self._left_panel.setMaximumWidth(280)  # Zwiększamy maksymalną szerokość panelu
 
         filters_layout = QVBoxLayout(self._left_panel)
         filters_layout.setContentsMargins(10, 10, 10, 10)
@@ -1371,7 +1448,8 @@ class WorkScheduleWindow(QMainWindow):
         combo.setStyleSheet(AppStyles.get_combobox_style("dark" if self.is_dark_theme else "light"))
         combo.setFixedHeight(24)  # Ustaw wysokość podobną do pól tekstowych
         combo.view().setMaximumWidth(250)  # Ograniczenie szerokości rozwijanej listy
-        combo.activated.connect(self.filter_data)  # Podłącz sygnał filtrowania
+        # combo.activated.connect(self.filter_data)  # Podłącz sygnał filtrowania
+        combo.selection_changed.connect(self.filter_data)
 
         # Zapisz referencję do kontrolki
         setattr(self, combo_name, combo)
@@ -1561,7 +1639,8 @@ class WorkScheduleWindow(QMainWindow):
 
         # NOWOŚĆ: Dodajemy przycisk do ukrywania/pokazywania panelu zdarzeń (po lewej stronie)
         self.toggle_events_panel_button = QPushButton("Ukryj zdarzenia↓")
-        self.toggle_events_panel_button.setToolTip("Ukryj panel zdarzeń (dla większego widoku grafiku)")
+        self.toggle_events_panel_button.setToolTip(
+            "Ukryj panel zdarzeń (dla większego widoku grafiku) (F2)")  # Dodano (F2)
         self.toggle_events_panel_button.setStyleSheet(
             AppStyles.get_button_style("dark" if self.is_dark_theme else "light"))
         self.toggle_events_panel_button.clicked.connect(self.toggle_events_panel)
@@ -1574,24 +1653,21 @@ class WorkScheduleWindow(QMainWindow):
 
         # Przycisk "Wstaw zmianę"
         self.insert_change_button = QPushButton("Wstaw zmianę")
-        self.insert_change_button.setShortcut("Ctrl+Z")  # Skrót klawiszowy
-        self.insert_change_button.setToolTip("Wstaw zmianę grafiku (Ctrl+Z)")
+        self.insert_change_button.setToolTip("Wstaw zmianę grafiku (F3)")
         self.insert_change_button.setStyleSheet(AppStyles.get_button_style("dark" if self.is_dark_theme else "light"))
         self.insert_change_button.clicked.connect(self.show_insert_change_dialog)
         button_layout.addWidget(self.insert_change_button)
 
         # Przycisk "Wstaw nieobecność"
         self.insert_symbol_button = QPushButton("Wstaw nieobecność")
-        self.insert_symbol_button.setShortcut("Ctrl+I")  # Skrót klawiszowy Ctrl+I
-        self.insert_symbol_button.setToolTip("Wstaw nieobecność (Ctrl+I)")  # Podpowiedź z informacją o skrócie
+        self.insert_symbol_button.setToolTip("Wstaw nieobecność (F4)")
         self.insert_symbol_button.setStyleSheet(AppStyles.get_button_style("dark" if self.is_dark_theme else "light"))
         self.insert_symbol_button.clicked.connect(self.show_insert_symbol_dialog)
         button_layout.addWidget(self.insert_symbol_button)
 
         # Przycisk "Odwołaj delegacje"
         self.cancel_delegation_button = QPushButton("Odwołaj delegacje")
-        self.cancel_delegation_button.setShortcut("Ctrl+D")  # Skrót klawiszowy Ctrl+D
-        self.cancel_delegation_button.setToolTip("Odwołaj delegacje dla zaznaczonych komórek (Ctrl+D)")
+        self.cancel_delegation_button.setToolTip("Odwołaj delegacje dla zaznaczonych komórek (F5)")
         self.cancel_delegation_button.setStyleSheet(
             AppStyles.get_button_style("dark" if self.is_dark_theme else "light"))
         self.cancel_delegation_button.clicked.connect(self.cancel_delegations)
@@ -1599,8 +1675,8 @@ class WorkScheduleWindow(QMainWindow):
 
         # Przycisk "Dodaj nadgodziny"
         self.add_overtime_button = QPushButton("Dodaj nadgodziny")
-        self.add_overtime_button.setShortcut("Ctrl+N")  # Skrót klawiszowy Ctrl+N
-        self.add_overtime_button.setToolTip("Dodaj nadgodziny dla zaznaczonych komórek (Ctrl+N)")
+        self.add_overtime_button.setShortcut("Insert")  # Skrót klawiszowy Insert
+        self.add_overtime_button.setToolTip("Dodaj nadgodziny dla zaznaczonych komórek (Insert)")
         self.add_overtime_button.setStyleSheet(AppStyles.get_button_style("dark" if self.is_dark_theme else "light"))
         self.add_overtime_button.clicked.connect(self.show_add_overtime_dialog)
 
@@ -1784,7 +1860,7 @@ class WorkScheduleWindow(QMainWindow):
 
             self.left_panel_visible = True
             self.toggle_menu_button.setText("☰")  # Przywróć ikonę "burger menu"
-            self.toggle_menu_button.setToolTip("Ukryj panel filtrów")
+            self.toggle_menu_button.setToolTip("Pokaż/ukryj panel filtrów (F1)")
 
         # DODANE: Wymuś ponowne rozłożenie splittera
         current_sizes = self.main_splitter.sizes()
@@ -1834,7 +1910,7 @@ class WorkScheduleWindow(QMainWindow):
 
                 # Zmień tekst przycisku
                 self.toggle_events_panel_button.setText("Pokaż zdarzenia↑")
-                self.toggle_events_panel_button.setToolTip("Pokaż panel zdarzeń↑")
+                self.toggle_events_panel_button.setToolTip("Pokaż panel zdarzeń↑ (F2)")
             else:
                 # Jeśli panel zdarzeń jest ukryty, pokaż go
                 # Użyj zapisanego wcześniej rozmiaru lub domyślnego (300)
@@ -2392,6 +2468,90 @@ class WorkScheduleWindow(QMainWindow):
             QMessageBox.critical(
                 self, "Błąd", f"Wystąpił błąd podczas wstawiania nieobecności: {str(e)}", QMessageBox.Ok
             )
+
+    def clear_special_symbol_from_selected_cells(self):
+        """
+        Usuwa tylko symbol specjalny z zaznaczonych komórek, zachowując godziny pracy.
+        Funkcjonalność dostępna tylko dla "Pracownik WPR" pod klawiszem F12.
+        """
+        # 1. Sprawdzenie uprawnień
+        if self.current_user_role != "Pracownik WPR":
+            self.statusBar().showMessage("Brak uprawnień do wykonania tej operacji.", 3000)
+            return
+
+        # 2. Pobranie zaznaczonych komórek
+        selected_cells_data = self.table.get_data_for_selected_cells()
+        if not selected_cells_data:
+            QMessageBox.warning(self, "Brak zaznaczenia", "Nie zaznaczono komórek do modyfikacji.")
+            return
+
+        # 3. Filtrowanie komórek, które FAKTYCZNIE mają symbol specjalny do usunięcia
+        cells_to_modify = []
+        for cell in selected_cells_data:
+            symbol = cell.get('symbol', '')
+            if symbol and parse_symbol(symbol).get('special_symbol'):
+                cells_to_modify.append(cell)
+
+        if not cells_to_modify:
+            QMessageBox.information(self, "Brak zmian",
+                                    "W zaznaczonych komórkach nie ma symboli specjalnych do usunięcia.")
+            return
+
+        # 4. Dialog potwierdzenia
+        changes_info = f"Czy na pewno chcesz usunąć symbole specjalne z {len(cells_to_modify)} komórek?\n(Godziny pracy i lokalizacja zostaną zachowane)"
+        reply = QMessageBox.question(self, "Potwierdzenie operacji", changes_info,
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+
+        if reply != QMessageBox.Yes:
+            return
+
+        # 5. Logika modyfikacji i zapisu
+        successful_updates = 0
+        failed_updates = 0
+        error_messages = []
+        affected_pairs = []
+
+        for cell_data in cells_to_modify:
+            user_id = cell_data.get('uzytkownik_id')
+            date_str = cell_data.get('date_str')
+            nr_kadrowy = cell_data.get('nr_kadrowy')
+            current_symbol = cell_data.get('symbol', '')
+
+            # Dekompozycja starego symbolu i budowa nowego bez części specjalnej
+            parsed = parse_symbol(current_symbol)
+            new_symbol = build_symbol(
+                location=parsed.get('location'),
+                start_hour=parsed.get('start_hour'),
+                work_hours=parsed.get('work_hours'),
+                special_symbol=''  # <-- Kluczowa zmiana: brak symbolu specjalnego
+            )
+
+            try:
+                year, month, day = date_str.split('-')
+                result = self._call_import_changes_procedure(
+                    nr_kadrowy=nr_kadrowy,
+                    rok=int(year),
+                    miesiac=int(month),
+                    data=date_str,
+                    symbol=new_symbol
+                )
+
+                if result.get('success'):
+                    successful_updates += 1
+                    affected_pairs.append((user_id, date_str))
+                else:
+                    failed_updates += 1
+                    error_messages.append(f"{nr_kadrowy} ({date_str}): {result.get('message', 'Błąd')}")
+            except Exception as e:
+                failed_updates += 1
+                error_messages.append(f"{nr_kadrowy} ({date_str}): {str(e)}")
+
+        # 6. Odświeżenie interfejsu i pokazanie wyników
+        if successful_updates > 0:
+            self._refresh_data_after_symbol_changes(affected_pairs)
+
+        # Użyj istniejącej metody do pokazania wyników
+        self._show_keyboard_edit_results(successful_updates, failed_updates, error_messages, "Usunięcie symbolu")
 
     def _build_new_symbol_with_absence_fixed(self, current_symbol, special_symbol, cell_data):
         """
@@ -6276,7 +6436,76 @@ class WorkScheduleWindow(QMainWindow):
 
         return False
 
-    
+    def get_all_valid_symbols(self) -> set:
+        """Zwraca zbiór wszystkich prawidłowych symboli specjalnych."""
+        # Definicje skopiowane z InsertSymbolDialog dla centralizacji
+        symbol_lists = [
+            ("U", "Urlop wypoczynkowy"), ("UZ", "Urlop na żądanie"), ("CO", "Zwolnienie lekarskie"),
+            ("CR", "Zwolnienie lekarskie na inną osobę"), ("UB", "Urlop bezpłatny"),
+            ("UD", "Urlop dodatkowy z tytułu niepełnosprawności"), ("UM", "Urlop macierzyński"),
+            ("UO", "Urlop okolicznościowy"), ("UOD", "Opieka nad dzieckiem"),
+            ("US", "Urlop szkolny"), ("UT", "Urlop ojcowski"), ("UW", "Urlop wychowawczy"),
+            ("UOP", "Urlop opiekuńczy (5 dni)"), ("CRW", "Zwolnienie na opiekę (wyjątkowe)"),
+            ("CSR", "Świadczenie rehabilitacyjne"), ("ZO", "Zwolnienie z obowiązku świadczenia pracy"),
+            ("ZS", "Zwolnienie z obowiązku świadczenia pracy (wyjątkowe)"),
+            ("DK", "Delegacja krajowa"), ("DZ", "Delegacja zagraniczna"),
+            ("HO", "Home Office"), ("P", "Czasowe oddelegowanie"), ("PD", "Prace dodatkowe"),
+            ("BC", "Backup"), ("BK", "Badanie kontrolne"), ("BO", "Badanie okresowe"),
+            ("CW", "Ćwiczenia wojskowe"), ("DYS", "Dyspozycja"), ("MW", "mWolne"),
+            ("NN", "Nieobecność nieusprawiedliwiona"), ("NU", "Nieobecność usprawiedliwiona"),
+            ("NW", "Nieobecność do wyjaśnienia"), ("O", "Odbiór godzin"),
+            ("OS", "Odbiór dnia wolnego za święto"), ("S", "Szkolenie"), ("T", "Testy"),
+            ("USW", "Zwolnienie z powodu siły wyższej (2 dni)"), ("Z", "Rozwiązanie umowy")
+        ]
+        return {symbol for symbol, desc in symbol_lists}
+
+    def apply_symbol_from_keyboard(self, symbol: str):
+        """
+        Stosuje podany symbol do zaznaczonych komórek,
+        wykorzystując logikę podobną do wstawiania nieobecności.
+        """
+        try:
+            selected_cells_data = self.table.get_data_for_selected_cells()
+            if not selected_cells_data:
+                QMessageBox.warning(self, "Brak zaznaczenia", "Nie zaznaczono komórek do edycji.")
+                return
+
+            # Filtruj tylko komórki grafiku (nie puste)
+            schedule_cells = [
+                cell for cell in selected_cells_data
+                if isinstance(cell, dict) and 'date_str' in cell and cell.get('symbol', '').strip()
+            ]
+
+            if not schedule_cells:
+                QMessageBox.warning(self, "Brak komórek do edycji",
+                                    "Zaznaczone komórki są puste. Nie można wstawić symbolu nieobecności.")
+                return
+
+            # Przygotuj komunikat potwierdzenia
+            user_dates = defaultdict(list)
+            for cell in schedule_cells:
+                user_dates[cell.get('uzytkownik_dane', 'Nieznany')].append(cell.get('date_str'))
+
+            changes_info = f"Czy na pewno chcesz zmienić symbol na '{symbol}' dla:\n\n"
+            for user, dates in user_dates.items():
+                dates_str = ", ".join(sorted(dates))
+                changes_info += f"👤 {user}: {dates_str}\n"
+
+            reply = QMessageBox.question(self, "Potwierdzenie zmiany symbolu", changes_info,
+                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+
+            if reply == QMessageBox.Yes:
+                # Wykorzystaj istniejącą metodę _apply_absence_symbol_changes, przekazując nowy symbol
+                # Znajdź zdarzenia do anulowania (tak jak w show_insert_symbol_dialog)
+                user_date_pairs = {(cell.get('uzytkownik_id'), cell.get('date_str')) for cell in schedule_cells}
+                events_to_cancel = self._find_events_to_cancel(user_date_pairs)
+
+                self._apply_absence_symbol_changes(schedule_cells, symbol, events_to_cancel)
+
+        except Exception as e:
+            log_error(f"Błąd podczas stosowania symbolu z klawiatury: {e}", exception=e)
+            QMessageBox.critical(self, "Błąd krytyczny", f"Wystąpił błąd: {e}")
+
     def apply_theme_settings(self, theme, font_family, font_size):
         """Stosuje wybrane ustawienia motywu z wykorzystaniem centralnych stylów"""
         # Zapamiętaj wybrane ustawienia
