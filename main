@@ -1046,7 +1046,7 @@ class WorkScheduleWindow(QMainWindow):
         successful_updates = 0
         failed_updates = 0
         error_messages = []
-        affected_pairs = [] # Pary (user_id, date_str) dla odświeżenia
+        affected_pairs = []  # Ta lista musi zawierać krotki 3-elementowe
 
         debug_print(f"Rozpoczynam usuwanie symboli dla {len(schedule_cells)} komórek.")
 
@@ -1066,10 +1066,9 @@ class WorkScheduleWindow(QMainWindow):
                 continue
 
             try:
-                year, month, day = date_str.split('-') # Walidacja formatu daty
-                date_obj = f"{year}-{month}-{day}" # Upewnienie się co do formatu
+                year, month, day = date_str.split('-')
+                date_obj = f"{year}-{month}-{day}"
 
-                # Wywołanie procedury importu zmian z pustym symbolem
                 result = self._call_import_changes_procedure(
                     nr_kadrowy=nr_kadrowy,
                     rok=int(year),
@@ -1080,7 +1079,10 @@ class WorkScheduleWindow(QMainWindow):
 
                 if result.get('success', False):
                     successful_updates += 1
-                    affected_pairs.append((user_id, date_str))
+                    # --- KLUCZOWA POPRAWKA ---
+                    # Dodajemy krotkę z 3 elementami, w tym symbolem zwrotnym z procedury.
+                    # Dla usuwania, zwrócony symbol powinien być pustym stringiem.
+                    affected_pairs.append((user_id, date_str, result.get('returned_symbol')))
                     debug_print(f"Pomyślnie usunięto symbol: Użytkownik {user_id} ({nr_kadrowy}), Data {date_str}")
                 else:
                     failed_updates += 1
@@ -1088,7 +1090,7 @@ class WorkScheduleWindow(QMainWindow):
                     error_messages.append(f"Pracownik {nr_kadrowy} (dnia {date_str}): {error_msg}")
                     debug_print(f"Błąd usuwania symbolu dla {nr_kadrowy} ({date_str}): {error_msg}")
 
-            except ValueError: # Błąd przy split('-') lub int()
+            except ValueError:
                 failed_updates += 1
                 error_messages.append(f"{nr_kadrowy} ({date_str}): Nieprawidłowy format daty.")
                 log_error(f"Nieprawidłowy format daty dla {nr_kadrowy}, {date_str} przy usuwaniu symbolu.")
@@ -1099,8 +1101,7 @@ class WorkScheduleWindow(QMainWindow):
 
         # Odśwież dane w UI, jeśli były jakieś udane operacje
         if successful_updates > 0 and affected_pairs:
-            # Metoda _update_cells_with_new_symbols powinna poprawnie obsłużyć
-            # odświeżenie komórek, w których symbol został usunięty (stał się pusty)
+            # Wywołanie metody odświeżającej z poprawnie sformatowanymi danymi
             self._update_cells_with_new_symbols(affected_pairs)
             debug_print(f"Odświeżono {len(affected_pairs)} komórek po usunięciu symboli.")
 
