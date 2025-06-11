@@ -345,83 +345,92 @@ class AppStyles:
     def get_combobox_style(theme="dark"):
         if theme == "dark":
             return f"""
-                QComboBox {{
-                    background-color: {AppStyles.DARK_BACKGROUND_CONTROLS};
-                    color: {AppStyles.DARK_TEXT_PRIMARY};
-                    border: 1px solid {AppStyles.DARK_BORDER_SECONDARY};
-                    padding: {AppStyles.CONTROL_PADDING};
-                    border-radius: {AppStyles.BORDER_RADIUS};
-                }}
-                QComboBox:focus {{
-                    border: 1px solid {AppStyles.ACCENT_COLOR_DARK};
-                }}
-                QComboBox::drop-down {{
-                    subcontrol-origin: padding;
-                    subcontrol-position: top right;
-                    width: 20px;
-                    border-left-width: 1px;
-                    border-left-color: {AppStyles.DARK_BORDER_SECONDARY};
-                    border-left-style: solid;
-                    border-top-right-radius: {AppStyles.BORDER_RADIUS};
-                    border-bottom-right-radius: {AppStyles.BORDER_RADIUS};
-                }}
-                QComboBox::down-arrow {{
-                    /* Można użyć obrazka SVG dla strzałki */
-                    image: url(none); /* Reset domyślnej strzałki jeśli używamy własnej */
-                    width: 10px; height: 10px; /* Jeśli używamy własnej */
-                }}
-                QComboBox QAbstractItemView {{ /* Lista rozwijana */
-                    background-color: {AppStyles.DARK_BACKGROUND_CONTROLS};
-                    color: {AppStyles.DARK_TEXT_PRIMARY};
-                    border: 1px solid {AppStyles.DARK_BORDER_PRIMARY};
-                    selection-background-color: {AppStyles.SELECTION_BACKGROUND_DARK};
-                    selection-color: {AppStyles.DARK_TEXT_PRIMARY};
-                    padding: 2px;
-                    outline: 0;
-                }}
-                 QComboBox QAbstractItemView::item {{
-                    padding: 4px 6px; /* Padding dla elementów listy */
-                }}
-            """
-        else:
+                    QComboBox {{
+                        background-color: {AppStyles.DARK_BACKGROUND_CONTROLS};
+                        color: {AppStyles.DARK_TEXT_PRIMARY};
+                        border: 1px solid {AppStyles.DARK_BORDER_SECONDARY};
+                        padding: {AppStyles.CONTROL_PADDING};
+                        border-radius: {AppStyles.BORDER_RADIUS};
+                    }}
+                    QComboBox:focus {{
+                        border: 1px solid {AppStyles.ACCENT_COLOR_DARK};
+                    }}
+                    QComboBox::drop-down {{
+                        subcontrol-origin: padding;
+                        subcontrol-position: top right;
+                        width: 20px;
+                        border-left-width: 1px;
+                        border-left-color: {AppStyles.DARK_BORDER_SECONDARY};
+                        border-left-style: solid;
+                        border-top-right-radius: {AppStyles.BORDER_RADIUS};
+                        border-bottom-right-radius: {AppStyles.BORDER_RADIUS};
+                    }}
+                    QComboBox::down-arrow {{
+                        image: url(none);
+                        width: 10px; height: 10px;
+                    }}
+                    QComboBox QAbstractItemView {{ /* Lista rozwijana */
+                        background-color: {AppStyles.DARK_BACKGROUND_CONTROLS};
+                        color: {AppStyles.DARK_TEXT_PRIMARY};
+                        border: 1px solid {AppStyles.DARK_BORDER_PRIMARY};
+                        padding: 2px;
+                        outline: 0;
+                    }}
+                    /* --- NOWA, POPRAWIONA SEKCJA STYLU ZAZNACZENIA --- */
+                    QComboBox QAbstractItemView::item {{
+                        padding: 4px 6px;
+                    }}
+                    QComboBox QAbstractItemView::item:selected {{
+                        background-color: {AppStyles.DARK_BACKGROUND_HOVER}; /* Subtelne tło, takie jak przy najechaniu */
+                        color: {AppStyles.DARK_TEXT_PRIMARY}; /* Kolor tekstu bez zmian */
+                        border: 1px solid {AppStyles.ACCENT_COLOR_DARK}; /* Wyraźna ramka w kolorze akcentu */
+                        border-radius: 2px;
+                    }}
+                """
+        else:  # Motyw jasny
             return f"""
-                QComboBox {{
-                    background-color: {AppStyles.LIGHT_BACKGROUND_CONTROLS};
-                    color: {AppStyles.LIGHT_TEXT_PRIMARY};
-                    border: 1px solid {AppStyles.LIGHT_BORDER_PRIMARY};
-                    padding: {AppStyles.CONTROL_PADDING};
-                    border-radius: {AppStyles.BORDER_RADIUS};
-                }}
-                QComboBox:focus {{
-                    border: 1px solid {AppStyles.ACCENT_COLOR_LIGHT};
-                }}
-                QComboBox::drop-down {{
-                    subcontrol-origin: padding;
-                    subcontrol-position: top right;
-                    width: 20px;
-                    border-left-width: 1px;
-                    border-left-color: {AppStyles.LIGHT_BORDER_PRIMARY};
-                    border-left-style: solid;
-                    border-top-right-radius: {AppStyles.BORDER_RADIUS};
-                    border-bottom-right-radius: {AppStyles.BORDER_RADIUS};
-                }}
-                QComboBox::down-arrow {{
-                    image: url(none);
-                    width: 10px; height: 10px;
-                }}
-                QComboBox QAbstractItemView {{
-                    background-color: {AppStyles.LIGHT_BACKGROUND_CONTROLS};
-                    color: {AppStyles.LIGHT_TEXT_PRIMARY};
-                    border: 1px solid {AppStyles.LIGHT_BORDER_PRIMARY};
-                    selection-background-color: {AppStyles.SELECTION_BACKGROUND_LIGHT};
-                    selection-color: {AppStyles.LIGHT_BACKGROUND_CONTROLS};
-                    padding: 2px;
-                    outline: 0;
-                }}
-                QComboBox QAbstractItemView::item {{
-                    padding: 4px 6px;
-                }}
-            """
+                    QComboBox {{
+                        background-color: {AppStyles.LIGHT_BACKGROUND_CONTROLS};
+                        color: {AppStyles.LIGHT_TEXT_PRIMARY};
+                        border: 1px solid {AppStyles.LIGHT_BORDER_PRIMARY};
+                        padding: {AppStyles.CONTROL_PADDING};
+                        border-radius: {AppStyles.BORDER_RADIUS};
+                    }}
+                    QComboBox:focus {{
+                        border: 1px solid {AppStyles.ACCENT_COLOR_LIGHT};
+                    }}
+                    QComboBox::drop-down {{
+                        subcontrol-origin: padding;
+                        subcontrol-position: top right;
+                        width: 20px;
+                        border-left-width: 1px;
+                        border-left-color: {AppStyles.LIGHT_BORDER_PRIMARY};
+                        border-left-style: solid;
+                        border-top-right-radius: {AppStyles.BORDER_RADIUS};
+                        border-bottom-right-radius: {AppStyles.BORDER_RADIUS};
+                    }}
+                    QComboBox::down-arrow {{
+                        image: url(none);
+                        width: 10px; height: 10px;
+                    }}
+                    QComboBox QAbstractItemView {{
+                        background-color: {AppStyles.LIGHT_BACKGROUND_CONTROLS};
+                        color: {AppStyles.LIGHT_TEXT_PRIMARY};
+                        border: 1px solid {AppStyles.LIGHT_BORDER_PRIMARY};
+                        padding: 2px;
+                        outline: 0;
+                    }}
+                    /* --- NOWA, POPRAWIONA SEKCJA STYLU ZAZNACZENIA --- */
+                    QComboBox QAbstractItemView::item {{
+                        padding: 4px 6px;
+                    }}
+                    QComboBox QAbstractItemView::item:selected {{
+                        background-color: {AppStyles.LIGHT_BACKGROUND_HOVER}; /* Subtelne tło, takie jak przy najechaniu */
+                        color: {AppStyles.LIGHT_TEXT_PRIMARY}; /* Zmiana na ciemny tekst dla kontrastu */
+                        border: 1px solid {AppStyles.ACCENT_COLOR_LIGHT}; /* Wyraźna ramka w kolorze akcentu */
+                        border-radius: 2px;
+                    }}
+                """
 
     @staticmethod
     def get_left_panel_style(theme="dark"):  # Panel filtrów
