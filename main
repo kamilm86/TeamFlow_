@@ -2605,33 +2605,40 @@ class WorkScheduleWindow(QMainWindow):
             conn.commit()
             conn.close()
 
-            # --- NOWA, BARDZIEJ NIEZAWODNA LOGIKA ANALIZY WYNIKÓW ---
             returned_symbol = symbol
             success = True
             message = "Operacja zakończona pomyślnie"
 
             for row in all_results:
                 if row and len(row) > 0 and row[0] is not None:
-                    value_str = str(row[0]).strip()
-                    if not value_str:
-                        continue  # Pomiń puste wyniki
+                    raw_value = row[0]
 
-                    # Heurystyka: zakładamy, że symbole są krótkie i nie zawierają spacji.
-                    # Wszystko inne to komunikat.
+                    # --- NOWA, KLUCZOWA ZMIANA ---
+                    # Sprawdzamy, czy procedura nie zwróciła numerycznego 0,
+                    # które traktujemy jako sygnał sukcesu i ignorujemy.
+                    if isinstance(raw_value, int) and raw_value == 0:
+                        continue # Przejdź do następnego wyniku
+                    
+                    value_str = str(raw_value).strip()
+                    if not value_str:
+                        continue
+
+                    # Sprawdzamy również dla tekstowego "0"
+                    if value_str == "0":
+                        continue
+                    # --- KONIEC KLUCZOWEJ ZMIANY ---
+
                     is_likely_a_symbol = ' ' not in value_str and len(value_str) <= 50
 
                     if is_likely_a_symbol:
                         returned_symbol = value_str
                         debug_print(f"Procedura zwróciła nowy symbol: {value_str}")
                     else:
-                        # Jeśli zwrócony tekst nie wygląda na symbol, traktujemy go jako
-                        # informację zwrotną lub błąd, który powinien zatrzymać dalsze
-                        # pozytywne przetwarzanie.
                         success = False
                         message = value_str
                         debug_print(f"Procedura zwróciła komunikat (traktowany jako błąd): {value_str}")
-                        break  # Znaleziono błąd, przerwij dalszą analizę wyników
-
+                        break
+            
             if success:
                 self._update_modification_date()
 
@@ -2642,7 +2649,7 @@ class WorkScheduleWindow(QMainWindow):
             }
 
         except Exception as e:
-            log_error(f"Błąd procedury p_P_ZZ_ImportZmianyNaSerwer_v3: {e}")
+            log_error(f"Błąd procedury p_P_ZZ_ImportZmianNaSerwer_v4: {e}")
             return {
                 "success": False,
                 "message": f"Błąd bazy danych: {str(e)}",
