@@ -607,32 +607,15 @@ class ScheduleChangeDialog(QDialog):
 
     def setup_ui(self):
         main_layout = QVBoxLayout(self)
-
         header_label = QLabel("Edycja zmian w grafiku")
-        # header_label.setFont(self.parent_font) # Zakładając, że parent_font jest dostępne lub ustaw globalnie
         main_layout.addWidget(header_label)
-
         self.cells_table = QTableWidget()
         self.cells_table.setColumnCount(7)
-        self.cells_table.setHorizontalHeaderLabels([
-            "Data", "Użytkownik", "Symbol", "Lokalizacja",
-            "Godzina rozpoczęcia", "Liczba godzin", "Akcje"
-        ])
-
-        # Ustaw właściwości dla lepszego wyświetlania
-        self.cells_table.horizontalHeader().setStretchLastSection(False)
-        self.cells_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Data
-        self.cells_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Użytkownik
-        self.cells_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)  # Symbol
-        self.cells_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeToContents)  # Lokalizacja
-        self.cells_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)  # Godzina rozpoczęcia
-        self.cells_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents)  # Liczba godzin
-        self.cells_table.horizontalHeader().setSectionResizeMode(6, QHeaderView.Stretch)  # Akcje
-
-        # Dodaj wiersze dla każdej komórki
+        self.cells_table.setHorizontalHeaderLabels(
+            ["Data", "Użytkownik", "Symbol", "Lokalizacja", "Godzina rozpoczęcia", "Liczba godzin", "Akcje"])
+        self.cells_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        self.cells_table.horizontalHeader().setStretchLastSection(True)
         self.cells_table.setRowCount(len(self.flattened_cells))
-
-        # Ustal, czy użytkownik może edytować czas i godziny
         user_can_edit_time_hours = self.user_role in ["Pracownik WPR", "Lider OUT"]
 
         for row, cell in enumerate(self.flattened_cells):
@@ -640,66 +623,65 @@ class ScheduleChangeDialog(QDialog):
             date_item = QTableWidgetItem(self.format_date(date_str))
             date_item.setFlags(date_item.flags() & ~Qt.ItemIsEditable)
             self.cells_table.setItem(row, 0, date_item)
-
             user_name = cell.get('uzytkownik_dane', 'Nieznany')
             user_item = QTableWidgetItem(user_name)
             user_item.setFlags(user_item.flags() & ~Qt.ItemIsEditable)
             self.cells_table.setItem(row, 1, user_item)
-
             symbol = cell.get('symbol', '')
             symbol_item = QTableWidgetItem(symbol)
             symbol_item.setFlags(symbol_item.flags() & ~Qt.ItemIsEditable)
             self.cells_table.setItem(row, 2, symbol_item)
 
             from symbol_parser import parse_symbol
-            parsed_symbol = parse_symbol(symbol)
-            location_code = parsed_symbol['location'] if parsed_symbol['location'] else "h"
-            start_hour = parsed_symbol['start_hour'] if parsed_symbol['start_hour'] is not None else 8
-            work_hours = parsed_symbol['work_hours'] if parsed_symbol['work_hours'] is not None else 8
+            parsed_symbol = parse_symbol(cell.get('symbol', ''))
+
+            location_code = parsed_symbol.get('location') or cell.get('lokalizacja_domyslna', 'h')
+            start_hour = parsed_symbol.get('start_hour', 8)
+            work_hours = parsed_symbol.get('work_hours')
+            if work_hours is None:
+                work_hours = cell.get('etat', 8.0)
+
+            try:
+                work_hours = int(float(work_hours))
+            except (ValueError, TypeError):
+                work_hours = 8  # Bezpieczny fallback jako int
 
             location_combo = QComboBox()
-            location_combo.addItem("SBC (s)", "s")
-            location_combo.addItem("mPrzystanek (p)", "p")
+            location_combo.addItem("SBC (s)", "s");
+            location_combo.addItem("mPrzystanek (p)", "p");
             location_combo.addItem("HomeOffice (h)", "h")
             location_index = {'s': 0, 'p': 1, 'h': 2}.get(location_code, 2)
             location_combo.setCurrentIndex(location_index)
             self.cells_table.setCellWidget(row, 3, location_combo)
-
             time_button = QPushButton(str(start_hour))
-            time_button.setProperty("cell_index", row)
+            time_button.setProperty("cell_index", row);
             time_button.setProperty("field_type", "hour")
             time_button.clicked.connect(self.show_digit_selection)
-            time_button.setMinimumWidth(50)
-            time_button.setEnabled(user_can_edit_time_hours)  # Ustawienie stanu aktywności
+            time_button.setMinimumWidth(50);
+            time_button.setEnabled(user_can_edit_time_hours)
             self.cells_table.setCellWidget(row, 4, time_button)
-
-            hours_button = QPushButton(str(work_hours))
-            hours_button.setProperty("cell_index", row)
+            hours_button = QPushButton(str(work_hours))  # Teraz work_hours jest już int
+            hours_button.setProperty("cell_index", row);
             hours_button.setProperty("field_type", "hours")
             hours_button.clicked.connect(self.show_digit_selection)
-            hours_button.setMinimumWidth(50)
-            hours_button.setEnabled(user_can_edit_time_hours)  # Ustawienie stanu aktywności
+            hours_button.setMinimumWidth(50);
+            hours_button.setEnabled(user_can_edit_time_hours)
             self.cells_table.setCellWidget(row, 5, hours_button)
-
-            # Ustal, czy użytkownik może edytować kontrolki dla TEGO WIERSZA
             can_edit_this_row_controls = user_can_edit_time_hours or (symbol != "")
-
             apply_button = QPushButton("Zastosuj")
-            apply_button.setStyleSheet(
-                "background-color: #2196F3; color: white;")  # Ten styl może być nadpisany przez apply_dialog_theme
             apply_button.setProperty("cell_index", row)
             apply_button.clicked.connect(self.apply_change_by_index)
-            apply_button.setEnabled(can_edit_this_row_controls)  # Ustawienie stanu aktywności
+            apply_button.setEnabled(can_edit_this_row_controls)
             self.cells_table.setCellWidget(row, 6, apply_button)
 
         main_layout.addWidget(self.cells_table)
-
-        button_layout = QHBoxLayout() # Dodaj przyciski na dole
-        self.close_button = QPushButton("Zamknij") # Przycisk zamknięcia
+        button_layout = QHBoxLayout()
+        self.close_button = QPushButton("Zamknij")
         self.close_button.clicked.connect(self.close)
-        button_layout.addStretch()
+        button_layout.addStretch();
         button_layout.addWidget(self.close_button)
         main_layout.addLayout(button_layout)
+        self.apply_dialog_theme()
 
     def show_digit_selection(self):
         """
@@ -731,7 +713,8 @@ class ScheduleChangeDialog(QDialog):
 
     def apply_change_by_index(self):
         """
-        POPRAWIONA WERSJA: Używa tej samej procedury co edycja klawiatury i "Wstaw nieobecność"
+        POPRAWIONA WERSJA: Niezawodnie odczytuje wartości z kontrolek, buduje
+        symbol i wywołuje mechanizm aktualizacji w głównym oknie.
         """
         button = self.sender()
         if not button:
@@ -751,15 +734,18 @@ class ScheduleChangeDialog(QDialog):
             QMessageBox.warning(self, "Błąd", "Nie można odczytać wartości z kontrolek.", QMessageBox.Ok)
             return
 
+        # --- NOWA, NIEZAWODNA LOGIKA ODCZYTU WARTOŚCI ---
+        try:
+            # Używamy int(float(...)) aby poprawnie obsłużyć teksty takie jak "8" i "8.0"
+            start_hour = int(float(time_button.text()))
+            work_hours = int(float(hours_button.text()))
+        except (ValueError, TypeError) as e:
+            log_error(f"Błąd konwersji wartości z przycisku: {e}")
+            QMessageBox.warning(self, "Błąd danych", "Wprowadzona wartość godzin jest nieprawidłowa.")
+            return
+        # --- KONIEC NOWEJ LOGIKI ---
+
         location = location_combo.currentData()
-
-        # Upewnij się, że pobieramy wartości liczbowe, a nie tekst przycisku, jeśli to możliwe
-        start_hour_prop = time_button.property("selected_value")
-        start_hour = int(start_hour_prop) if start_hour_prop is not None else int(time_button.text())
-
-        work_hours_prop = hours_button.property("selected_value")
-        work_hours = int(work_hours_prop) if work_hours_prop is not None else int(hours_button.text())
-
         user_id = cell.get('uzytkownik_id')
         date_str = cell.get('date_str')
         nr_kadrowy = cell.get('nr_kadrowy')
@@ -768,53 +754,46 @@ class ScheduleChangeDialog(QDialog):
             QMessageBox.warning(self, "Błąd", "Niepełne dane komórki do przetworzenia.", QMessageBox.Ok)
             return
 
-        new_symbol = f"{location};{start_hour};{work_hours};"
-        from symbol_parser import parse_symbol
+        # Budowanie nowego symbolu
+        from symbol_parser import parse_symbol, build_symbol
         original_parsed_symbol = parse_symbol(cell.get('symbol', ''))
-        if original_parsed_symbol.get('special_symbol'):
-           new_symbol += original_parsed_symbol['special_symbol']
+        new_symbol = build_symbol(
+            location=location,
+            start_hour=start_hour,
+            work_hours=work_hours,
+            special_symbol=original_parsed_symbol.get('special_symbol')
+        )
 
         try:
             year, month, day = date_str.split('-')
-            date_obj = f"{year}-{month}-{day}"
 
             if self.parent_widget and hasattr(self.parent_widget, '_call_import_changes_procedure'):
-                result = self.parent_widget._call_import_changes_procedure(  # ZMIANA: self.parent_widget
-                    nr_kadrowy=nr_kadrowy,
-                    rok=int(year),
-                    miesiac=int(month),
-                    data=date_obj,
-                    symbol=new_symbol
+                result = self.parent_widget._call_import_changes_procedure(
+                    nr_kadrowy=nr_kadrowy, rok=int(year), miesiac=int(month), data=date_str, symbol=new_symbol
                 )
             else:
-                # To nie powinno się zdarzyć, jeśli dialog jest poprawnie tworzony
-                QMessageBox.critical(self, "Błąd krytyczny",
-                                     "Nie można uzyskać dostępu do funkcji zapisu zmian (brak rodzica lub metody).",
-                                     QMessageBox.Ok)
+                QMessageBox.critical(self, "Błąd krytyczny", "Brak dostępu do funkcji zapisu zmian.")
                 return
 
-            if result.get("success", False):  # Bezpieczne pobranie klucza "success"
-                button.setText("Zastosowano ✓")  # Zmieniono tekst na bardziej ogólny
+            if result.get("success", False):
+                button.setText("Zastosowano ✓")
                 button.setStyleSheet("background-color: #4CAF50; color: white;")
+                returned_symbol = result.get('returned_symbol', new_symbol)
 
                 symbol_item = self.cells_table.item(cell_index, 2)
                 if symbol_item:
-                    symbol_item.setText(new_symbol)  # Aktualizuj symbol w tabeli dialogu
+                    symbol_item.setText(returned_symbol)
 
-                if self.parent_widget and hasattr(self.parent_widget, '_refresh_data_after_symbol_changes'):
-                    self.parent_widget._refresh_data_after_symbol_changes([(user_id, date_str)])
+                # Wywołanie poprawnego mechanizmu odświeżania w głównym oknie
+                if self.parent_widget and hasattr(self.parent_widget, '_update_cells_with_new_symbols'):
+                    self.parent_widget._update_cells_with_new_symbols([(user_id, date_str, returned_symbol)])
             else:
                 QMessageBox.warning(self, "Błąd zapisu", result.get("message", "Nieznany błąd podczas zapisu zmian."),
                                     QMessageBox.Ok)
 
         except Exception as e:
-            # Logowanie błędu jest bardzo ważne
-            # from debug_utils import log_error # Upewnij się, że jest import
-            # log_error(f"Błąd w ScheduleChangeDialog.apply_change_by_index: {e}", exception=e)
-            QMessageBox.critical(self, "Błąd krytyczny",
-                                 f"Wystąpił nieoczekiwany błąd podczas stosowania zmiany: {str(e)}", QMessageBox.Ok)
-
-
+            log_error(f"Błąd w ScheduleChangeDialog.apply_change_by_index: {e}", exception=e)
+            QMessageBox.critical(self, "Błąd krytyczny", f"Wystąpił nieoczekiwany błąd: {str(e)}", QMessageBox.Ok)
     def format_date(self, date_str):
             """Formatuje ciąg daty z YYYY-MM-DD do DD.MM.YYYY"""
             try:
