@@ -868,68 +868,54 @@ class WorkScheduleWindow(QMainWindow):
 
     def _apply_quick_changes(self, schedule_cells, start_hour):
         """
-        UPROSZCZONA WERSJA: Przekazuje tylko cyfrę do bazy i pobiera gotowy symbol
+        POPRAWIONA WERSJA: Stosuje nową godzinę rozpoczęcia, konwertując 'etat' na int.
         """
-        try:
-            successful_updates = 0
-            failed_updates = 0
-            error_messages = []
-            affected_pairs = []
+        updated_info = []
 
-            for cell_data in schedule_cells:
-                user_id = cell_data.get('uzytkownik_id')
-                date_str = cell_data.get('date_str')
-                nr_kadrowy = cell_data.get('nr_kadrowy')
+        for cell_data in schedule_cells:
+            current_symbol = cell_data.get('symbol', '')
 
-                if not user_id or not date_str or not nr_kadrowy:
-                    failed_updates += 1
-                    if not nr_kadrowy:
-                        error_messages.append(f"Brak numeru kadrowego dla użytkownika {user_id}")
-                    continue
+            location, work_hours, special = None, None, None
 
-                try:
-                    year, month, day = date_str.split('-')
-                    date_obj = f"{year}-{month}-{day}"
+            if current_symbol and current_symbol.strip():
+                parsed = parse_symbol(current_symbol)
+                location = parsed.get('location')
+                work_hours = parsed.get('work_hours')
+                special = parsed.get('special_symbol')
+            else:
+                location = cell_data.get('lokalizacja_domyslna')
+                work_hours = cell_data.get('etat')
 
-                    # MAKSYMALNE UPROSZCZENIE: Przekaż tylko cyfrę
-                    result = self._call_import_changes_procedure(
-                        nr_kadrowy=nr_kadrowy,
-                        rok=int(year),
-                        miesiac=int(month),
-                        data=date_obj,
-                        symbol=str(start_hour)  # TYLKO CYFRA!
-                    )
+            # Niezawodne sprawdzenie i konwersja na int
+            try:
+                # --- ZMIANA TUTAJ ---
+                # Najpierw konwertujemy na float, a potem na int
+                work_hours = int(float(work_hours))
+            except (ValueError, TypeError):
+                work_hours = 8  # Bezpieczny fallback jako int
 
-                    if result['success']:
-                        successful_updates += 1
-                        affected_pairs.append((user_id, date_str))
-                        debug_print(f"Sukces edycji klawiatury: {user_id}, {date_str}, cyfra: {start_hour}")
-                    else:
-                        failed_updates += 1
-                        error_msg = result.get('message', 'Nieznany błąd')
-                        error_messages.append(f"{nr_kadrowy} ({date_str}): {error_msg}")
-                        debug_print(f"Błąd edycji klawiatury: {error_msg}")
-
-                except Exception as e:
-                    failed_updates += 1
-                    error_messages.append(f"{nr_kadrowy} ({date_str}): {str(e)}")
-                    log_error(f"Błąd procedury dla {user_id}, {date_str}: {e}")
-
-            # Odśwież zmienione komórki
-            if successful_updates > 0 and affected_pairs:
-                self._refresh_data_after_symbol_changes(affected_pairs)
-
-            # Pokaż wyniki
-            self._show_keyboard_edit_results(successful_updates, failed_updates, error_messages, start_hour)
-
-        except Exception as e:
-            log_error(f"Błąd podczas edycji klawiatury: {e}")
-            QMessageBox.critical(
-                self,
-                "Błąd",
-                f"Wystąpił błąd podczas edycji klawiatury: {str(e)}",
-                QMessageBox.Ok
+            new_symbol = build_symbol(
+                location=location,
+                start_hour=start_hour,
+                work_hours=work_hours,
+                special_symbol=special
             )
+
+            try:
+                user_id, date_str, nr_kadrowy = cell_data.get('uzytkownik_id'), cell_data.get(
+                    'date_str'), cell_data.get('nr_kadrowy')
+                year, month, _ = date_str.split('-')
+                result = self._call_import_changes_procedure(
+                    nr_kadrowy=nr_kadrowy, rok=int(year), miesiac=int(month), data=date_str, symbol=new_symbol
+                )
+                if result.get('success'):
+                    updated_info.append((user_id, date_str, result.get('returned_symbol')))
+            except Exception as e:
+                log_error(f"Błąd wywołania procedury w _apply_quick_changes: {e}")
+
+        if updated_info:
+            self._update_cells_with_new_symbols(updated_info)
+            self.statusBar().showMessage(f"Pomyślnie zaktualizowano {len(updated_info)} komórek.", 3000)
 
     def _show_keyboard_edit_results(self, successful_updates, failed_updates, error_messages, start_hour):
         """
@@ -1055,7 +1041,7 @@ class WorkScheduleWindow(QMainWindow):
     def _clear_cells_symbols(self, schedule_cells: list):
         """
         Usuwa symbole z podanych komórek poprzez wywołanie procedury
-        p_P_ZZ_ImportZmianNaSerwer_v4 z pustym symbolem.
+        p_P_ZZ_ImportZmianyNaSerwer_v3 z pustym symbolem.
         """
         successful_updates = 0
         failed_updates = 0
@@ -1113,9 +1099,9 @@ class WorkScheduleWindow(QMainWindow):
 
         # Odśwież dane w UI, jeśli były jakieś udane operacje
         if successful_updates > 0 and affected_pairs:
-            # Metoda _refresh_data_after_symbol_changes powinna poprawnie obsłużyć
+            # Metoda _update_cells_with_new_symbols powinna poprawnie obsłużyć
             # odświeżenie komórek, w których symbol został usunięty (stał się pusty)
-            self._refresh_data_after_symbol_changes(affected_pairs)
+            self._update_cells_with_new_symbols(affected_pairs)
             debug_print(f"Odświeżono {len(affected_pairs)} komórek po usunięciu symboli.")
 
         # Pokaż wyniki operacji
@@ -2160,7 +2146,7 @@ class WorkScheduleWindow(QMainWindow):
     def show_insert_symbol_dialog(self):
         """
         Pokazuje okno dialogowe do wstawiania symbolu nieobecności.
-        NOWA WERSJA z procedurą p_P_ZZ_ImportZmianNaSerwer_v4
+        NOWA WERSJA z procedurą p_P_ZZ_ImportZmianyNaSerwer_v3
         """
         dialog = InsertSymbolDialog(self)
         if dialog.exec():
@@ -2408,14 +2394,14 @@ class WorkScheduleWindow(QMainWindow):
         try:
             canceled_count = 0
             if events_to_cancel:
-                # _cancel_delegations teraz zajmuje się pełnym odświeżeniem DataProvider i UI dla anulowanych zdarzeń
                 canceled_count = self._cancel_delegations(events_to_cancel)
                 debug_print(f"Odwołano {canceled_count} delegacji przed wstawieniem nieobecności.")
 
-            affected_pairs_for_symbol_change = []
             successful_symbol_updates = 0
             failed_symbol_updates = 0
             error_messages_symbol = []
+            # Ta lista musi zawierać krotki 3-elementowe
+            affected_pairs_for_symbol_change = []
 
             for cell_data in schedule_cells:
                 user_id = cell_data.get('uzytkownik_id')
@@ -2431,21 +2417,24 @@ class WorkScheduleWindow(QMainWindow):
                 new_symbol = self._build_new_symbol_with_absence_fixed(current_symbol, special_symbol, cell_data)
 
                 try:
-                    year_val, month_val, day_val = map(int, date_str.split('-'))  # Zmieniono nazwy zmiennych
+                    year_val, month_val, day_val = map(int, date_str.split('-'))
 
                     result = self._call_import_changes_procedure(
                         nr_kadrowy=nr_kadrowy,
                         rok=year_val,
                         miesiac=month_val,
-                        data=date_str,  # Przekazujemy zwalidowany date_str
+                        data=date_str,
                         symbol=new_symbol
                     )
 
                     if result['success']:
                         successful_symbol_updates += 1
-                        affected_pairs_for_symbol_change.append((user_id, date_str))
-                        debug_print(
-                            f"Sukces wstawienia symbolu nieobecności: {user_id}, {date_str}, symbol: {result.get('returned_symbol', new_symbol)}")
+                        # --- KLUCZOWA POPRAWKA ---
+                        # Upewniamy się, że zawsze dodajemy 3 elementy do krotki
+                        affected_pairs_for_symbol_change.append(
+                            (user_id, date_str, result.get('returned_symbol'))
+                        )
+                        debug_print(f"Sukces wstawienia symbolu nieobecności: {user_id}, {date_str}, symbol: {result.get('returned_symbol', new_symbol)}")
                     else:
                         failed_symbol_updates += 1
                         error_msg = result.get('message', 'Nieznany błąd')
@@ -2455,11 +2444,11 @@ class WorkScheduleWindow(QMainWindow):
                     error_messages_symbol.append(f"{nr_kadrowy} ({date_str}): {str(e_proc)}")
                     log_error(f"Błąd procedury importu dla {user_id}, {date_str}: {e_proc}", exception=e_proc)
 
-            # Odśwież symbole w grafiku (to również może wpłynąć na ikony, jeśli symbol się zmienił)
+            # Odśwież symbole w grafiku, przekazując listę z poprawnymi danymi
             if successful_symbol_updates > 0:
-                self._refresh_data_after_symbol_changes(affected_pairs_for_symbol_change)
+                self._update_cells_with_new_symbols(affected_pairs_for_symbol_change)
 
-            # Pokaż wyniki operacji (można rozbudować, aby uwzględnić błędy z obu części)
+            # Pokaż wyniki operacji
             self._show_symbol_change_results(successful_symbol_updates, failed_symbol_updates, error_messages_symbol,
                                              events_to_cancel if canceled_count > 0 else [])
 
@@ -2471,33 +2460,31 @@ class WorkScheduleWindow(QMainWindow):
 
     def clear_special_symbol_from_selected_cells(self):
         """
-        Usuwa tylko symbol specjalny z zaznaczonych komórek, zachowując godziny pracy.
-        Funkcjonalność dostępna tylko dla "Pracownik WPR" pod klawiszem F12.
+        POPRAWIONA WERSJA: Usuwa tylko symbol specjalny z zaznaczonych komórek,
+        używając nowego, niezawodnego mechanizmu odświeżania UI.
         """
         # 1. Sprawdzenie uprawnień
         if self.current_user_role != "Pracownik WPR":
             self.statusBar().showMessage("Brak uprawnień do wykonania tej operacji.", 3000)
             return
 
-        # 2. Pobranie zaznaczonych komórek
+        # 2. Pobranie i walidacja zaznaczonych komórek
         selected_cells_data = self.table.get_data_for_selected_cells()
         if not selected_cells_data:
             QMessageBox.warning(self, "Brak zaznaczenia", "Nie zaznaczono komórek do modyfikacji.")
             return
 
-        # 3. Filtrowanie komórek, które FAKTYCZNIE mają symbol specjalny do usunięcia
-        cells_to_modify = []
-        for cell in selected_cells_data:
-            symbol = cell.get('symbol', '')
-            if symbol and parse_symbol(symbol).get('special_symbol'):
-                cells_to_modify.append(cell)
+        cells_to_modify = [
+            cell for cell in selected_cells_data
+            if cell.get('symbol') and parse_symbol(cell.get('symbol')).get('special_symbol')
+        ]
 
         if not cells_to_modify:
             QMessageBox.information(self, "Brak zmian",
                                     "W zaznaczonych komórkach nie ma symboli specjalnych do usunięcia.")
             return
 
-        # 4. Dialog potwierdzenia
+        # 3. Dialog potwierdzenia
         changes_info = f"Czy na pewno chcesz usunąć symbole specjalne z {len(cells_to_modify)} komórek?\n(Godziny pracy i lokalizacja zostaną zachowane)"
         reply = QMessageBox.question(self, "Potwierdzenie operacji", changes_info,
                                      QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
@@ -2505,29 +2492,27 @@ class WorkScheduleWindow(QMainWindow):
         if reply != QMessageBox.Yes:
             return
 
-        # 5. Logika modyfikacji i zapisu
-        successful_updates = 0
-        failed_updates = 0
-        error_messages = []
-        affected_pairs = []
+        # 4. Logika modyfikacji i zapisu z nowym odświeżaniem
+        updated_info = []
 
         for cell_data in cells_to_modify:
-            user_id = cell_data.get('uzytkownik_id')
-            date_str = cell_data.get('date_str')
-            nr_kadrowy = cell_data.get('nr_kadrowy')
             current_symbol = cell_data.get('symbol', '')
-
-            # Dekompozycja starego symbolu i budowa nowego bez części specjalnej
             parsed = parse_symbol(current_symbol)
+
+            # Budowa nowego symbolu bez części specjalnej
             new_symbol = build_symbol(
                 location=parsed.get('location'),
                 start_hour=parsed.get('start_hour'),
                 work_hours=parsed.get('work_hours'),
-                special_symbol=''  # <-- Kluczowa zmiana: brak symbolu specjalnego
+                special_symbol=None
             )
 
             try:
-                year, month, day = date_str.split('-')
+                user_id = cell_data.get('uzytkownik_id')
+                date_str = cell_data.get('date_str')
+                nr_kadrowy = cell_data.get('nr_kadrowy')
+                year, month, _ = date_str.split('-')
+
                 result = self._call_import_changes_procedure(
                     nr_kadrowy=nr_kadrowy,
                     rok=int(year),
@@ -2537,82 +2522,59 @@ class WorkScheduleWindow(QMainWindow):
                 )
 
                 if result.get('success'):
-                    successful_updates += 1
-                    affected_pairs.append((user_id, date_str))
-                else:
-                    failed_updates += 1
-                    error_messages.append(f"{nr_kadrowy} ({date_str}): {result.get('message', 'Błąd')}")
+                    # Zbieramy informacje zwrotne do jednej, zbiorczej aktualizacji UI
+                    updated_info.append((user_id, date_str, result.get('returned_symbol')))
             except Exception as e:
-                failed_updates += 1
-                error_messages.append(f"{nr_kadrowy} ({date_str}): {str(e)}")
+                log_error(f"Błąd wywołania procedury w clear_special_symbol_from_selected_cells: {e}")
 
-        # 6. Odświeżenie interfejsu i pokazanie wyników
-        if successful_updates > 0:
-            self._refresh_data_after_symbol_changes(affected_pairs)
-
-        # Użyj istniejącej metody do pokazania wyników
-        self._show_keyboard_edit_results(successful_updates, failed_updates, error_messages, "Usunięcie symbolu")
+        # 5. Wywołanie nowej, niezawodnej metody odświeżającej UI
+        if updated_info:
+            self._update_cells_with_new_symbols(updated_info)
+            self.statusBar().showMessage(f"Pomyślnie zmodyfikowano {len(updated_info)} komórek.", 3000)
 
     def _build_new_symbol_with_absence_fixed(self, current_symbol, special_symbol, cell_data):
         """
-        NOWA METODA: Buduje nowy symbol z nieobecnością używając build_symbol z symbol_parser.py
-
-        Args:
-            current_symbol (str): Obecny symbol w komórce
-            special_symbol (str): Symbol nieobecności (np. "CO", "UZ")
-            cell_data (dict): Dane komórki
-
-        Returns:
-            str: Nowy symbol z nieobecnością
+        POPRAWIONA WERSJA: Buduje nowy symbol z absencją, poprawnie obsługując
+        zarówno puste, jak i wypełnione komórki.
         """
         from symbol_parser import parse_symbol, build_symbol
 
-        # Jeśli nie ma obecnego symbolu, użyj tylko symbolu nieobecności
-        if not current_symbol or current_symbol.strip() == '':
-            debug_print(f"Pusta komórka - wstawiam tylko symbol nieobecności: {special_symbol}")
-            return special_symbol
+        # Inicjalizacja zmiennych
+        location = None
+        start_hour = None
+        work_hours = None
 
-        # Parsuj obecny symbol
-        parsed = parse_symbol(current_symbol)
-        debug_print(f"Parsed current symbol '{current_symbol}': {parsed}")
+        if current_symbol and current_symbol.strip():
+            # Komórka NIE JEST pusta: parsujemy istniejący symbol
+            debug_print(f"Komórka niepusta. Parsowanie symbolu: '{current_symbol}'")
+            parsed = parse_symbol(current_symbol)
+            location = parsed.get('location')
+            start_hour = parsed.get('start_hour')
+            work_hours = parsed.get('work_hours')
+        else:
+            # --- NOWA, POPRAWNA LOGIKA DLA PUSTEJ KOMÓRKI ---
+            debug_print("Komórka pusta. Używam danych domyślnych.")
+            # Pobierz domyślną lokalizację i godziny z etatu
+            location = cell_data.get('lokalizacja_domyslna')
+            work_hours = cell_data.get('etat')
+            # Dla absencji w dzień wolny, domyślna godzina rozpoczęcia to 8
+            start_hour = 8
 
-        # Pobierz lokalizację domyślną z danych komórki jeśli brak w symbolu
-        location = parsed.get('location')
-        if not location:
-            location = cell_data.get('lokalizacja_domyslna', 'h')  # Domyślnie 'h'
-
-        # Zachowaj godziny z obecnego symbolu (jeśli są)
-        start_hour = parsed.get('start_hour')
-        work_hours = parsed.get('work_hours')
-
-        # Zbuduj nowy symbol z zachowaniem lokalizacji i godzin, ale z nowym symbolem specjalnym
+        # Budujemy nowy symbol z nowym symbolem specjalnym, ale zachowując godziny/lokalizację
         new_symbol = build_symbol(
-            # location=location,
+            location=location,
             start_hour=start_hour,
             work_hours=work_hours,
             special_symbol=special_symbol
         )
 
-        # Jeśli build_symbol zwróci pusty string (może się zdarzyć), użyj samego symbolu nieobecności
-        if not new_symbol:
-            new_symbol = special_symbol
-
-        debug_print(f"Zbudowano nowy symbol: '{current_symbol}' -> '{new_symbol}'")
+        debug_print(f"Zbudowano nowy symbol: '{new_symbol}'")
         return new_symbol
 
     def _call_import_changes_procedure(self, nr_kadrowy, rok, miesiac, data, symbol):
         """
-        Wywołuje procedurę p_P_ZZ_ImportZmianNaSerwer_v4
-
-        Args:
-            nr_kadrowy (str): Numer kadrowy
-            rok (int): Rok
-            miesiac (int): Miesiąc
-            data (str): Data w formacie YYYY-MM-DD
-            symbol (str): Symbol do wstawienia
-
-        Returns:
-            dict: Wynik procedury {"success": bool, "message": str, "returned_symbol": str}
+        POPRAWIONA WERSJA: Wywołuje procedurę i bardziej niezawodnie interpretuje jej wyniki.
+        Każdy komunikat tekstowy, który nie jest nowym symbolem, jest traktowany jako błąd.
         """
         try:
             from db_connector import DatabaseConnector
@@ -2623,18 +2585,11 @@ class WorkScheduleWindow(QMainWindow):
             debug_print(
                 f"Wywołanie procedury: nr_kadrowy={nr_kadrowy}, rok={rok}, miesiac={miesiac}, data={data}, symbol={symbol}")
 
-            # Wywołaj procedurę składowaną
             cursor.execute("""
-                EXEC [dbo].[p_P_ZZ_ImportZmianNaSerwer_v4] 
-                    @NumerKadrowy = ?, 
-                    @Rok = ?, 
-                    @Miesiac = ?, 
-                    @Data = ?, 
-                    @Symbol = ?, 
-                    @CzyPobieranieSugestii = ?
+                EXEC [dbo].[p_P_ZZ_ImportZmianyNaSerwer_v3] 
+                    @NumerKadrowy = ?, @Rok = ?, @Miesiac = ?, @Data = ?, @Symbol = ?, @CzyPobieranieSugestii = ?
             """, (nr_kadrowy, rok, miesiac, data, symbol, None))
 
-            # Pobierz wszystkie wyniki procedury
             all_results = []
             while True:
                 try:
@@ -2649,34 +2604,33 @@ class WorkScheduleWindow(QMainWindow):
             conn.commit()
             conn.close()
 
-            # Analizuj wyniki procedury
-            returned_symbol = symbol  # Domyślnie zwróć oryginalny symbol
+            # --- NOWA, BARDZIEJ NIEZAWODNA LOGIKA ANALIZY WYNIKÓW ---
+            returned_symbol = symbol
             success = True
-            message = "Symbol został pomyślnie wstawiony"
+            message = "Operacja zakończona pomyślnie"
 
-            # Sprawdź czy procedura zwróciła komunikat
             for row in all_results:
-                if row and len(row) > 0:
-                    for value in row:
-                        value_str = str(value) if value is not None else ""
+                if row and len(row) > 0 and row[0] is not None:
+                    value_str = str(row[0]).strip()
+                    if not value_str:
+                        continue  # Pomiń puste wyniki
 
-                        # Sprawdź czy to komunikat o błędzie
-                        if any(keyword in value_str.lower() for keyword in
-                               ['błąd', 'error', 'nie można', 'nieprawidłowy']):
-                            success = False
-                            message = value_str
-                            debug_print(f"Procedura zwróciła błąd: {value_str}")
-                            break
+                    # Heurystyka: zakładamy, że symbole są krótkie i nie zawierają spacji.
+                    # Wszystko inne to komunikat.
+                    is_likely_a_symbol = ' ' not in value_str and len(value_str) <= 50
 
-                        # Sprawdź czy to nowy symbol (jeśli różni się od wejściowego)
-                        elif value_str and value_str != symbol and len(value_str) <= 50:
-                            returned_symbol = value_str
-                            debug_print(f"Procedura zwróciła nowy symbol: {value_str}")
+                    if is_likely_a_symbol:
+                        returned_symbol = value_str
+                        debug_print(f"Procedura zwróciła nowy symbol: {value_str}")
+                    else:
+                        # Jeśli zwrócony tekst nie wygląda na symbol, traktujemy go jako
+                        # informację zwrotną lub błąd, który powinien zatrzymać dalsze
+                        # pozytywne przetwarzanie.
+                        success = False
+                        message = value_str
+                        debug_print(f"Procedura zwróciła komunikat (traktowany jako błąd): {value_str}")
+                        break  # Znaleziono błąd, przerwij dalszą analizę wyników
 
-                    if not success:
-                        break
-
-            # Aktualizuj datę modyfikacji przy sukcesie
             if success:
                 self._update_modification_date()
 
@@ -2687,43 +2641,29 @@ class WorkScheduleWindow(QMainWindow):
             }
 
         except Exception as e:
-            log_error(f"Błąd procedury p_P_ZZ_ImportZmianNaSerwer_v4: {e}")
+            log_error(f"Błąd procedury p_P_ZZ_ImportZmianyNaSerwer_v3: {e}")
             return {
                 "success": False,
                 "message": f"Błąd bazy danych: {str(e)}",
                 "returned_symbol": symbol
             }
 
-    def _refresh_data_after_symbol_changes(self, affected_pairs):
+    def _update_cells_with_new_symbols(self, updated_cells_info: list):
         """
-        UPROSZCZONA WERSJA: Odświeża tylko zmienione komórki - bez nadmiernych komplikacji
+        Aktualizuje komórki w modelu na podstawie danych zwróconych przez procedurę,
+        bez ponownego odpytywania bazy danych.
+
+        Args:
+            updated_cells_info: Lista krotek (user_id, date_str, new_symbol)
         """
-        try:
-            if not affected_pairs:
-                return
+        if not updated_cells_info or not hasattr(self, 'schedule_model'):
+            return
 
-            debug_print(f"Odświeżanie {len(affected_pairs)} zmienionych komórek - PROSTO I SKUTECZNIE")
+        for user_id, date_str, new_symbol in updated_cells_info:
+            if new_symbol is not None:
+                self._update_single_cell_in_model(user_id, date_str, new_symbol, self.year, self.month)
 
-            # 1. Pobierz aktualny miesiąc
-            current_data = self.date_combo.currentData()
-            if not current_data:
-                return
-            year, month = current_data
-
-            # 2. Dla każdej zmienionej komórki - pobierz nowy symbol i zaktualizuj model
-            for user_id, date_str in affected_pairs:
-                new_symbol = self._fetch_single_cell_symbol(user_id, date_str, year, month)
-                if new_symbol is not None:
-                    self._update_single_cell_in_model(user_id, date_str, new_symbol, year, month)
-
-            # 3. Wyczyść cache ikon dla zmienionych komórek
-            if hasattr(self.data_provider, 'invalidate_specific_icons'):
-                self.data_provider.invalidate_specific_icons(affected_pairs)
-
-            debug_print(f"Zakończono proste odświeżenie {len(affected_pairs)} komórek")
-
-        except Exception as e:
-            log_error(f"Błąd podczas prostego odświeżania: {e}")
+        debug_print(f"Zaktualizowano {len(updated_cells_info)} komórek w modelu na podstawie danych zwrotnych.")
 
     def _update_single_cell_in_model(self, user_id, date_str, new_symbol, year, month):
         """
@@ -6459,52 +6399,80 @@ class WorkScheduleWindow(QMainWindow):
         ]
         return {symbol for symbol, desc in symbol_lists}
 
-    def apply_symbol_from_keyboard(self, symbol: str):
+    def apply_symbol_from_keyboard(self, special_symbol: str):
         """
-        Stosuje podany symbol do zaznaczonych komórek,
-        wykorzystując logikę podobną do wstawiania nieobecności.
+        Stosuje podany symbol specjalny, budując nowy symbol zgodnie z nowymi zasadami.
         """
-        try:
-            selected_cells_data = self.table.get_data_for_selected_cells()
-            if not selected_cells_data:
-                QMessageBox.warning(self, "Brak zaznaczenia", "Nie zaznaczono komórek do edycji.")
-                return
+        selected_cells_data = self.table.get_data_for_selected_cells()
+        if not selected_cells_data:
+            QMessageBox.warning(self, "Brak zaznaczenia", "Nie zaznaczono komórek do edycji.")
+            return
 
-            # Filtruj tylko komórki grafiku (nie puste)
-            schedule_cells = [
-                cell for cell in selected_cells_data
-                if isinstance(cell, dict) and 'date_str' in cell and cell.get('symbol', '').strip()
-            ]
+        # Dialog potwierdzenia (bez zmian)
+        user_dates = defaultdict(list)
+        for cell in selected_cells_data:
+            user_dates[cell.get('uzytkownik_dane', 'Nieznany')].append(cell.get('date_str'))
+        changes_info = f"Czy na pewno chcesz wstawić symbol '{special_symbol}' dla:\n\n"
+        for user, dates in user_dates.items():
+            dates_str = ", ".join(sorted(dates))
+            changes_info += f"👤 {user}: {dates_str}\n"
 
-            if not schedule_cells:
-                QMessageBox.warning(self, "Brak komórek do edycji",
-                                    "Zaznaczone komórki są puste. Nie można wstawić symbolu nieobecności.")
-                return
+        reply = QMessageBox.question(self, "Potwierdzenie zmiany symbolu", changes_info,
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
 
-            # Przygotuj komunikat potwierdzenia
-            user_dates = defaultdict(list)
-            for cell in schedule_cells:
-                user_dates[cell.get('uzytkownik_dane', 'Nieznany')].append(cell.get('date_str'))
+        if reply != QMessageBox.Yes:
+            return
 
-            changes_info = f"Czy na pewno chcesz zmienić symbol na '{symbol}' dla:\n\n"
-            for user, dates in user_dates.items():
-                dates_str = ", ".join(sorted(dates))
-                changes_info += f"👤 {user}: {dates_str}\n"
+        # Nowa logika budowania symbolu i zapisu
+        updated_info = []
+        for cell_data in selected_cells_data:
+            current_symbol = cell_data.get('symbol', '')
 
-            reply = QMessageBox.question(self, "Potwierdzenie zmiany symbolu", changes_info,
-                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+            location = None  # Zgodnie z zasadą "bez lokalizacji"
+            start_hour = None
+            work_hours = None
 
-            if reply == QMessageBox.Yes:
-                # Wykorzystaj istniejącą metodę _apply_absence_symbol_changes, przekazując nowy symbol
-                # Znajdź zdarzenia do anulowania (tak jak w show_insert_symbol_dialog)
-                user_date_pairs = {(cell.get('uzytkownik_id'), cell.get('date_str')) for cell in schedule_cells}
-                events_to_cancel = self._find_events_to_cancel(user_date_pairs)
+            if current_symbol and current_symbol.strip():
+                # Komórka NIE JEST pusta: pobieramy godziny z istniejącego symbolu
+                parsed = parse_symbol(current_symbol)
+                start_hour = parsed.get('start_hour')
+                work_hours = parsed.get('work_hours')
+            else:
+                # Komórka JEST pusta: używamy wartości domyślnych
+                start_hour = 8
+                work_hours = cell_data.get('etat')
 
-                self._apply_absence_symbol_changes(schedule_cells, symbol, events_to_cancel)
+            # Budujemy nowy symbol
+            new_symbol = build_symbol(
+                location=location,
+                start_hour=start_hour,
+                work_hours=work_hours,
+                special_symbol=special_symbol
+            )
 
-        except Exception as e:
-            log_error(f"Błąd podczas stosowania symbolu z klawiatury: {e}", exception=e)
-            QMessageBox.critical(self, "Błąd krytyczny", f"Wystąpił błąd: {e}")
+            # Wywołujemy procedurę
+            try:
+                user_id = cell_data.get('uzytkownik_id')
+                date_str = cell_data.get('date_str')
+                nr_kadrowy = cell_data.get('nr_kadrowy')
+                year, month, _ = date_str.split('-')
+
+                result = self._call_import_changes_procedure(
+                    nr_kadrowy=nr_kadrowy,
+                    rok=int(year),
+                    miesiac=int(month),
+                    data=date_str,
+                    symbol=new_symbol
+                )
+                if result.get('success'):
+                    updated_info.append((user_id, date_str, result.get('returned_symbol')))
+            except Exception as e:
+                log_error(f"Błąd wywołania procedury w apply_symbol_from_keyboard: {e}")
+
+        # Po przetworzeniu wszystkich komórek, JEDEN RAZ odświeżamy UI
+        if updated_info:
+            self._update_cells_with_new_symbols(updated_info)
+            self.statusBar().showMessage(f"Pomyślnie zaktualizowano {len(updated_info)} komórek.", 3000)
 
     def apply_theme_settings(self, theme, font_family, font_size):
         """Stosuje wybrane ustawienia motywu z wykorzystaniem centralnych stylów"""
