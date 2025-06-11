@@ -90,54 +90,42 @@ def parse_symbol(symbol):
 
 def build_symbol(location=None, start_hour=None, work_hours=None, special_symbol=None):
     """
-    SZYBKIE budowanie symbolu - 3-5x szybsze niż poprzednia wersja.
-
-    Args:
-        location (str|None): Lokalizacja (h, s, p)
-        start_hour (int|None): Godzina rozpoczęcia (0-23)
-        work_hours (int|None): Liczba godzin (1-24)
-        special_symbol (str|None): Symbol specjalny
-
-    Returns:
-        str: Zbudowany symbol
+    POPRAWIONA WERSJA: Buduje symbol, zawsze zapewniając prawidłową strukturę
+    i końcowy średnik dla zmian roboczych.
     """
-    # Klucz cache - tuple jest szybsze niż string dla kluczy cache
+    # Klucz cache (bez zmian)
     cache_key = (location, start_hour, work_hours, special_symbol)
-
     if cache_key in _BUILD_CACHE:
         return _BUILD_CACHE[cache_key]
 
+    # --- NOWA, POPRAWIONA LOGIKA ---
+
+    # Przypadek 1: Tylko symbol specjalny (np. urlop, chorobowe w dzień wolny)
+    # Jeśli nie ma godzin pracy, zwracamy sam symbol specjalny, bez średników.
+    if start_hour is None and work_hours is None and special_symbol:
+        result = special_symbol.strip()
+        _cache_result(_BUILD_CACHE, cache_key, result)
+        return result
+
+    # Przypadek 2: Pełna zmiana robocza (z godzinami)
+    # Tutaj zawsze chcemy mieć strukturę ze średnikami.
     parts = []
 
-    # Sprawdź czy mamy lokalizację
+    # Dodaj lokalizację, jeśli istnieje
     if location and location in ('h', 's', 'p'):
         parts.append(location)
 
-        # Z lokalizacją zawsze dodajemy godzinę i liczbę godzin (nawet jeśli None)
-        parts.append(str(start_hour) if start_hour is not None and 0 <= start_hour <= 23 else '')
-        parts.append(str(work_hours) if work_hours is not None and 1 <= work_hours <= 24 else '')
+    # Dodaj godzinę rozpoczęcia i liczbę godzin
+    # Używamy pustego stringa, jeśli wartość to None, aby zachować pozycję
+    parts.append(str(start_hour) if start_hour is not None else '')
+    parts.append(str(work_hours) if work_hours is not None else '')
 
-        # Symbol specjalny na końcu
-        if special_symbol and special_symbol.strip():
-            parts.append(special_symbol.strip())
-    else:
-        # Bez lokalizacji - tylko jeśli mamy godzinę
-        if start_hour is not None and 0 <= start_hour <= 23:
-            parts.append(str(start_hour))
+    # ZAWSZE dodaj miejsce na symbol specjalny. Jeśli go nie ma,
+    # pusty string na końcu listy po złączeniu da końcowy średnik.
+    parts.append(special_symbol.strip() if special_symbol and special_symbol.strip() else '')
 
-            # Liczba godzin
-            if work_hours is not None and 1 <= work_hours <= 24:
-                parts.append(str(work_hours))
-            else:
-                parts.append('')  # Puste miejsce dla godzin
+    result = ';'.join(parts)
 
-            # Symbol specjalny
-            if special_symbol and special_symbol.strip():
-                parts.append(special_symbol.strip())
-
-    result = ';'.join(parts) if parts else ''
-
-    # Zapisz w cache
     _cache_result(_BUILD_CACHE, cache_key, result)
     return result
 
