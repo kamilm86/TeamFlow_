@@ -44,6 +44,7 @@ class SplitTableView(QWidget):
 
         # Tworzenie i konfiguracja tabeli grafiku
         self.schedule_view = QTableView()
+        self.schedule_view.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.schedule_view.setSelectionBehavior(QAbstractItemView.SelectItems)
         self.schedule_view.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.schedule_view.verticalHeader().setVisible(False)
