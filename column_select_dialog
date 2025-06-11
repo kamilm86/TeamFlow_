@@ -33,7 +33,53 @@ class ColumnSelectDialog(QDialog):
             actual_theme = "dark" if self.parent_widget.is_dark_theme else "light"
 
         self.setStyleSheet(AppStyles.get_dialog_style(actual_theme))
-        self.columns_list.setStyleSheet(AppStyles.get_list_style(actual_theme))
+
+        # --- NOWY KOD DO STYLIZACJI PÓL WYBORU ---
+        # Definiujemy kolory w zależności od motywu
+        if actual_theme == "dark":
+            unchecked_bg = AppStyles.DARK_BACKGROUND_MAIN
+            unchecked_border = AppStyles.DARK_BORDER_PRIMARY
+            accent_color = AppStyles.ACCENT_COLOR_DARK
+            accent_hover = AppStyles.ACCENT_COLOR_DARK_HOVER
+        else:
+            unchecked_bg = AppStyles.LIGHT_BACKGROUND_CONTROLS
+            unchecked_border = AppStyles.LIGHT_BORDER_SECONDARY
+            accent_color = AppStyles.ACCENT_COLOR_LIGHT
+            accent_hover = AppStyles.ACCENT_COLOR_LIGHT_HOVER
+
+        # Kompletny styl dla QListWidget z uwzględnieniem wskaźników
+        list_style = f"""
+            QListWidget {{
+                background-color: {AppStyles.DARK_BACKGROUND_CONTROLS if actual_theme == 'dark' else AppStyles.LIGHT_BACKGROUND_CONTROLS};
+                color: {AppStyles.DARK_TEXT_PRIMARY if actual_theme == 'dark' else AppStyles.LIGHT_TEXT_PRIMARY};
+                border: 1px solid {AppStyles.DARK_BORDER_SECONDARY if actual_theme == 'dark' else AppStyles.LIGHT_BORDER_PRIMARY};
+                border-radius: {AppStyles.BORDER_RADIUS};
+            }}
+            QListWidget::item:selected {{
+                background-color: {AppStyles.DARK_BACKGROUND_HOVER if actual_theme == 'dark' else AppStyles.LIGHT_BACKGROUND_HOVER};
+                border: 1px solid {accent_color};
+                border-radius: 2px;
+            }}
+            QListWidget::indicator {{
+                width: 13px;
+                height: 13px;
+                border-radius: 3px;
+            }}
+            QListWidget::indicator:unchecked {{
+                background-color: {unchecked_bg};
+                border: 1px solid {unchecked_border};
+            }}
+            QListWidget::indicator:unchecked:hover {{
+                border: 1px solid {accent_color};
+            }}
+            QListWidget::indicator:checked {{
+                background-color: {accent_color};
+                border: 1px solid {accent_hover};
+                image: none;
+            }}
+        """
+        self.columns_list.setStyleSheet(list_style)
+        # --- KONIEC NOWEGO KODU ---
 
         button_style = AppStyles.get_button_style(actual_theme)
         self.move_up_button.setStyleSheet(button_style)
