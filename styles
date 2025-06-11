@@ -365,10 +365,6 @@ class AppStyles:
                         border-top-right-radius: {AppStyles.BORDER_RADIUS};
                         border-bottom-right-radius: {AppStyles.BORDER_RADIUS};
                     }}
-                    QComboBox::down-arrow {{
-                        image: url(none);
-                        width: 10px; height: 10px;
-                    }}
                     QComboBox QAbstractItemView {{ /* Lista rozwijana */
                         background-color: {AppStyles.DARK_BACKGROUND_CONTROLS};
                         color: {AppStyles.DARK_TEXT_PRIMARY};
@@ -376,15 +372,29 @@ class AppStyles:
                         padding: 2px;
                         outline: 0;
                     }}
-                    /* --- NOWA, POPRAWIONA SEKCJA STYLU ZAZNACZENIA --- */
-                    QComboBox QAbstractItemView::item {{
-                        padding: 4px 6px;
-                    }}
                     QComboBox QAbstractItemView::item:selected {{
-                        background-color: {AppStyles.DARK_BACKGROUND_HOVER}; /* Subtelne tło, takie jak przy najechaniu */
-                        color: {AppStyles.DARK_TEXT_PRIMARY}; /* Kolor tekstu bez zmian */
-                        border: 1px solid {AppStyles.ACCENT_COLOR_DARK}; /* Wyraźna ramka w kolorze akcentu */
+                        background-color: {AppStyles.DARK_BACKGROUND_HOVER};
+                        border: 1px solid {AppStyles.ACCENT_COLOR_DARK};
                         border-radius: 2px;
+                    }}
+
+                    /* --- NOWA, KLUCZOWA SEKCJA STYLU PÓL WYBORU --- */
+                    QComboBox QAbstractItemView::indicator {{
+                        width: 13px;
+                        height: 13px;
+                        border-radius: 3px;
+                    }}
+                    QComboBox QAbstractItemView::indicator:unchecked {{
+                        background-color: {AppStyles.DARK_BACKGROUND_MAIN};
+                        border: 1px solid {AppStyles.DARK_BORDER_PRIMARY};
+                    }}
+                    QComboBox QAbstractItemView::indicator:unchecked:hover {{
+                        border: 1px solid {AppStyles.ACCENT_COLOR_DARK};
+                    }}
+                    QComboBox QAbstractItemView::indicator:checked {{
+                        background-color: {AppStyles.ACCENT_COLOR_DARK}; /* Wypełnienie kwadratu kolorem */
+                        border: 1px solid {AppStyles.ACCENT_COLOR_DARK_HOVER};
+                        image: none; /* Ukrycie domyślnego "ptaszka" */
                     }}
                 """
         else:  # Motyw jasny
@@ -409,10 +419,6 @@ class AppStyles:
                         border-top-right-radius: {AppStyles.BORDER_RADIUS};
                         border-bottom-right-radius: {AppStyles.BORDER_RADIUS};
                     }}
-                    QComboBox::down-arrow {{
-                        image: url(none);
-                        width: 10px; height: 10px;
-                    }}
                     QComboBox QAbstractItemView {{
                         background-color: {AppStyles.LIGHT_BACKGROUND_CONTROLS};
                         color: {AppStyles.LIGHT_TEXT_PRIMARY};
@@ -420,15 +426,30 @@ class AppStyles:
                         padding: 2px;
                         outline: 0;
                     }}
-                    /* --- NOWA, POPRAWIONA SEKCJA STYLU ZAZNACZENIA --- */
-                    QComboBox QAbstractItemView::item {{
-                        padding: 4px 6px;
-                    }}
                     QComboBox QAbstractItemView::item:selected {{
-                        background-color: {AppStyles.LIGHT_BACKGROUND_HOVER}; /* Subtelne tło, takie jak przy najechaniu */
-                        color: {AppStyles.LIGHT_TEXT_PRIMARY}; /* Zmiana na ciemny tekst dla kontrastu */
-                        border: 1px solid {AppStyles.ACCENT_COLOR_LIGHT}; /* Wyraźna ramka w kolorze akcentu */
+                        background-color: {AppStyles.LIGHT_BACKGROUND_HOVER};
+                        color: {AppStyles.LIGHT_TEXT_PRIMARY};
+                        border: 1px solid {AppStyles.ACCENT_COLOR_LIGHT};
                         border-radius: 2px;
+                    }}
+
+                    /* --- NOWA, KLUCZOWA SEKCJA STYLU PÓL WYBORU --- */
+                    QComboBox QAbstractItemView::indicator {{
+                        width: 13px;
+                        height: 13px;
+                        border-radius: 3px;
+                    }}
+                    QComboBox QAbstractItemView::indicator:unchecked {{
+                        background-color: {AppStyles.LIGHT_BACKGROUND_CONTROLS};
+                        border: 1px solid {AppStyles.LIGHT_BORDER_SECONDARY};
+                    }}
+                    QComboBox QAbstractItemView::indicator:unchecked:hover {{
+                        border: 1px solid {AppStyles.ACCENT_COLOR_LIGHT};
+                    }}
+                    QComboBox QAbstractItemView::indicator:checked {{
+                        background-color: {AppStyles.ACCENT_COLOR_LIGHT}; /* Wypełnienie kwadratu kolorem */
+                        border: 1px solid {AppStyles.ACCENT_COLOR_LIGHT_HOVER};
+                        image: none; /* Ukrycie domyślnego "ptaszka" */
                     }}
                 """
 
