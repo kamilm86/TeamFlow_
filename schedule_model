@@ -101,19 +101,11 @@ class ScheduleTableModel(QAbstractTableModel):
 
     def _get_user_data(self, row_data, key, col, is_employee_column):
         """
-        Zwraca dane użytkownika dla danej komórki - NOWA METODA
-
-        Args:
-            row_data: Dane wiersza z processed_data
-            key: Klucz wiersza (wydzial, przelozony, uzytkownik_dane, uzytkownik_id)
-            col: Indeks kolumny
-            is_employee_column: Czy to kolumna pracownika
-
-        Returns:
-            dict: Słownik z danymi komórki
+        Zwraca dane użytkownika dla danej komórki - wersja POPRAWIONA,
+        ZAWSZE dołącza 'etat' do danych komórki grafiku.
         """
         if is_employee_column:
-            # Dane dla kolumn pracowników
+            # Dane dla kolumn pracowników (bez zmian)
             return {
                 'wydzial': key[0] or '',
                 'przelozony': key[1] or '',
@@ -136,14 +128,13 @@ class ScheduleTableModel(QAbstractTableModel):
             schedule_col = col - len(self._visible_columns)
 
             if schedule_col < self._days_in_month:
-                # Kolumna dnia
                 day = schedule_col + 1
                 days_data = row_data.get('days', {})
                 day_data = days_data.get(day, {})
-
-                # Przygotuj datę w formacie YYYY-MM-DD
                 date_str = f"{self._year}-{self._month:02d}-{day:02d}" if self._year and self._month else ''
 
+                # --- KLUCZOWA ZMIANA TUTAJ ---
+                # Tworzymy słownik dla komórki grafiku, dodając do niego 'etat'
                 return {
                     'wydzial': key[0] or '',
                     'przelozony': key[1] or '',
@@ -151,6 +142,8 @@ class ScheduleTableModel(QAbstractTableModel):
                     'uzytkownik_dane': key[2] or '',
                     'uzytkownik_id': key[3] or 0,
                     'nr_kadrowy': row_data.get('nr_kadrowy', ''),
+                    'etat': row_data.get('etat', 8.0),  # <-- DODANO ETAT
+                    'lokalizacja_domyslna': row_data.get('lokalizacja_domyslna', 'h'), # <-- DODANO LOKALIZACJĘ
                     'date_str': date_str,
                     'day': day,
                     'symbol': day_data.get('symbol', ''),
@@ -161,41 +154,22 @@ class ScheduleTableModel(QAbstractTableModel):
                     'has_training': day_data.get('szkolenia', 0) > 0,
                     'has_overtime': day_data.get('nadgodziny', 0) > 0,
                     'events': day_data.get('events', []),
-                    'lokalizacja_domyslna': row_data.get('lokalizacja_domyslna', ''),
                     'komentarz_grafik': row_data.get('komentarz_grafik', ''),
                     'column_type': 'schedule'
                 }
             elif schedule_col == self._days_in_month:
-                # Kolumna sumy RBH
-                return {
-                    'uzytkownik_id': key[3] or 0,
-                    'uzytkownik_dane': key[2] or '',
-                    'total_hours': row_data.get('total_hours', 0),
-                    'column_type': 'suma_rbh'
-                }
+                return {'uzytkownik_id': key[3] or 0, 'uzytkownik_dane': key[2] or '',
+                        'total_hours': row_data.get('total_hours', 0), 'column_type': 'suma_rbh'}
             elif schedule_col == self._days_in_month + 1:
-                # Kolumna bilansu RBH
                 etat = float(row_data.get('etat', 0) or 0)
                 total_hours = row_data.get('total_hours', 0) or 0
                 expected_hours = etat * self._working_days if hasattr(self, '_working_days') else 0
                 balance = expected_hours - total_hours
+                return {'uzytkownik_id': key[3] or 0, 'uzytkownik_dane': key[2] or '', 'etat': etat,
+                        'total_hours': total_hours, 'expected_hours': expected_hours, 'balance': balance,
+                        'column_type': 'bilans_rbh'}
 
-                return {
-                    'uzytkownik_id': key[3] or 0,
-                    'uzytkownik_dane': key[2] or '',
-                    'etat': etat,
-                    'total_hours': total_hours,
-                    'expected_hours': expected_hours,
-                    'balance': balance,
-                    'column_type': 'bilans_rbh'
-                }
-
-        # Fallback - zwróć podstawowe dane
-        return {
-            'uzytkownik_id': key[3] or 0,
-            'uzytkownik_dane': key[2] or '',
-            'column_type': 'unknown'
-        }
+            return {'uzytkownik_id': key[3] or 0, 'uzytkownik_dane': key[2] or '', 'column_type': 'unknown'}
 
     def _get_dynamic_meeting_icon(self, key, col, is_employee_column):
         """POPRAWIONA: Używa tylko lokalnego cache, nie pyta DataProvider"""
