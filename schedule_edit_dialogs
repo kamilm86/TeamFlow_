@@ -1,0 +1,897 @@
+# schedule_edit_dialogs.py
+from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
+                               QPushButton, QComboBox, QGroupBox, QRadioButton,
+                               QFontComboBox, QSpinBox, QColorDialog, QCheckBox, QWidget, QTextEdit,
+                               QFrame, QButtonGroup, QTabWidget, QGridLayout, QMessageBox, QLineEdit,
+                               QApplication, QSpacerItem, QSizePolicy,
+                               QTableWidget, QTableWidgetItem, QHeaderView)
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QFont
+from styles import AppStyles # Dodano import AppStyles
+from debug_utils import debug_print # Dla ewentualnego debugowania
+
+class ThemeSettingsDialog(QDialog):
+    """
+    Dialog do wyboru ustawień motywu aplikacji.
+    """
+    settings_changed = Signal(str, str, int)
+
+    def __init__(self, parent=None, current_theme="dark", current_font="", current_font_size=9):
+        super().__init__(parent)
+        self.parent_widget = parent  # Zapisz rodzica
+
+        self.setWindowTitle("Ustawienia motywu")
+        self.setMinimumWidth(300)
+
+        self.current_theme = current_theme
+        self.current_font = current_font
+        self.current_font_size = current_font_size
+
+        self.setup_ui()  # Najpierw UI
+        self.apply_dialog_theme()  # Potem styl zgodny z przekazanym/rodzica
+
+        # Podłączenie sygnałów do natychmiastowej zmiany - PO setup_ui i apply_dialog_theme
+        self.dark_theme_radio.toggled.connect(self.apply_immediate_changes)
+        # Unikamy podwójnego wywołania przy przełączaniu radio, wystarczy jeden sygnał
+        # self.light_theme_radio.toggled.connect(self.apply_immediate_changes)
+        self.font_combo.currentFontChanged.connect(self.apply_immediate_changes)
+        self.font_size_spin.valueChanged.connect(self.apply_immediate_changes)
+
+    def apply_dialog_theme(self):  # Ta metoda stylizuje dialog na podstawie motywu rodzica lub current_theme
+        """Stosuje motyw dla samego okna dialogowego."""
+        theme_to_apply = self.current_theme  # Domyślnie użyj przekazanego motywu
+
+        # Jeśli dialog ma rodzica i rodzic ma informację o motywie, użyj jej
+        # To jest na wypadek, gdyby current_theme nie było zsynchronizowane
+        if self.parent_widget and hasattr(self.parent_widget, 'is_dark_theme'):
+            theme_to_apply = "dark" if self.parent_widget.is_dark_theme else "light"
+
+        # Jeśli aktualnie wybrane radio buttony wskazują inny motyw, użyj go
+        # To jest kluczowe dla odświeżania "na żywo"
+        if hasattr(self, 'dark_theme_radio') and self.dark_theme_radio.isChecked():
+            theme_to_apply = "dark"
+        elif hasattr(self, 'light_theme_radio') and self.light_theme_radio.isChecked():
+            theme_to_apply = "light"
+
+        self.setStyleSheet(AppStyles.get_dialog_style(theme_to_apply))
+
+        # Odśwież style przycisków w dialogu, bo get_dialog_style ich nie obejmuje
+        button_style = AppStyles.get_button_style(theme_to_apply)
+        if hasattr(self, 'ok_button'): self.ok_button.setStyleSheet(button_style)
+        if hasattr(self, 'cancel_button'): self.cancel_button.setStyleSheet(button_style)
+
+    def setup_ui(self):  # Tutaj tylko tworzymy widgety
+        main_layout = QVBoxLayout(self)
+
+        theme_group = QGroupBox("Motyw")
+        theme_layout = QVBoxLayout()
+        self.dark_theme_radio = QRadioButton("Ciemny")
+        self.light_theme_radio = QRadioButton("Jasny")
+
+        if self.current_theme == "dark":
+            self.dark_theme_radio.setChecked(True)
+        else:  # Domyślnie lub jeśli light
+            self.light_theme_radio.setChecked(True)
+
+        theme_layout.addWidget(self.dark_theme_radio)
+        theme_layout.addWidget(self.light_theme_radio)
+        theme_group.setLayout(theme_layout)
+
+        font_group = QGroupBox("Czcionka")
+        font_layout = QVBoxLayout()
+        font_type_layout = QHBoxLayout()
+        font_type_label = QLabel("Typ czcionki:")
+        self.font_combo = QFontComboBox()
+        if self.current_font:
+            self.font_combo.setCurrentFont(QFont(self.current_font))
+        font_type_layout.addWidget(font_type_label)
+        font_type_layout.addWidget(self.font_combo)
+
+        font_size_layout = QHBoxLayout()
+        font_size_label = QLabel("Rozmiar czcionki:")
+        self.font_size_spin = QSpinBox()
+        self.font_size_spin.setRange(6, 24)
+        self.font_size_spin.setValue(self.current_font_size)
+        font_size_layout.addWidget(font_size_label)
+        font_size_layout.addWidget(self.font_size_spin)
+
+        font_layout.addLayout(font_type_layout)
+        font_layout.addLayout(font_size_layout)
+        font_group.setLayout(font_layout)
+
+        self.save_settings_checkbox = QCheckBox("Zapamiętaj ustawienia")
+        self.save_settings_checkbox.setChecked(True)
+
+        buttons_layout = QHBoxLayout()
+        self.ok_button = QPushButton("OK")
+        self.cancel_button = QPushButton("Anuluj")
+
+        self.ok_button.clicked.connect(self.accept)
+        self.cancel_button.clicked.connect(self.reject)
+
+        buttons_layout.addStretch()
+        buttons_layout.addWidget(self.ok_button)
+        buttons_layout.addWidget(self.cancel_button)
+
+        main_layout.addWidget(theme_group)
+        main_layout.addWidget(font_group)
+        main_layout.addWidget(self.save_settings_checkbox)
+        main_layout.addLayout(buttons_layout)
+
+    def apply_immediate_changes(self):
+        """Aplikuje zmiany natychmiastowo podczas wybierania opcji W TYM SAMYM DIALOGU"""
+        if not hasattr(self, 'font_combo') or not hasattr(self, 'font_size_spin') or not hasattr(self,
+                                                                                                 'dark_theme_radio'):
+            return
+
+        selected_theme = "dark" if self.dark_theme_radio.isChecked() else "light"
+        font_family = self.font_combo.currentFont().family()
+        font_size = self.font_size_spin.value()
+
+        # Emituj sygnał dla głównego okna, aby ono zaktualizowało swoje style
+        self.settings_changed.emit(selected_theme, font_family, font_size)
+
+        # Zaktualizuj styl samego dialogu ThemeSettingsDialog "na żywo"
+        # Musimy przekazać wybrany motyw, a niekoniecznie ten z rodzica
+        # (bo właśnie go zmieniamy)
+        current_dialog_theme_choice = self.get_current_theme_choice()  # Użyj wyboru z radio buttonów
+
+        # Zastosuj pełny styl dialogu na nowo
+        self.setStyleSheet(AppStyles.get_dialog_style(current_dialog_theme_choice))
+
+        # Zastosuj style dla przycisków, które nie są objęte get_dialog_style
+        button_style = AppStyles.get_button_style(current_dialog_theme_choice)
+        if hasattr(self, 'ok_button'): self.ok_button.setStyleSheet(button_style)
+        if hasattr(self, 'cancel_button'): self.cancel_button.setStyleSheet(button_style)
+
+        # Może być konieczne odświeżenie stylów dla kontrolek wewnątrz groupboxów,
+        # jeśli dziedziczenie nie zadziała idealnie po zmianie głównego stylu dialogu.
+        # Na przykład:
+        # self.font_combo.setStyleSheet(AppStyles.get_combobox_style(current_dialog_theme_choice))
+        # self.font_size_spin.setStyleSheet(AppStyles.get_line_edit_style(current_dialog_theme_choice)) # SpinBox często dziedziczy styl LineEdit
+        # self.dark_theme_radio.setStyleSheet(AppStyles.get_checkbox_style(current_dialog_theme_choice)) # RadioButton często jak CheckBox
+        # self.light_theme_radio.setStyleSheet(AppStyles.get_checkbox_style(current_dialog_theme_choice))
+        # To jest bardziej granularne i może być potrzebne, jeśli prosty self.setStyleSheet() nie wystarczy.
+
+        # Dla pewności można wymusić odświeżenie wyglądu, choć zmiana stylesheetu powinna to zrobić.
+        self.update()
+
+    def get_current_theme_choice(self):  # Zmieniono nazwę, aby odróżnić od current_theme przy inicjalizacji
+        """Zwraca nazwę aktualnie wybranego motywu w tym dialogu."""
+        if hasattr(self, 'dark_theme_radio') and self.dark_theme_radio.isChecked():
+            return "dark"
+        elif hasattr(self, 'light_theme_radio') and self.light_theme_radio.isChecked():
+            return "light"
+        # Fallback na current_theme, jeśli radio buttony nie są jeszcze dostępne
+        return self.current_theme
+
+class InsertSymbolDialog(QDialog):
+    """
+    Dialog do wyboru symbolu urlopu lub nieobecności z zakładkami.
+    Zmniejszony, z podpowiedziami zamiast legendy i ulepszoną obsługą.
+    """
+    symbol_selected = Signal(str)  # Sygnał z wybranym symbolem
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.parent_widget = parent # Ensure this is assigned early
+
+        self.setWindowTitle("Wstaw symbol")
+        self.setMinimumWidth(300)
+        self.setMinimumHeight(250)
+
+        self.selected_symbol = ""
+        self.user_role = ""
+        self.valid_symbols = set()
+
+        # Access parent_widget after it has been assigned
+        if self.parent_widget and hasattr(self.parent_widget, 'current_user_role'):
+            self.user_role = self.parent_widget.current_user_role
+
+        self.parent_font = QApplication.font()
+        if self.parent_widget:
+            self.parent_font = self.parent_widget.font()
+
+        self.setObjectName("InsertSymbolDialogInstance")
+
+        self.setup_ui()
+        self.apply_dialog_theme()
+
+    def apply_dialog_theme(self):
+        """Stosuje motyw dla dialogu InsertSymbolDialog."""
+        actual_theme = "dark"
+        if self.parent_widget and hasattr(self.parent_widget, 'is_dark_theme'):
+            actual_theme = "dark" if self.parent_widget.is_dark_theme else "light"
+
+        # debug_print(f"InsertSymbolDialog ('{self.windowTitle()}'): Stosuję motyw '{actual_theme}'")
+
+        # Ustaw ogólny styl dialogu (powinien zawierać QDialog#InsertSymbolDialogInstance)
+        self.setStyleSheet(AppStyles.get_dialog_style(actual_theme))
+
+        # Styl dla przycisków i innych kontrolek w tym dialogu
+        button_style_qss = AppStyles.get_button_style(actual_theme)
+        line_edit_style_qss = AppStyles.get_line_edit_style(actual_theme)
+        tab_widget_style_qss = self._get_tab_widget_style(actual_theme)  # Dedykowana metoda dla QTabWidget
+
+        if hasattr(self, 'symbol_input'):
+            self.symbol_input.setStyleSheet(line_edit_style_qss)
+
+        if hasattr(self, 'tabs'):
+            self.tabs.setStyleSheet(tab_widget_style_qss)
+            # Można dodatkowo ostylować przyciski wewnątrz zakładek, jeśli to konieczne
+            # i jeśli nie dziedziczą poprawnie stylu z button_style_qss
+            for i in range(self.tabs.count()):
+                tab_content_widget = self.tabs.widget(i)
+                if tab_content_widget:
+                    buttons_in_tab = tab_content_widget.findChildren(QPushButton)
+                    for btn in buttons_in_tab:
+                        btn.setStyleSheet(button_style_qss)  # Użyj głównego stylu przycisków
+                        # lub dedykowanego mniejszego stylu
+
+        if hasattr(self, 'cancel_button'):
+            self.cancel_button.setStyleSheet(button_style_qss)
+
+        # Styl dla etykiet, jeśli potrzeba specyficznego
+        label_style_qss = AppStyles.get_label_style(actual_theme)
+        if hasattr(self, 'instruction_label'): self.instruction_label.setStyleSheet(label_style_qss)
+        if hasattr(self, 'input_label'): self.input_label.setStyleSheet(label_style_qss)
+        if hasattr(self, 'validation_label'): self.validation_label.setStyleSheet(label_style_qss)
+
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self.update()
+
+    def _get_tab_widget_style(self, theme):
+        """Zwraca styl dla QTabWidget i QTabBar zgodny z motywem."""
+        # Pobierz kolory z AppStyles
+        main_bg = AppStyles.DARK_BACKGROUND_MAIN if theme == "dark" else AppStyles.LIGHT_BACKGROUND_MAIN
+        control_bg = AppStyles.DARK_BACKGROUND_CONTROLS if theme == "dark" else AppStyles.LIGHT_BACKGROUND_CONTROLS
+        text_color = AppStyles.DARK_TEXT_PRIMARY if theme == "dark" else AppStyles.LIGHT_TEXT_PRIMARY
+        border_color = AppStyles.DARK_BORDER_SECONDARY if theme == "dark" else AppStyles.LIGHT_BORDER_PRIMARY
+        accent_color = AppStyles.ACCENT_COLOR_DARK if theme == "dark" else AppStyles.ACCENT_COLOR_LIGHT
+
+        # Dla jasnego motywu zakładki mogą mieć nieco inne tło niż sam dialog
+        tab_bar_bg = control_bg if theme == "dark" else AppStyles.LIGHT_BACKGROUND_HOVER
+        tab_pane_bg = control_bg  # Tło zawartości zakładki
+
+        return f"""
+            QTabWidget::pane {{
+                border: 1px solid {border_color};
+                border-top: none; /* Łączy się z QTabBar */
+                background-color: {tab_pane_bg};
+                border-bottom-left-radius: {AppStyles.BORDER_RADIUS};
+                border-bottom-right-radius: {AppStyles.BORDER_RADIUS};
+            }}
+            QTabBar::tab {{
+                background-color: {tab_bar_bg};
+                color: {text_color};
+                border: 1px solid {border_color};
+                border-bottom: none; 
+                padding: 5px 10px;
+                margin-right: 1px;
+                border-top-left-radius: {AppStyles.BORDER_RADIUS};
+                border-top-right-radius: {AppStyles.BORDER_RADIUS};
+            }}
+            QTabBar::tab:selected {{
+                background-color: {accent_color};
+                color: {'white' if theme == "dark" else AppStyles.LIGHT_BACKGROUND_CONTROLS}; /* Poprawiony kolor tekstu dla jasnego motywu */
+                /* border-bottom: 1px solid {accent_color}; */ /* Usuwamy, bo pane ma border-top */
+            }}
+            QTabBar::tab:!selected {{
+                background-color: {main_bg if theme == "dark" else AppStyles.LIGHT_BACKGROUND_MAIN};
+                 /* margin-top: 2px; */ /* Można usunąć dla płaskiego wyglądu */
+            }}
+            QTabBar::tab:hover:!selected {{
+                background-color: {AppStyles.DARK_BACKGROUND_HOVER if theme == "dark" else AppStyles.LIGHT_BACKGROUND_HOVER};
+            }}
+        """
+
+    def setup_ui(self):
+        main_layout = QVBoxLayout(self)
+
+        self.instruction_label = QLabel("Wpisz symbol lub wybierz z poniższych zakładek")
+        self.instruction_label.setStyleSheet("color: gray; font-style: italic;") # Ten styl może być nadpisany przez apply_dialog_theme
+        self.instruction_label.setFont(self.parent_font)
+        main_layout.addWidget(self.instruction_label)
+
+        input_layout = QHBoxLayout()
+        self.input_label = QLabel("Symbol:") # Zapisz referencję
+        self.input_label.setFont(self.parent_font)
+
+        self.symbol_input = QLineEdit()
+        self.symbol_input.setMaxLength(5)
+        font = QFont(self.parent_font)
+        font.setBold(True)
+        font.setPointSize(font.pointSize() + 2)
+        self.symbol_input.setFont(font)
+        self.symbol_input.textChanged.connect(self.on_symbol_input_changed)
+        self.symbol_input.returnPressed.connect(self.check_and_accept)
+        input_layout.addWidget(self.input_label)
+        input_layout.addWidget(self.symbol_input)
+        main_layout.addLayout(input_layout)
+
+        self.tabs = QTabWidget()
+        self.tabs.setFont(self.parent_font)
+
+        # Definicje symboli w kategoriach
+        popularne_symbole = [
+            ("UZ", "Urlop na żądanie"),
+            ("CO", "Zwolnienie lekarskie"),
+            ("CR", "Zwolnienie lekarskie na inną osobę we wspólnym gospodarstwie")
+        ]
+        urlopy_symbole = [
+            ("U", "Urlop wypoczynkowy"),
+            ("UB", "Urlop bezpłatny"),
+            ("UD", "Urlop dodatkowy z tytułu niepełnosprawności"),
+            ("UM", "Urlop macierzyński (20 tyg., Dodatkowy 6 tyg., Rodzicielski 26 tyg.)"),
+            ("UO", "Urlop okolicznościowy"),
+            ("UOD", "Opieka nad dzieckiem do lat 14"),
+            ("US", "Urlop szkolny"),
+            ("UT", "Urlop ojcowski"),
+            ("UW", "Urlop wychowawczy"),
+            ("UZ", "Urlop na żądanie"),
+            ("UOP", "5 dni opieki na dziecko lub członka rodziny - urlop opiekuńczy")
+        ]
+        zwolnienia_symbole = [
+            ("CO", "Zwolnienie lekarskie"),
+            ("CR", "Zwolnienie lekarskie na inną osobę we wspólnym gospodarstwie"),
+            ("CRW", "Zwolnienie lekarskie na opiekę (sytuacja wyjątkowa)"),
+            ("CSR", "Świadczenie rehabilitacyjne"),
+            ("ZO", "Zwolnienie z obowiązku świadczenia pracy"),
+            ("ZS", "Zwolnienie z obowiązku świadczenia pracy (sytuacja wyjątkowa)")
+        ]
+        delegacje_symbole = [
+            ("DK", "Podróż służbowa krajowa"),
+            ("DZ", "Podróż służbowa zagraniczna"),
+            ("HO", "Home Office"),
+            ("P", "Czasowe oddelegowanie"),
+            ("PD", "Prace dodatkowe")
+        ]
+        inne_symbole = [
+            ("BC", "Doradca w backup"),
+            ("BK", "Badanie kontrolne"),
+            ("BO", "Badanie okresowe"),
+            ("CW", "Ćwiczenia wojskowe"),
+            ("DYS", "Realizacja dyspozycji"),
+            ("MW", "mWolne"),
+            ("NN", "Nieobecność nieusprawiedliwiona"),
+            ("NU", "Nieobecność usprawiedliwiona"),
+            ("NW", "Nieobecność do wyjaśnienia"),
+            ("O", "Nieobecność usprawiedliwiona z tytułu odbioru godzin"),
+            ("OS", "Odbiór dnia wolnego za święto przypadające w sobotę"),
+            ("S", "Szkolenie po programie adaptacyjnym"),
+            ("T", "Testy"),
+            ("USW", "2 dni wolne na zwolnienie od pracy z powodu siły wyższej"),
+            ("Z", "Rozwiązanie umowy")
+        ]
+
+        # Zbierz wszystkie dostępne symbole
+        # all_symbol_lists = [popularne_symbole, urlopy_symbole, zwolnienia_symbole, delegacje_symbole, inne_symbole]
+        # for symbol_list in all_symbol_lists:
+        #     for symbol, _ in symbol_list:
+        #         self.valid_symbols.add(symbol)
+        #
+        # # Dodanie zakładek w zależności od roli
+        # if self.user_role == "Lider":
+        #     # Lider widzi tylko Zwolnienia i Popularne symbole
+        #     # self.add_tab_with_symbols(popularne_symbole, "Popularne symbole")
+        #     self.add_tab_with_symbols(zwolnienia_symbole, "Zwolnienia")
+        # elif self.user_role == "Pracownik WPR":
+        #     # Menadżer widzi wszystko
+        #     # self.add_tab_with_symbols(popularne_symbole, "Popularne symbole")
+        #     # self.add_tab_with_symbols(urlopy_symbole, "Urlopy")
+        #     self.add_tab_with_symbols(zwolnienia_symbole, "Zwolnienia")
+        #     # self.add_tab_with_symbols(delegacje_symbole, "Delegacje i praca zdalna")
+        #     # self.add_tab_with_symbols(inne_symbole, "Inne")
+        # else:
+        #     pass
+        #     # # Domyślnie - użytkownik standardowy widzi wszystkie zakładki
+        #     # self.add_tab_with_symbols(popularne_symbole, "Popularne symbole")
+        #     # self.add_tab_with_symbols(urlopy_symbole, "Urlopy")
+        #     # self.add_tab_with_symbols(zwolnienia_symbole, "Zwolnienia")
+        #     # self.add_tab_with_symbols(delegacje_symbole, "Delegacje i praca zdalna")
+        #     # self.add_tab_with_symbols(inne_symbole, "Inne")
+        all_symbol_lists = {"Popularne": popularne_symbole, "Urlopy": urlopy_symbole,
+                            "Zwolnienia": zwolnienia_symbole}  # Skrócono dla przykładu
+
+        self.valid_symbols.clear()  # Wyczyść przed ponownym wypełnieniem
+        for cat_name, symbol_list in all_symbol_lists.items():
+            # Logika widoczności zakładek na podstawie roli
+            if (self.user_role == "Lider" and cat_name not in ["Popularne", "Zwolnienia"]) or \
+                    (self.user_role == "Pracownik WPR" and cat_name not in ["Zwolnienia"]):  # Przykład ograniczeń
+                if self.user_role == "Lider" and cat_name == "Zwolnienia":  # Lider widzi zwolnienia
+                    pass  # Dodaj zakładkę
+                elif self.user_role == "Pracownik WPR" and cat_name == "Zwolnienia":  # WPR widzi zwolnienia
+                    pass
+                else:
+                    continue  # Pomiń dodawanie tej zakładki dla danej roli
+
+            self.add_tab_with_symbols(symbol_list, cat_name)  # Dodaj zakładkę
+            for symbol, _ in symbol_list:
+                self.valid_symbols.add(symbol)
+
+        buttons_layout = QHBoxLayout()
+        self.cancel_button = QPushButton("Anuluj")  # Zapisz referencję
+        self.cancel_button.setFont(self.parent_font)
+        self.cancel_button.clicked.connect(self.reject)
+
+        self.validation_label = QLabel("")  # Zapisz referencję
+        self.validation_label.setFont(self.parent_font)
+
+        buttons_layout.addWidget(self.validation_label)
+        buttons_layout.addStretch()
+        buttons_layout.addWidget(self.cancel_button)
+
+        main_layout.addWidget(self.tabs)
+        main_layout.addLayout(buttons_layout)
+        self.symbol_input.setFocus()
+
+    def add_tab_with_symbols(self, symbols, tab_name):
+        """Dodaje zakładkę z symbolami do tabwidget"""
+        tab = QWidget()
+        tab_layout = QGridLayout(tab)
+        tab_layout.setSpacing(5)
+
+        for idx, (symbol, desc) in enumerate(symbols):
+            button = QPushButton(symbol)
+            button.setFont(self.parent_font)
+            button.setFixedSize(60, 20)
+            button.setToolTip(desc)
+            button.setProperty("symbol", symbol)
+            button.setFocusPolicy(Qt.NoFocus)  # Wyłącz fokus dla przycisku
+            button.clicked.connect(self.on_symbol_button_clicked)
+            row = idx // 4
+            col = idx % 4
+            tab_layout.addWidget(button, row, col)
+
+        tab_layout.addItem(QSpacerItem(10, 10, QSizePolicy.Expanding, QSizePolicy.Expanding),
+                           (len(symbols) // 4) + 1, 0, 1, 4)
+        self.tabs.addTab(tab, tab_name)
+
+    def on_symbol_button_clicked(self):
+        """Obsługuje kliknięcie przycisku z symbolem"""
+        button = self.sender()  # Pobierz obiekt, który wysłał sygnał
+        if button:
+            symbol = button.property("symbol")
+            if symbol:
+                self.accept_symbol(symbol)
+
+    def on_symbol_input_changed(self, text):
+        """Obsługuje zmianę symbolu wpisanego z klawiatury"""
+        # Konwersja do dużych liter
+        uppercase_text = text.upper()
+        if text != uppercase_text:
+            # Blokuj sygnał, aby uniknąć nieskończonej pętli
+            self.symbol_input.blockSignals(True)
+            self.symbol_input.setText(uppercase_text)
+            self.symbol_input.blockSignals(False)
+
+        self.selected_symbol = uppercase_text.strip()
+
+        # Sprawdź, czy symbol jest na liście dostępnych
+        if self.selected_symbol:
+            if self.selected_symbol in self.valid_symbols:
+                self.validation_label.setText("Symbol prawidłowy")
+                self.validation_label.setStyleSheet("color: green;")
+            else:
+                self.validation_label.setText("Symbol niedostępny!")
+                self.validation_label.setStyleSheet("color: red;")
+        else:
+            self.validation_label.setText("")
+
+    def accept_symbol(self, symbol):
+        """Akceptuje symbol i zamyka dialog"""
+        self.selected_symbol = symbol
+
+        # Blokuj sygnał, aby uniknąć wywołania on_symbol_input_changed
+        self.symbol_input.blockSignals(True)
+        self.symbol_input.setText(symbol)
+        self.symbol_input.blockSignals(False)
+
+        # Aktualizuj etykietę walidacji
+        self.validation_label.setText("Symbol prawidłowy")
+        self.validation_label.setStyleSheet("color: green;")
+
+        # Wywołaj metodę sprawdzającą
+        self.check_and_accept()
+
+    def check_and_accept(self):
+        if self.selected_symbol and self.selected_symbol in self.valid_symbols:
+            super().accept()
+        elif self.selected_symbol:
+            QMessageBox.warning(
+                self,
+                "Nieprawidłowy symbol",
+                f"Symbol '{self.selected_symbol}' nie znajduje się na liście dostępnych symboli.",
+                QMessageBox.Ok
+            )
+            self.selected_symbol = ""
+            self.symbol_input.setText("")
+            self.symbol_input.setFocus()
+        else:
+            QMessageBox.warning(
+                self,
+                "Brak symbolu",
+                "Proszę wpisać lub wybrać symbol.",
+                QMessageBox.Ok
+            )
+            self.selected_symbol = ""
+            self.symbol_input.setText("")
+            self.symbol_input.setFocus()
+
+    def get_selected_symbol(self):
+        """Zwraca wybrany symbol"""
+        return self.selected_symbol
+
+class ScheduleChangeDialog(QDialog):
+    """Dialog do edycji zmian w grafiku"""
+
+    def __init__(self, parent=None, grouped_cells=None, year=None, month=None):
+        super().__init__(parent)
+        self.parent_widget = parent  # Zapisujemy rodzica
+        # Ustal i zapamiętaj motyw na podstawie rodzica (WorkScheduleWindow)
+        self.determined_theme = "dark"  # Domyślny motyw
+        if self.parent_widget and hasattr(self.parent_widget, 'is_dark_theme'):
+            self.determined_theme = "dark" if self.parent_widget.is_dark_theme else "light"
+
+        self.setWindowTitle("Wstaw zmianę grafiku")
+        self.setMinimumWidth(800)
+        self.setMinimumHeight(500)
+
+        self.grouped_cells = grouped_cells
+        self.year = year
+        self.month = month
+        self.flattened_cells = self.flatten_grouped_cells(grouped_cells)
+
+        # Pobierz rolę użytkownika od rodzica (WorkScheduleWindow)
+        self.user_role = "Użytkownik"  # Domyślna, mniej uprzywilejowana rola
+        if self.parent_widget and hasattr(self.parent_widget, 'current_user_role'):
+            self.user_role = self.parent_widget.current_user_role
+            # debug_print(f"ScheduleChangeDialog: Rola użytkownika: {self.user_role}") # Opcjonalny debug
+
+
+        self.setup_ui()
+        self.apply_dialog_theme()
+
+    def apply_dialog_theme(self):
+        """Stosuje motyw dla dialogu ScheduleChangeDialog."""
+        actual_theme = self.determined_theme # Użyj zapamiętanego motywu
+
+        # from debug_utils import debug_print # Odkomentuj w razie potrzeby
+        # debug_print(f"Dialog '{self.windowTitle()}' stosuje motyw: {actual_theme}")
+
+        from styles import AppStyles
+        self.setStyleSheet(AppStyles.get_dialog_style(actual_theme))
+
+        button_style = AppStyles.get_button_style(actual_theme)
+        if hasattr(self, 'close_button'):
+            self.close_button.setStyleSheet(button_style)
+
+        if hasattr(self, 'cells_table'):
+            self.cells_table.setStyleSheet(AppStyles.get_tablewidget_style(actual_theme)) #
+            for row in range(self.cells_table.rowCount()):
+                location_combo = self.cells_table.cellWidget(row, 3)
+                if location_combo and isinstance(location_combo, QComboBox):
+                    location_combo.setStyleSheet(AppStyles.get_combobox_style(actual_theme))
+
+                time_button = self.cells_table.cellWidget(row, 4)
+                if time_button and isinstance(time_button, QPushButton):
+                    time_button.setStyleSheet(button_style)
+
+                hours_button = self.cells_table.cellWidget(row, 5)
+                if hours_button and isinstance(hours_button, QPushButton):
+                    hours_button.setStyleSheet(button_style)
+
+                apply_button = self.cells_table.cellWidget(row, 6)
+                if apply_button and isinstance(apply_button, QPushButton):
+                    accent_button_style = AppStyles.get_button_style(actual_theme)
+                    if actual_theme == "dark":
+                        accent_button_style = accent_button_style.replace("background-color: #2c2c2c;",
+                                                                          "background-color: #0056b3;")
+                    else:
+                        accent_button_style = accent_button_style.replace("background-color: #e0e0e0;",
+                                                                          "background-color: #007bff;")
+                    apply_button.setStyleSheet(accent_button_style)
+
+    def flatten_grouped_cells(self, grouped_cells):
+        """Spłaszcza pogrupowane komórki do jednej listy"""
+        flattened = []
+        if not grouped_cells:
+            return flattened
+
+        for user_id, dates in grouped_cells.items():
+            for date, cells in dates.items():
+                for cell in cells:
+                    flattened.append(cell)
+        return flattened
+
+    def setup_ui(self):
+        main_layout = QVBoxLayout(self)
+        header_label = QLabel("Edycja zmian w grafiku")
+        main_layout.addWidget(header_label)
+        self.cells_table = QTableWidget()
+        self.cells_table.setColumnCount(7)
+        self.cells_table.setHorizontalHeaderLabels(
+            ["Data", "Użytkownik", "Symbol", "Lokalizacja", "Godzina rozpoczęcia", "Liczba godzin", "Akcje"])
+        self.cells_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        self.cells_table.horizontalHeader().setStretchLastSection(True)
+        self.cells_table.setRowCount(len(self.flattened_cells))
+        user_can_edit_time_hours = self.user_role in ["Pracownik WPR", "Lider OUT"]
+
+        for row, cell in enumerate(self.flattened_cells):
+            date_str = cell.get('date_str', '')
+            date_item = QTableWidgetItem(self.format_date(date_str))
+            date_item.setFlags(date_item.flags() & ~Qt.ItemIsEditable)
+            self.cells_table.setItem(row, 0, date_item)
+            user_name = cell.get('uzytkownik_dane', 'Nieznany')
+            user_item = QTableWidgetItem(user_name)
+            user_item.setFlags(user_item.flags() & ~Qt.ItemIsEditable)
+            self.cells_table.setItem(row, 1, user_item)
+            symbol = cell.get('symbol', '')
+            symbol_item = QTableWidgetItem(symbol)
+            symbol_item.setFlags(symbol_item.flags() & ~Qt.ItemIsEditable)
+            self.cells_table.setItem(row, 2, symbol_item)
+
+            from symbol_parser import parse_symbol
+            parsed_symbol = parse_symbol(cell.get('symbol', ''))
+
+            location_code = parsed_symbol.get('location') or cell.get('lokalizacja_domyslna', 'h')
+            start_hour = parsed_symbol.get('start_hour', 8)
+            work_hours = parsed_symbol.get('work_hours')
+            if work_hours is None:
+                work_hours = cell.get('etat', 8.0)
+
+            try:
+                work_hours = int(float(work_hours))
+            except (ValueError, TypeError):
+                work_hours = 8  # Bezpieczny fallback jako int
+
+            location_combo = QComboBox()
+            location_combo.addItem("SBC (s)", "s");
+            location_combo.addItem("mPrzystanek (p)", "p");
+            location_combo.addItem("HomeOffice (h)", "h")
+            location_index = {'s': 0, 'p': 1, 'h': 2}.get(location_code, 2)
+            location_combo.setCurrentIndex(location_index)
+            self.cells_table.setCellWidget(row, 3, location_combo)
+            time_button = QPushButton(str(start_hour))
+            time_button.setProperty("cell_index", row);
+            time_button.setProperty("field_type", "hour")
+            time_button.clicked.connect(self.show_digit_selection)
+            time_button.setMinimumWidth(50);
+            time_button.setEnabled(user_can_edit_time_hours)
+            self.cells_table.setCellWidget(row, 4, time_button)
+            hours_button = QPushButton(str(work_hours))  # Teraz work_hours jest już int
+            hours_button.setProperty("cell_index", row);
+            hours_button.setProperty("field_type", "hours")
+            hours_button.clicked.connect(self.show_digit_selection)
+            hours_button.setMinimumWidth(50);
+            hours_button.setEnabled(user_can_edit_time_hours)
+            self.cells_table.setCellWidget(row, 5, hours_button)
+            can_edit_this_row_controls = user_can_edit_time_hours or (symbol != "")
+            apply_button = QPushButton("Zastosuj")
+            apply_button.setProperty("cell_index", row)
+            apply_button.clicked.connect(self.apply_change_by_index)
+            apply_button.setEnabled(can_edit_this_row_controls)
+            self.cells_table.setCellWidget(row, 6, apply_button)
+
+        main_layout.addWidget(self.cells_table)
+        button_layout = QHBoxLayout()
+        self.close_button = QPushButton("Zamknij")
+        self.close_button.clicked.connect(self.close)
+        button_layout.addStretch();
+        button_layout.addWidget(self.close_button)
+        main_layout.addLayout(button_layout)
+        self.apply_dialog_theme()
+
+    def show_digit_selection(self):
+        """
+        NOWA METODA: Pokazuje dialog wyboru cyfr
+        """
+        button = self.sender()
+        if not button:
+            return
+
+        field_type = button.property("field_type")
+        cell_index = button.property("cell_index")
+
+        if field_type == "hour":
+            values = list(range(24))
+            title = "Wybierz godzinę rozpoczęcia"
+        elif field_type == "hours":
+            values = list(range(1, 14))
+            title = "Wybierz liczbę godzin"
+        else:
+            return
+
+        # Pokaż dialog wyboru, przekazując ustalony motyw
+        dialog = DigitSelectionDialog(self, title, values, current_theme=self.determined_theme) # Przekaż motyw
+        if dialog.exec() == QDialog.Accepted:
+            selected_value = dialog.get_selected_value()
+            if selected_value is not None:
+                button.setText(str(selected_value))
+                button.setProperty("selected_value", selected_value)
+
+    def apply_change_by_index(self):
+        """
+        POPRAWIONA WERSJA: Niezawodnie odczytuje wartości z kontrolek, buduje
+        symbol i wywołuje mechanizm aktualizacji w głównym oknie.
+        """
+        button = self.sender()
+        if not button:
+            return
+
+        cell_index = button.property("cell_index")
+        if cell_index is None or cell_index >= len(self.flattened_cells):
+            return
+
+        cell = self.flattened_cells[cell_index]
+
+        location_combo = self.cells_table.cellWidget(cell_index, 3)
+        time_button = self.cells_table.cellWidget(cell_index, 4)
+        hours_button = self.cells_table.cellWidget(cell_index, 5)
+
+        if not location_combo or not time_button or not hours_button:
+            QMessageBox.warning(self, "Błąd", "Nie można odczytać wartości z kontrolek.", QMessageBox.Ok)
+            return
+
+        # --- NOWA, NIEZAWODNA LOGIKA ODCZYTU WARTOŚCI ---
+        try:
+            # Używamy int(float(...)) aby poprawnie obsłużyć teksty takie jak "8" i "8.0"
+            start_hour = int(float(time_button.text()))
+            work_hours = int(float(hours_button.text()))
+        except (ValueError, TypeError) as e:
+            log_error(f"Błąd konwersji wartości z przycisku: {e}")
+            QMessageBox.warning(self, "Błąd danych", "Wprowadzona wartość godzin jest nieprawidłowa.")
+            return
+        # --- KONIEC NOWEJ LOGIKI ---
+
+        location = location_combo.currentData()
+        user_id = cell.get('uzytkownik_id')
+        date_str = cell.get('date_str')
+        nr_kadrowy = cell.get('nr_kadrowy')
+
+        if not user_id or not date_str or not nr_kadrowy:
+            QMessageBox.warning(self, "Błąd", "Niepełne dane komórki do przetworzenia.", QMessageBox.Ok)
+            return
+
+        # Budowanie nowego symbolu
+        from symbol_parser import parse_symbol, build_symbol
+        original_parsed_symbol = parse_symbol(cell.get('symbol', ''))
+        new_symbol = build_symbol(
+            location=location,
+            start_hour=start_hour,
+            work_hours=work_hours,
+            special_symbol=original_parsed_symbol.get('special_symbol')
+        )
+
+        try:
+            year, month, day = date_str.split('-')
+
+            if self.parent_widget and hasattr(self.parent_widget, '_call_import_changes_procedure'):
+                result = self.parent_widget._call_import_changes_procedure(
+                    nr_kadrowy=nr_kadrowy, rok=int(year), miesiac=int(month), data=date_str, symbol=new_symbol
+                )
+            else:
+                QMessageBox.critical(self, "Błąd krytyczny", "Brak dostępu do funkcji zapisu zmian.")
+                return
+
+            if result.get("success", False):
+                button.setText("Zastosowano ✓")
+                button.setStyleSheet("background-color: #4CAF50; color: white;")
+                returned_symbol = result.get('returned_symbol', new_symbol)
+
+                symbol_item = self.cells_table.item(cell_index, 2)
+                if symbol_item:
+                    symbol_item.setText(returned_symbol)
+
+                # Wywołanie poprawnego mechanizmu odświeżania w głównym oknie
+                if self.parent_widget and hasattr(self.parent_widget, '_update_cells_with_new_symbols'):
+                    self.parent_widget._update_cells_with_new_symbols([(user_id, date_str, returned_symbol)])
+            else:
+                QMessageBox.warning(self, "Błąd zapisu", result.get("message", "Nieznany błąd podczas zapisu zmian."),
+                                    QMessageBox.Ok)
+
+        except Exception as e:
+            log_error(f"Błąd w ScheduleChangeDialog.apply_change_by_index: {e}", exception=e)
+            QMessageBox.critical(self, "Błąd krytyczny", f"Wystąpił nieoczekiwany błąd: {str(e)}", QMessageBox.Ok)
+    def format_date(self, date_str):
+            """Formatuje ciąg daty z YYYY-MM-DD do DD.MM.YYYY"""
+            try:
+                year, month, day = date_str.split('-')
+                return f"{day}.{month}.{year}"
+            except:
+                return date_str
+
+
+class DigitSelectionDialog(QDialog):
+    """
+    Dialog do wyboru cyfry z siatki przycisków.
+    """
+
+    def __init__(self, parent=None, title="Wybierz wartość", values=None, current_theme="dark"): # Dodano current_theme
+        super().__init__(parent)
+        self.parent_widget = parent
+        self.current_theme = current_theme # Użyj przekazanego motywu
+        self.setWindowTitle(title)
+        self.setModal(True)
+        self.selected_value = None
+
+        if values is None:
+            values = list(range(10))
+
+        self.values = values
+        self.setFixedSize(230, 160)
+
+        self.setObjectName("DigitSelectionDialogInstance")
+
+        self.setup_ui()
+
+    def apply_dialog_theme(self):
+        """Stosuje motyw dla dialogu DigitSelectionDialog."""
+        actual_theme = self.current_theme # Użyj motywu przekazanego w konstruktorze
+
+        # debug_print(f"DigitSelectionDialog ('{self.windowTitle()}'): Stosuję motyw '{actual_theme}'")
+
+        self.setStyleSheet(AppStyles.get_dialog_style(actual_theme)) #
+
+        button_style_qss = AppStyles.get_button_style(actual_theme)
+
+        if hasattr(self, 'grid_layout'):
+            for i in range(self.grid_layout.count()):
+                widget = self.grid_layout.itemAt(i).widget()
+                if isinstance(widget, QPushButton):
+                    widget.setStyleSheet(button_style_qss)
+                    widget.style().unpolish(widget)
+                    widget.style().polish(widget)
+
+        if hasattr(self, 'cancel_button'):
+            self.cancel_button.setStyleSheet(button_style_qss)
+            self.cancel_button.style().unpolish(self.cancel_button)
+            self.cancel_button.style().polish(self.cancel_button)
+
+        self.style().unpolish(self)
+        self.style().polish(self)
+        self.update()
+
+    def setup_ui(self):
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+
+        self.grid_layout = QGridLayout()
+        self.grid_layout.setSpacing(5)
+
+        cols = min(6, len(self.values))
+        if cols == 0: cols = 1  # Zapobieganie dzieleniu przez zero
+
+        for i, value in enumerate(self.values):
+            row = i // cols
+            col = i % cols
+
+            button = QPushButton(str(value))
+            button.setFixedSize(30, 30)  # Zwiększono rozmiar przycisków
+            button.setProperty("value", value)
+            button.clicked.connect(self.on_value_selected)
+            # Styl przycisków zostanie ustawiony w apply_dialog_theme
+            self.grid_layout.addWidget(button, row, col)
+
+        main_layout.addLayout(self.grid_layout)
+
+        self.cancel_button = QPushButton("Anuluj")
+        self.cancel_button.clicked.connect(self.reject)
+        # Styl przycisku zostanie ustawiony w apply_dialog_theme
+
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        button_layout.addWidget(self.cancel_button)
+        main_layout.addLayout(button_layout)
+
+    def on_value_selected(self):
+        """Obsługuje wybór wartości"""
+        button = self.sender()
+        if button:
+            self.selected_value = button.property("value")
+            self.accept()
+
+    def get_selected_value(self):
+        """Zwraca wybraną wartość"""
+        return self.selected_value
