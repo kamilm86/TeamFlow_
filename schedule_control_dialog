@@ -1,0 +1,360 @@
+# schedule_control_dialog.py (pełna, nowa wersja)
+
+from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
+                               QPushButton, QGroupBox, QFrame, QGridLayout, QMessageBox, QListWidget, QAbstractItemView)
+from PySide6.QtCore import Qt, Signal
+from styles import AppStyles
+from db_connector import DatabaseConnector, get_modifier_id
+
+class ScheduleControlDialog(QDialog):
+    data_refresh_needed = Signal()
+
+    def __init__(self, parent, year, month):
+        super().__init__(parent)
+        self.parent_widget = parent
+        self.year = year
+        self.month = month
+        self.is_dark_theme = getattr(parent, 'is_dark_theme', False)
+        self.login_windows, _, _, _ = get_modifier_id() # Pobierz nazwę użytkownika Windows
+
+        self.setWindowTitle("Sugestie i blokowanie grafiku")
+        self.setMinimumWidth(450)
+
+        self.setup_ui()
+        self.connect_signals()
+        self.apply_styles()
+        self.load_initial_status()
+
+    # Metoda setup_ui() pozostaje bez zmian (skopiuj ją z Kroku 1)
+    def setup_ui(self):
+        main_layout = QVBoxLayout(self)
+        status_box = QGroupBox("Aktualny status:")
+        status_layout = QHBoxLayout()
+        self.suggestions_status_label = QLabel("Ładowanie...")
+        self.suggestions_status_label.setAlignment(Qt.AlignCenter)
+        self.publish_status_label = QLabel("Ładowanie...")
+        self.publish_status_label.setAlignment(Qt.AlignCenter)
+        status_layout.addWidget(self.suggestions_status_label)
+        status_layout.addWidget(self.publish_status_label)
+        status_box.setLayout(status_layout)
+        suggestions_box = QGroupBox("Zmiana statusu sugestii")
+        suggestions_layout = QVBoxLayout()
+        self.unlock_button = QPushButton("Odblokowane")
+        self.lock_for_consultants_button = QPushButton("Zablokowane dla Konsultantów")
+        self.lock_for_consultants_support_button = QPushButton("Zablokowane dla Konsultantów i wsparcia")
+        suggestions_layout.addWidget(self.unlock_button)
+        suggestions_layout.addWidget(self.lock_for_consultants_button)
+        suggestions_layout.addWidget(self.lock_for_consultants_support_button)
+        suggestions_box.setLayout(suggestions_layout)
+        publish_box = QGroupBox("Publikacja grafiku")
+        publish_layout = QVBoxLayout()
+        self.publish_button = QPushButton("Publikacja grafiku")
+        self.unpublish_button = QPushButton("Cofnij publikację")
+        publish_layout.addWidget(self.publish_button)
+        publish_layout.addWidget(self.unpublish_button)
+        publish_box.setLayout(publish_layout)
+        right_panel_layout = QVBoxLayout()
+        blocking_box = QGroupBox("Blokowanie PU")
+        blocking_layout = QVBoxLayout()
+        self.blocking_date_label = QLabel("Data blokady: Nie ustawiono")
+        self.change_blocking_date_button = QPushButton("Zmień datę blokady")
+        blocking_layout.addWidget(self.blocking_date_label)
+        blocking_layout.addWidget(self.change_blocking_date_button)
+        blocking_box.setLayout(blocking_layout)
+        data_box = QGroupBox("Pobieranie danych")
+        data_layout = QVBoxLayout()
+        self.get_suggestions_button = QPushButton("Pobierz sugestie Konsultantów")
+        self.get_vacation_plans_button = QPushButton("Pobierz plany urlopowe")
+        data_layout.addWidget(self.get_suggestions_button)
+        data_layout.addWidget(self.get_vacation_plans_button)
+        data_box.setLayout(data_layout)
+        right_panel_layout.addWidget(blocking_box)
+        right_panel_layout.addWidget(data_box)
+        grid_layout = QGridLayout()
+        grid_layout.addWidget(status_box, 0, 0, 1, 2)
+        grid_layout.addWidget(suggestions_box, 1, 0)
+        grid_layout.addWidget(publish_box, 2, 0)
+        grid_layout.addLayout(right_panel_layout, 1, 1, 2, 1)
+        main_layout.addLayout(grid_layout)
+        separator = QFrame()
+        separator.setFrameShape(QFrame.HLine)
+        separator.setFrameShadow(QFrame.Sunken)
+        main_layout.addWidget(separator)
+        close_button_layout = QHBoxLayout()
+        close_button_layout.addStretch()
+        self.close_button = QPushButton("Zamknij")
+        close_button_layout.addWidget(self.close_button)
+        main_layout.addLayout(close_button_layout)
+
+    def connect_signals(self):
+        self.close_button.clicked.connect(self.accept)
+        self.unlock_button.clicked.connect(self.unlock_suggestions)
+        self.lock_for_consultants_button.clicked.connect(self.lock_for_consultants)
+        self.lock_for_consultants_support_button.clicked.connect(self.lock_for_support)
+        self.publish_button.clicked.connect(self.publish_schedule)
+        self.unpublish_button.clicked.connect(self.unpublish_schedule)
+        self.get_suggestions_button.clicked.connect(self.get_suggestions)
+        self.get_vacation_plans_button.clicked.connect(self.get_vacation_plans)
+
+    def apply_styles(self):
+        theme = "dark" if self.is_dark_theme else "light"
+        self.setStyleSheet(AppStyles.get_dialog_style(theme))
+        for button in self.findChildren(QPushButton):
+            button.setStyleSheet(AppStyles.get_button_style(theme))
+        for label in self.findChildren(QLabel):
+            label.setStyleSheet(f"color: {'white' if self.is_dark_theme else 'black'}; background-color: transparent;")
+        self.suggestions_status_label.setStyleSheet("font-weight: bold; border: 1px solid gray; padding: 5px;")
+        self.publish_status_label.setStyleSheet("font-weight: bold; border: 1px solid gray; padding: 5px;")
+
+    def get_vacation_plans(self):
+        """Obsługuje pobieranie planów urlopowych."""
+        # Ta funkcja jest przeznaczona dla roli 'Pracownik WPR', która nie wybiera grup.
+        # Wywołujemy procedurę dla wszystkich.
+        reply = QMessageBox.question(self, "Potwierdzenie",
+                                     "Czy na pewno chcesz pobrać plany urlopowe dla wszystkich? Może to spowodować nadpisanie wprowadzonych już danych.",
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+
+        if reply == QMessageBox.No:
+            return
+
+        try:
+            # Zakładamy, że procedura obsługuje parametr NULL dla grup (oznaczający 'wszystkie')
+            sql = f"EXEC dbo.p_P_ZZ_ImportujPlanyUrlopowe {self.year}, {self.month}, '{self.login_windows}', NULL"
+            conn = DatabaseConnector.get_connection()
+            conn.execute(sql)
+            conn.commit()
+            conn.close()
+            QMessageBox.information(self, "Sukces", "Plany urlopowe zostały pobrane.")
+            self.data_refresh_needed.emit()
+        except Exception as e:
+            QMessageBox.critical(self, "Błąd Bazy Danych", f"Wystąpił błąd podczas pobierania planów urlopowych:\n{e}")
+
+    def _execute_procedure(self, sql_query):
+        """Pomocnicza metoda do wykonywania zapytań."""
+        try:
+            conn = DatabaseConnector.get_connection()
+            cursor = conn.cursor()
+            cursor.execute(sql_query)
+            conn.commit()
+            conn.close()
+            return True
+        except Exception as e:
+            QMessageBox.critical(self, "Błąd Bazy Danych", f"Wystąpił błąd:\n{e}")
+            return False
+
+    def load_initial_status(self):
+        """Wczytuje i ustawia początkowy status z bazy."""
+        try:
+            conn = DatabaseConnector.get_connection()
+            cursor = conn.cursor()
+
+            # Status sugestii
+            query_sug = f"SELECT Status FROM dbo.p_T_ZZ_DatyBlokowaniaSugestii WHERE Rok={self.year} AND Miesiac={self.month}"
+            sug_status = cursor.execute(query_sug).fetchone()
+            if sug_status:
+                if sug_status[0] == 0: self.suggestions_status_label.setText("Odblokowany")
+                elif sug_status[0] == 1: self.suggestions_status_label.setText("Zablokowany dla Konsultantów")
+                elif sug_status[0] == 2: self.suggestions_status_label.setText("Zablokowany dla Konsultantów i Wsparcia")
+            else:
+                self.suggestions_status_label.setText("Nieustawiony")
+
+            # Status publikacji
+            query_pub = f"SELECT TOP 1 Id FROM dbo.p_T_ZZ_DatyPublikacjiGrafiku WHERE Status=1 AND Rok={self.year} AND Miesiac={self.month}"
+            pub_status = cursor.execute(query_pub).fetchone()
+            if pub_status:
+                self.publish_status_label.setText("Opublikowany")
+                self.unpublish_button.setText("Cofnij publikację")
+            else:
+                self.publish_status_label.setText("Nieopublikowany")
+                self.publish_button.setText("Publikuj")
+
+            conn.close()
+        except Exception as e:
+            self.suggestions_status_label.setText("Błąd odczytu")
+            self.publish_status_label.setText("Błąd odczytu")
+            QMessageBox.warning(self, "Błąd", f"Nie udało się wczytać statusów: {e}")
+
+    def _set_suggestions_status(self, status_code):
+        """Ustawia status sugestii i odświeża widok."""
+        sql = f"exec dbo.p_P_ZZ_BlokowanieSugestii {self.year}, {self.month}, GETDATE(), '{self.login_windows}', {status_code}, 1"
+        if self._execute_procedure(sql):
+            QMessageBox.information(self, "Sukces", "Status sugestii został zmieniony.")
+            self.load_initial_status()
+
+    def unlock_suggestions(self):
+        self._set_suggestions_status(0)
+
+    def lock_for_consultants(self):
+        self._set_suggestions_status(1)
+
+    def lock_for_support(self):
+        self._set_suggestions_status(2)
+
+    def publish_schedule(self):
+        sql = f"exec dbo.p_P_ZZ_PublikowanieGrafiku {self.year}, {self.month}, '{self.login_windows}', 1"
+        if self._execute_procedure(sql):
+            QMessageBox.information(self, "Sukces", "Grafik został opublikowany.")
+            self.load_initial_status()
+            self.data_refresh_needed.emit()
+
+    def unpublish_schedule(self):
+        sql = f"exec dbo.p_P_ZZ_PublikowanieGrafiku {self.year}, {self.month}, '{self.login_windows}', 0"
+        if self._execute_procedure(sql):
+            QMessageBox.information(self, "Sukces", "Publikacja grafiku została cofnięta.")
+            self.load_initial_status()
+            self.data_refresh_needed.emit()
+
+    def get_suggestions(self):
+        # Wersja dla Pythona nie pobiera danych do Excela, tylko wywołuje procedurę
+        # i emituje sygnał do odświeżenia głównego okna.
+        sql = f"exec dbo.p_P_ZZ_PobierzSugestieII {self.year}, {self.month}, {self.month}, {self.year}, 1, 0"
+        if self._execute_procedure(sql):
+             QMessageBox.information(self, "Sukces", "Procedura pobierania sugestii została uruchomiona.\nDane zostaną odświeżone.")
+             self.data_refresh_needed.emit()
+
+
+class SuggestionsOutDialog(QDialog):
+    """Dialog do pobierania sugestii i planów dla Lidera OUT."""
+    data_refresh_needed = Signal()
+
+    def __init__(self, parent, year, month):
+        super().__init__(parent)
+        self.parent_widget = parent
+        self.year = year
+        self.month = month
+        self.is_dark_theme = getattr(parent, 'is_dark_theme', False)
+        _, self.user_app_id, _, _ = get_modifier_id()
+
+        self.setWindowTitle("Sugestie konsultantów out")
+        self.setMinimumSize(350, 400)
+
+        self.setup_ui()
+        self.connect_signals()
+        self.apply_styles()
+        self._load_groups()
+
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+
+        data_box = QGroupBox("Pobieranie danych")
+        data_layout = QVBoxLayout()
+        self.get_suggestions_button = QPushButton("Pobierz sugestie Konsultantów")
+        self.get_vacation_plans_button = QPushButton("Pobierz plany urlopowe")
+        data_layout.addWidget(self.get_suggestions_button)
+        data_layout.addWidget(self.get_vacation_plans_button)
+        data_box.setLayout(data_layout)
+
+        groups_box = QGroupBox("Wybierz grupy do pobrania:")
+        groups_layout = QVBoxLayout()
+        self.groups_list = QListWidget()
+        self.groups_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
+        groups_layout.addWidget(self.groups_list)
+        groups_box.setLayout(groups_layout)
+
+        layout.addWidget(data_box)
+        layout.addWidget(groups_box)
+
+        self.close_button = QPushButton("Zamknij")
+        close_button_layout = QHBoxLayout()
+        close_button_layout.addStretch()
+        close_button_layout.addWidget(self.close_button)
+        layout.addLayout(close_button_layout)
+
+    def connect_signals(self):
+        self.close_button.clicked.connect(self.accept)
+        self.get_suggestions_button.clicked.connect(self._get_consultant_suggestions)
+        self.get_vacation_plans_button.clicked.connect(self._get_vacation_plans)
+
+    def apply_styles(self):
+        theme = "dark" if self.is_dark_theme else "light"
+        self.setStyleSheet(AppStyles.get_dialog_style(theme))
+        for button in self.findChildren(QPushButton):
+            button.setStyleSheet(AppStyles.get_button_style(theme))
+        self.groups_list.setStyleSheet(AppStyles.get_list_style(theme))
+
+    def _get_selected_groups_str(self):
+        """Zwraca string z wybranymi grupami, gotowy do użycia w SQL."""
+        selected_items = [item.text() for item in self.groups_list.selectedItems()]
+        if not selected_items:
+            QMessageBox.warning(self, "Brak zaznaczenia", "Proszę wybrać co najmniej jedną grupę z listy.")
+            return None
+        # Tworzy string w formacie "'Grupa1','Grupa2',..."
+        return ",".join([f"'{item}'" for item in selected_items])
+
+    def _load_groups(self):
+        """Ładuje listę grup (przełożonych) na podstawie logiki VBA."""
+        self.groups_list.clear()
+        query = f"""
+            SELECT distinct PrzelozonyDane 
+            FROM dbo.[p_T_DO_KonfiguracjaZatrudnienie]
+            """
+
+            # FROM dbo.v_DO_KonfiguracjaZatrudnienie
+            # WHERE (Status = 'Aktywny' Or DataZwolnienia > '{self.year}-{self.month}-28') 
+            #   AND flag=1 AND NieobecnoscDlugoterminowa=0 AND rola in (1,2,3) 
+            #   AND Jednostka=4 AND flag=1 AND NieobecnoscDlugoterminowa=0 
+            #   AND rola in (select rola from v_DO_KonfiguracjaZatrudnienie where DataZatrudnienia<'{self.year}-{self.month}-01' and DataZwolnienia>'{self.year}-{self.month}-01' and Jednostka=4) 
+            # ORDER BY PrzelozonyDane
+
+        try:
+            conn = DatabaseConnector.get_connection()
+            cursor = conn.cursor()
+            results = cursor.execute(query).fetchall()
+            conn.close()
+            for row in results:
+                self.groups_list.addItem(row[0])
+        except Exception as e:
+            QMessageBox.critical(self, "Błąd Bazy Danych", f"Nie udało się wczytać listy grup:\n{e}")
+
+    def _get_consultant_suggestions(self):
+        """Adaptacja logiki VBA dla przycisku 'Pobierz sugestie Konsultantów'."""
+        selected_groups_str = self._get_selected_groups_str()
+        if not selected_groups_str:
+            return
+
+        reply = QMessageBox.question(self, "Potwierdzenie",
+                                     "Czy na pewno chcesz pobrać sugestie? Może to spowodować nadpisanie wprowadzonych już danych.",
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+
+        if reply == QMessageBox.No:
+            return
+
+        try:
+            sql = f"EXEC dbo.p_P_ZZ_PobieranieSugestiiOut {self.year}, {self.month}, '{self.user_app_id}', {selected_groups_str}"
+            conn = DatabaseConnector.get_connection()
+            conn.execute(sql)
+            conn.commit()
+            conn.close()
+            QMessageBox.information(self, "Sukces", "Sugestie Konsultantów zostały pobrane do grafiku.")
+            self.data_refresh_needed.emit()
+        except Exception as e:
+            QMessageBox.critical(self, "Błąd Bazy Danych", f"Wystąpił błąd podczas pobierania sugestii:\n{e}")
+
+    def _get_vacation_plans(self):
+        """Adaptacja logiki VBA dla przycisku 'Pobierz plany urlopowe'."""
+        # UWAGA: Poniższa logika jest bardzo złożona i silnie uzależniona od struktury Excela.
+        # W aplikacji Python najlepszą praktyką byłoby przeniesienie tej logiki
+        # do DEDYKOWANEJ PROCEDURY SKŁADOWANEJ w SQL Server.
+        # Poniższy kod jest uproszczoną adaptacją, która tylko wywołuje taką procedurę.
+        selected_groups_str = self._get_selected_groups_str()
+        if not selected_groups_str:
+            return
+
+        reply = QMessageBox.question(self, "Potwierdzenie",
+                                     "Czy na pewno chcesz pobrać plany urlopowe? Może to spowodować nadpisanie wprowadzonych już danych.",
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+
+        if reply == QMessageBox.No:
+            return
+
+        try:
+            # Zakładamy, że istnieje procedura, która hermetyzuje logikę z pętli VBA
+            sql = f"EXEC dbo.p_P_ZZ_ImportujPlanyUrlopowe {self.year}, {self.month}, '{self.user_app_id}', {selected_groups_str}"
+            conn = DatabaseConnector.get_connection()
+            conn.execute(sql)
+            conn.commit()
+            conn.close()
+            QMessageBox.information(self, "Sukces", "Plany urlopowe zostały pobrane.")
+            self.data_refresh_needed.emit()
+        except Exception as e:
+            QMessageBox.critical(self, "Błąd Bazy Danych", f"Wystąpił błąd podczas pobierania planów urlopowych:\n{e}")
