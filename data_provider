@@ -9,7 +9,7 @@ from debug_utils import debug_print, log_warning, log_error
 from dataclasses import dataclass, field
 from typing import Dict, List, Tuple, Optional, Any
 from functools import lru_cache
-from symbol_parser import parse_symbols_batch
+from symbol_parser import parse_symbols_batch,parse_symbol
 
 
 @dataclass
@@ -36,7 +36,7 @@ class DataProvider(QObject):
     def __init__(self):
         super().__init__()
         self.db_connector = DatabaseConnector
-        self.monthly_cache: Dict[Tuple[int, int], MonthlyDataContainer] = {}
+        self.monthly_cache: Dict[Tuple[int, int, int, int], MonthlyDataContainer] = {}
         self.forecast_cache: Dict[Tuple[int, int], List[Dict]] = {}
         self.audit_cache: Dict[Tuple[int, int], List[Dict]] = {}
         self._icons_cache_by_month: Dict[Tuple[int, int], Dict[Tuple[int, str], Dict]] = {}
@@ -78,28 +78,6 @@ class DataProvider(QObject):
             del self.audit_cache[cache_key]
             debug_print(f"DataProvider: Usunięto cache danych audytowych dla {year}-{month}")
 
-    def _fetch_schedule_comments(self, year: int, month: int) -> Dict[int, str]:
-        """Pobiera komentarze do grafiku dla danego miesiąca."""
-        comments = {}
-        query = """
-            SELECT Uzytkownik, KomentarzGrafik
-            FROM dbo.KomentarzDoGrafiku
-            WHERE Rok = ? AND Miesiac = ?
-        """
-        try:
-            conn = self.db_connector.get_connection()
-            cursor = conn.cursor()
-            cursor.execute(query, (year, month))
-            for row in cursor.fetchall():
-                user_id, comment = row
-                if user_id is not None and comment:
-                    comments[user_id] = comment
-            conn.close()
-            debug_print(f"DataProvider: Pobrano {len(comments)} komentarzy do grafiku dla {year}-{month}")
-            return comments
-        except Exception as e:
-            log_error(f"DataProvider: Błąd podczas pobierania komentarzy do grafiku: {e}", exception=e)
-            return {}
 
     def get_dynamic_icons_for_cell(self, user_id: int, date_str: str) -> Dict:
         """
@@ -229,26 +207,28 @@ class DataProvider(QObject):
             log_error(f"Błąd podczas pobierania danych prognozy: {e}", exception=e)
             return []
 
-    def _get_or_load_monthly_data(self, year: int, month: int, use_cache: bool = True) -> Optional[
-        MonthlyDataContainer]:
+    def _get_or_load_monthly_data(self, year: int, month: int, grupa: int, funkcja: int, use_cache: bool = True) -> Optional[MonthlyDataContainer]:
         self._current_year = year
         self._current_month = month
-        cache_key = (year, month)
+        cache_key = (year, month, grupa, funkcja) # Używamy klucza z 4 wartościami
 
         if use_cache and cache_key in self.monthly_cache:
             return self.monthly_cache[cache_key]
 
-        debug_print(f"DataProvider: Tworzę nowy kontener dla {year}-{month} (use_cache={use_cache})")
+        debug_print(f"DataProvider: Tworzę nowy kontener dla {year}-{month} (grupa={grupa}, funkcja={funkcja})")
 
         try:
-            # --- ZMIANA: Pobranie komentarzy ---
-            schedule_data = self._fetch_schedule_data(year, month)
+            # Przekaż parametry do metody pobierającej dane
+            schedule_data = self._fetch_schedule_data(year, month, grupa, funkcja)
             events_data = self._fetch_events_data(year, month)
-            comments_data = self._fetch_schedule_comments(year, month)  # NOWA LINIA
 
-            # --- ZMIANA: Przekazanie komentarzy do buildera ---
+            is_schedule_empty = not any(row.get(str(day)) for row in schedule_data for day in range(1, 32))
+            if is_schedule_empty:
+                # ... istniejąca logika dla sugestii ...
+                pass
+
             events_cache = self._build_events_cache(events_data)
-            processed_data_base = self._build_processed_data_without_icons(schedule_data, comments_data)  # ZMIANA
+            processed_data_base = self._build_processed_data_without_icons(schedule_data)
 
             container = MonthlyDataContainer(
                 schedule_data=schedule_data,
@@ -268,18 +248,8 @@ class DataProvider(QObject):
                 del self.monthly_cache[cache_key]
             return None
 
-        except Exception as e:
-            log_error(
-                f"DataProvider: Błąd podczas ładowania danych dla {year}-{month} w _get_or_load_monthly_data: {e}",
-                exception=e)
-            # Jeśli wystąpił błąd, usuń potencjalnie niekompletny wpis z cache
-            if cache_key in self.monthly_cache:
-                del self.monthly_cache[cache_key]
-            return None
-
-    def get_schedule_data(self, year: int, month: int, use_cache: bool = True) -> List[Any]:
-        """Pobiera dane grafiku"""
-        container = self._get_or_load_monthly_data(year, month, use_cache)
+    def get_schedule_data(self, year: int, month: int, grupa: int, funkcja: int, use_cache: bool = True) -> List[Any]:
+        container = self._get_or_load_monthly_data(year, month, grupa, funkcja, use_cache)
         return container.schedule_data if container else []
 
     def get_events_data(self, year: int, month: int, use_cache: bool = True) -> List[Dict]:
@@ -288,29 +258,22 @@ class DataProvider(QObject):
         container = self._get_or_load_monthly_data(year, month, use_cache)
         return container.events_data if container else []
 
-    def get_processed_data(self, year: int, month: int) -> Dict:
+    def get_processed_data(self, year: int, month: int, grupa: int, funkcja: int) -> Dict:
         """
         Zwraca processed_data z dynamicznie obliczonymi ikonami.
-        Ta metoda jest odpowiedzialna za nałożenie ikon na `processed_data_base` z kontenera.
         """
-        container = self._get_or_load_monthly_data(year, month, use_cache=True)  # Zawsze próbuj użyć cache najpierw
+        # ZMIANA: Przekazujemy 'grupa' i 'funkcja' do metody ładującej
+        container = self._get_or_load_monthly_data(year, month, grupa, funkcja, use_cache=True)
         if not container:
             return {}
 
-        # Sprawdź, czy ikony zostały już obliczone DLA TEJ INSTANCJI KONTENERA W PAMIĘCI.
-        # `processed_data_base` w kontenerze jest zawsze bez ikon.
+        # Sprawdź, czy ikony zostały już obliczone
         if not container._icons_calculated_on_this_instance:
             debug_print(f"DataProvider: Obliczam ikony dla {year}-{month} na żądanie w get_processed_data")
-            # Modyfikuj `container.processed_data_base` w miejscu lub pracuj na kopii, jeśli to preferowane.
-            # Dla wydajności, modyfikacja w miejscu może być lepsza.
-            # _update_dynamic_icons powinna modyfikować przekazany jej słownik processed_data.
             self._update_dynamic_icons(container.processed_data_base, container.events_cache)
             container._icons_calculated_on_this_instance = True
-        else:
-            debug_print(
-                f"DataProvider: Ikony dla {year}-{month} były już obliczone dla tej instancji kontenera (w get_processed_data)")
 
-        return container.processed_data_base  # Zwróć dane z (ewentualnie właśnie) nałożonymi ikonami
+        return container.processed_data_base
 
     def refresh_data(self, year: int, month: int):
         """
@@ -418,77 +381,60 @@ class DataProvider(QObject):
 
         return stats
 
-    def _build_processed_data_without_icons(self, schedule_data: List[Any], comments_data: Dict[int, str]) -> Dict:
-        if not self._current_year or not self._current_month:
-            log_error("DataProvider: Rok lub miesiąc nie jest ustawiony w _build_processed_data_without_icons")
+    def _build_processed_data_without_icons(self, schedule_data: List[Dict]) -> Dict:
+        """
+        NOWA WERSJA: Przetwarza dane z już spivotowanego zapytania SQL.
+        Nie wykonuje już operacji PIVOT w Pythonie.
+        """
+        if not self._current_year or not self._current_month or not schedule_data:
             return {}
-
-        debug_print(
-            f"DataProvider: Rozpoczynam budowanie danych dla {self._current_year}-{self._current_month} ({len(schedule_data)} wierszy)")
 
         processed_data = {}
 
-        # --- ZMIANA: Dodano bezpieczne sprawdzanie długości wiersza ---
-        # Zbieramy unikalne symbole tylko z wierszy, które mają wystarczającą liczbę kolumn.
-        # Indeks 7 odpowiada kolumnie 'symbol'.
-        unique_symbols = {row[7] for row in schedule_data if len(row) > 7 and row[7]}
+        # Pobieramy nazwy kolumn z pierwszego wiersza (jeśli jest to obiekt pyodbc.Row)
+        # To wymagałoby dostosowania _fetch_schedule_data, więc dla uproszczenia
+        # załóżmy, że znamy strukturę. Najlepiej jest zmodyfikować _fetch_schedule_data.
+        # Na razie przyjmijmy, że _fetch_schedule_data zwraca listę słowników.
+        # Zmodyfikujmy więc _fetch_schedule_data.
 
-        debug_print(f"DataProvider: Parsowanie {len(unique_symbols)} unikalnych symboli...")
-        symbols_cache = parse_symbols_batch(list(unique_symbols))
+        for row_dict in schedule_data:  # Zakładamy, że schedule_data to teraz lista słowników
+            uzytkownik_id = row_dict.get('Uzytkownik', 0)
 
-        for row in schedule_data:
-            try:
-                mapped_row = self.column_mapper.map_schedule_row_to_dict(row)
-                uzytkownik_id = mapped_row.get('uzytkownik_id', 0)
+            key = (
+                row_dict.get('WydzialGrafik', ''),
+                row_dict.get('PrzelozonyDane', ''),
+                row_dict.get('UzytkownikDane', ''),
+                uzytkownik_id
+            )
 
-                system_czasu_pracy = mapped_row.get('system_czasu_pracy', '')
+            processed_data[key] = {
+                'days': {},
+                'total_hours': row_dict.get('SumaRBH', 0),
+                'bilans_rbh': row_dict.get('BilansRBH', 0),
+                'rola_nazwa': row_dict.get('RolaNazwa', ''),
+                'pod_rola_nazwa': row_dict.get('PodRolaNazwa', ''),
+                'etat': row_dict.get('Etat', 8.0),
+                'jezyk': row_dict.get('Język', ''),
+                'korekta': row_dict.get('Korekta', 0),
+                'dtn': row_dict.get('DTN', 0),
+                'przelozony_imie_nazwisko': row_dict.get('PrzelozonyImieNazwisko', ''),
+                'nr_kadrowy': row_dict.get('NumerKadrowy', ''),
+                'lokalizacja_domyslna': row_dict.get('LokalizacjaDomyslna', 'h'),
+                'komentarz_grafik': row_dict.get('KomentarzGrafik', ''),
+                'system_czasu_pracy': row_dict.get('SystemCzasuPracy', '')
+            }
 
-                key = (
-                    mapped_row.get('wydzial', ''),
-                    mapped_row.get('przelozony', ''),
-                    mapped_row.get('uzytkownik_dane', ''),
-                    uzytkownik_id
-                )
-
-                if key not in processed_data:
-                    processed_data[key] = {
-                        'days': {}, 'total_hours': 0,
-                        'rola_nazwa': mapped_row.get('rola_nazwa', ''),
-                        'pod_rola_nazwa': mapped_row.get('pod_rola_nazwa', ''),
-                        'etat': mapped_row.get('etat', ''),
-                        'jezyk': mapped_row.get('jezyk', ''),
-                        'korekta': mapped_row.get('korekta', ''),
-                        'dtn': mapped_row.get('dtn', ''),
-                        'przelozony_imie_nazwisko': mapped_row.get('przelozony_imie_nazwisko', ''),
-                        'nr_kadrowy': mapped_row.get('nr_kadrowy', ''),
-                        'lokalizacja_domyslna': mapped_row.get('lokalizacja_domyslna', ''),
-                        'komentarz_grafik': comments_data.get(uzytkownik_id, ''),
-                        'system_czasu_pracy': system_czasu_pracy
-                    }
-
-                data_str = mapped_row.get('data_str', '')
-                if data_str:
-                    day = int(data_str.split('-')[2])
-                    symbol = mapped_row.get('symbol', '')
-                    parsed_symbol = symbols_cache.get(symbol, {})
-                    hours = parsed_symbol.get('work_hours')
-
+            for day in range(1, 32):
+                symbol = row_dict.get(str(day))
+                if symbol is not None:  # Ważne, aby obsłużyć dni bez wpisu (NULL z bazy)
+                    parsed_symbol = parse_symbol(symbol)
                     processed_data[key]['days'][day] = {
                         'symbol': symbol,
-                        'hours': hours if hours is not None else 0,
-                        'id': mapped_row.get('id_wpisu', ''),
+                        'hours': parsed_symbol.get('work_hours', 0),
                         'start_hour': parsed_symbol.get('start_hour'),
-                        'nr_kadrowy': mapped_row.get('nr_kadrowy', ''),
-                        'spotkania': 0, 'szkolenia': 0, 'nadgodziny': 0, 'events': []
-
                     }
-                    if hours is not None:
-                        processed_data[key]['total_hours'] += hours
-            except Exception as e:
-                log_error(f"DataProvider: Błąd przetwarzania wiersza {row}: {e}", exception=e)
-                continue
 
-        debug_print(f"DataProvider: Zakończono budowanie danych dla {len(processed_data)} użytkowników.")
+        debug_print(f"DataProvider (NOWA WERSJA): Zakończono budowanie danych dla {len(processed_data)} użytkowników.")
         return processed_data
 
     @lru_cache(maxsize=100)  # Cache dla kluczy miesięcy
@@ -559,30 +505,21 @@ class DataProvider(QObject):
 
         return active_events
 
-    def _fetch_schedule_data(self, year: int, month: int) -> List[Any]:
-        """Pobiera dane grafiku z bazy"""
-        query = """
-        SELECT * FROM [dbo].[fn_GetScheduleData](?, ?) 
-        ORDER BY WydzialGrafik, PrzelozonyDane, UzytkownikDane, Data
-        """
+    def _fetch_schedule_data(self, year: int, month: int, grupa: int, funkcja: int) -> List[Dict]:
+        """Pobiera dane grafiku z bazy z dodatkowymi parametrami."""
+        query = "SELECT * FROM [dbo].[fn_GetScheduleData](?, ?, ?, ?)"  # ZAPYTANIE Z 4 PARAMETRAMI
         conn = self.db_connector.get_connection()
         cursor = conn.cursor()
-        debug_print(f"DataProvider: Wykonuję SQL fn_GetScheduleData dla {year}-{month}")
+        cursor.execute(query, (year, month, grupa, funkcja))  # PRZEKAZANIE PARAMETRÓW
 
-        sql_exec_start_time = time.time()
-        cursor.execute(query, (year, month))
-        sql_exec_end_time = time.time()
-        debug_print(f"DataProvider: SQL fn_GetScheduleData wykonane w {sql_exec_end_time - sql_exec_start_time:.4f}s")
+        # Pobierz nazwy kolumn z kursora
+        columns = [column[0] for column in cursor.description]
 
-        fetchall_start_time = time.time()
-        schedule_data = cursor.fetchall()
-        fetchall_end_time = time.time()
-        debug_print(
-            f"DataProvider: cursor.fetchall() dla schedule_data zajęło {fetchall_end_time - fetchall_start_time:.4f}s dla {len(schedule_data)} wierszy.")
+        # Zmapuj każdy wiersz na słownik
+        schedule_data = [dict(zip(columns, row)) for row in cursor.fetchall()]
 
         conn.close()
-        debug_print(
-            f"DataProvider: Pobrane dane grafiku: {len(schedule_data)} wierszy (całkowity czas fetch: {fetchall_end_time - sql_exec_start_time:.4f}s).")
+        debug_print(f"DataProvider: Pobrane dane grafiku (nowy format): {len(schedule_data)} wierszy.")
         return schedule_data
 
     def _fetch_events_data(self, year: int, month: int) -> List[Dict]:
