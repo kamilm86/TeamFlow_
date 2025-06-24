@@ -18,11 +18,13 @@ class DataLoadingThread(QThread):
     data_loaded = Signal(object)  # Załadowane dane
     error_occurred = Signal(str)  # Błąd
 
-    def __init__(self, data_provider, year, month, parent=None):
+    def __init__(self, data_provider, year, month, grupa, funkcja, parent=None):
         super().__init__(parent)
         self.data_provider = data_provider
         self.year = year
         self.month = month
+        self.grupa = grupa  # NOWY ATRYBUT
+        self.funkcja = funkcja  # NOWY ATRYBUT
         self.cancel_requested = False
         self.mutex = QMutex()
 
@@ -42,7 +44,9 @@ class DataLoadingThread(QThread):
 
             # _get_or_load_monthly_data z use_cache=False zapewni świeże dane i utworzenie kontenera
             # To jest główny moment ładowania danych z bazy i ich podstawowego przetwarzania.
-            container = self.data_provider._get_or_load_monthly_data(self.year, self.month, use_cache=False)
+            container = self.data_provider._get_or_load_monthly_data(
+                self.year, self.month, self.grupa, self.funkcja, use_cache=False
+            )
 
             if self._check_cancel(): return
             self.progress_updated.emit(70)  # Znaczna część pracy wykonana
@@ -56,7 +60,9 @@ class DataLoadingThread(QThread):
             # Krok 2: Pobierz dane przetworzone (z ikonami) z DataProvidera.
             # Ta metoda (get_processed_data) użyje już załadowanego kontenera i nałoży ikony.
             # To powinno być teraz znacznie szybsze, bo bazowe dane już są.
-            processed_data_with_icons = self.data_provider.get_processed_data(self.year, self.month)
+            processed_data_with_icons = self.data_provider.get_processed_data(
+                self.year, self.month, self.grupa, self.funkcja
+            )
 
             if self._check_cancel(): return
             self.progress_updated.emit(90)
@@ -107,11 +113,13 @@ class LoadingProgressDialog(QDialog):
     loading_cancelled = Signal()  # Anulowano
     loading_failed = Signal(str)  # Błąd
 
-    def __init__(self, parent=None, data_provider=None, year=None, month=None):
+    def __init__(self, parent=None, data_provider=None, year=None, month=None, grupa=None, funkcja=None):
         super().__init__(parent)
         self.data_provider = data_provider
         self.year = year
         self.month = month
+        self.grupa = grupa  # NOWY ATRYBUT
+        self.funkcja = funkcja  # NOWY ATRYBUT
         self.loading_thread = None
         self.parent_widget = parent  # Zapisz referencję do rodzica
 
@@ -210,7 +218,7 @@ class LoadingProgressDialog(QDialog):
 
         # Utwórz i uruchom wątek ładujący
         self.loading_thread = DataLoadingThread(
-            self.data_provider, self.year, self.month, self  # Przekaż self jako rodzica wątku
+            self.data_provider, self.year, self.month, self.grupa, self.funkcja, self
         )
 
         # Podłącz sygnały
