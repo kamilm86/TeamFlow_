@@ -1,0 +1,159 @@
+# settings_dialog.py (poprawiona wersja)
+
+from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
+                               QPushButton, QComboBox, QGroupBox, QRadioButton,
+                               QFontComboBox, QSpinBox, QCheckBox, QGridLayout)
+# ZMIANA: Dodano 'Qt' do importu
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QFont
+from styles import AppStyles
+
+
+class AppSettingsDialog(QDialog):
+    """Dialog do konfiguracji ustawień aplikacji, w tym motywu i importu."""
+    live_theme_changed = Signal(str, str, int)
+
+    def __init__(self, parent=None, settings=None):
+        super().__init__(parent)
+        self.parent_widget = parent
+        self.current_settings = settings if settings else {}
+
+        self.setWindowTitle("Ustawienia")
+        self.setMinimumWidth(400)
+
+        self.setup_ui()
+        self.apply_dialog_theme()
+        self.connect_signals()
+
+    def setup_ui(self):
+        """Tworzy i układa wszystkie elementy interfejsu w dialogu."""
+        main_layout = QVBoxLayout(self)
+
+        theme_group = self._create_theme_group()
+        import_group = self._create_import_group()
+
+        self.save_settings_checkbox = QCheckBox("Zapamiętaj ustawienia na stałe")
+        self.save_settings_checkbox.setChecked(True)
+
+        buttons_layout = QHBoxLayout()
+        self.ok_button = QPushButton("OK")
+        self.cancel_button = QPushButton("Anuluj")
+        buttons_layout.addStretch()
+        buttons_layout.addWidget(self.ok_button)
+        buttons_layout.addWidget(self.cancel_button)
+
+        main_layout.addWidget(theme_group)
+        main_layout.addWidget(import_group)
+        main_layout.addLayout(buttons_layout)
+        main_layout.addWidget(self.save_settings_checkbox, 0, Qt.AlignRight)
+
+    def _create_theme_group(self):
+        """Tworzy grupę kontrolek do zmiany motywu i czcionki."""
+        group = QGroupBox("Wygląd i motyw")
+        layout = QVBoxLayout()
+
+        theme_layout = QHBoxLayout()
+        self.dark_theme_radio = QRadioButton("Ciemny")
+        self.light_theme_radio = QRadioButton("Jasny")
+        if self.current_settings.get('theme', 'dark') == 'dark':
+            self.dark_theme_radio.setChecked(True)
+        else:
+            self.light_theme_radio.setChecked(True)
+        theme_layout.addWidget(self.dark_theme_radio)
+        theme_layout.addWidget(self.light_theme_radio)
+
+        font_type_layout = QHBoxLayout()
+        self.font_combo = QFontComboBox()
+        current_font_family = self.current_settings.get('font_family', 'Arial')
+        self.font_combo.setCurrentFont(QFont(current_font_family))
+        font_type_layout.addWidget(QLabel("Czcionka:"))
+        font_type_layout.addWidget(self.font_combo)
+
+        font_size_layout = QHBoxLayout()
+        self.font_size_spin = QSpinBox()
+        self.font_size_spin.setRange(6, 24)
+        self.font_size_spin.setValue(self.current_settings.get('font_size', 9))
+        font_size_layout.addWidget(QLabel("Rozmiar:"))
+        font_size_layout.addWidget(self.font_size_spin)
+
+        layout.addLayout(theme_layout)
+        layout.addLayout(font_type_layout)
+        layout.addLayout(font_size_layout)
+        group.setLayout(layout)
+        return group
+
+    def _create_import_group(self):
+        """Tworzy grupę kontrolek dla parametrów importu grafiku."""
+        group = QGroupBox("Ustawienia Importu Grafiku")
+        layout = QGridLayout()
+
+        self.grupa_combo = QComboBox()
+        self.grupa_combo.addItem("INBOUND", 1)
+        self.grupa_combo.addItem("OUTBOUND", 2)
+        self.grupa_combo.addItem("WSZYSCY", 3)
+        current_grupa = self.current_settings.get('import_grupa', 3)
+        index = self.grupa_combo.findData(current_grupa)
+        if index != -1: self.grupa_combo.setCurrentIndex(index)
+
+        self.funkcja_combo = QComboBox()
+        self.funkcja_combo.addItem("wszyscy", 1)
+        self.funkcja_combo.addItem("tylko konsultanci", 2)
+        self.funkcja_combo.addItem("tylko koordynatorzy", 3)
+        self.funkcja_combo.addItem("grupa WZK2h", 4)
+        self.funkcja_combo.addItem("cały DBZ", 5)
+        self.funkcja_combo.addItem("inne wydziały wsparcia", 6)
+        current_funkcja = self.current_settings.get('import_funkcja', 1)
+        index = self.funkcja_combo.findData(current_funkcja)
+        if index != -1: self.funkcja_combo.setCurrentIndex(index)
+
+        layout.addWidget(QLabel("Importuj grupę:"), 0, 0)
+        layout.addWidget(self.grupa_combo, 0, 1)
+        layout.addWidget(QLabel("Importuj funkcję:"), 1, 0)
+        layout.addWidget(self.funkcja_combo, 1, 1)
+        group.setLayout(layout)
+        return group
+
+    def get_current_settings(self):
+        """Zbiera wszystkie ustawienia z dialogu i zwraca jako słownik."""
+        return {
+            'theme': 'dark' if self.dark_theme_radio.isChecked() else 'light',
+            'font_family': self.font_combo.currentFont().family(),
+            'font_size': self.font_size_spin.value(),
+            'import_grupa': self.grupa_combo.currentData(),
+            'import_funkcja': self.funkcja_combo.currentData(),
+            'save_to_db': self.save_settings_checkbox.isChecked()
+        }
+
+    def connect_signals(self):
+        """Łączy sygnały kontrolek z odpowiednimi metodami."""
+        self.ok_button.clicked.connect(self.accept)
+        self.cancel_button.clicked.connect(self.reject)
+
+        self.dark_theme_radio.toggled.connect(self._emit_live_preview_changes)
+        self.font_combo.currentFontChanged.connect(self._emit_live_preview_changes)
+        self.font_size_spin.valueChanged.connect(self._emit_live_preview_changes)
+
+    def _emit_live_preview_changes(self):
+        """Emituje sygnał ze zmianami motywu, aby główne okno mogło je pokazać na żywo."""
+        selected_theme = 'dark' if self.dark_theme_radio.isChecked() else 'light'
+        font_family = self.font_combo.currentFont().family()
+        font_size = self.font_size_spin.value()
+
+        self.live_theme_changed.emit(selected_theme, font_family, font_size)
+        self.apply_dialog_theme()
+
+    def apply_dialog_theme(self):
+        """Stosuje motyw dla samego okna dialogowego."""
+        theme_to_apply = 'dark' if self.dark_theme_radio.isChecked() else 'light'
+
+        self.setStyleSheet(AppStyles.get_dialog_style(theme_to_apply))
+
+        button_style = AppStyles.get_button_style(theme_to_apply)
+        for button in self.findChildren(QPushButton):
+            button.setStyleSheet(button_style)
+
+        for combo in self.findChildren(QComboBox):
+            combo.setStyleSheet(AppStyles.get_combobox_style(theme_to_apply))
+
+        for spinbox in self.findChildren(QSpinBox):
+            spinbox.setStyleSheet(AppStyles.get_line_edit_style(theme_to_apply))
