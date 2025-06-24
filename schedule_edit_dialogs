@@ -1,4 +1,4 @@
-# schedule_edit_dialogs.py
+# theme_dialog.py
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                                QPushButton, QComboBox, QGroupBox, QRadioButton,
                                QFontComboBox, QSpinBox, QColorDialog, QCheckBox, QWidget, QTextEdit,
