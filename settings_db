@@ -19,68 +19,71 @@ class SettingsDatabase:
 
     # --- ZMIANA: Dodano parametr `show_schedule_comment` ---
     def save_settings(self, theme, font_family, font_size, load_all_events=True, visible_columns=None,
-                      show_schedule_comment=False, username=None):
-        """Zapisuje ustawienia użytkownika do bazy danych SQL Server"""
+                      show_schedule_comment=False, username=None, import_grupa=3, import_funkcja=1):
+        """Zapisuje ustawienia użytkownika, w tym parametry importu."""
         if username is None:
             username = self.get_current_username()
 
         try:
             conn = DatabaseConnector.get_connection()
             cursor = conn.cursor()
-
             columns_str = ','.join(visible_columns) if visible_columns else None
 
-            # --- ZMIANA: Zaktualizowano wywołanie procedury ---
-            # Założenie: procedura SaveUserSettings została zaktualizowana o nowy parametr @show_schedule_comment
+            # Zaktualizowano wywołanie procedury o nowe parametry
             cursor.execute("""
-                EXEC SaveUserSettings @username=?, @theme=?, @font_family=?, @font_size=?, @load_all_events=?, @visible_columns=?, @show_schedule_comment=?
-            """, (username, theme, font_family, font_size, load_all_events, columns_str, show_schedule_comment))
+                EXEC SaveUserSettings @username=?, @theme=?, @font_family=?, @font_size=?, 
+                                     @load_all_events=?, @visible_columns=?, @show_schedule_comment=?,
+                                     @import_grupa=?, @import_funkcja=?
+            """, (username, theme, font_family, font_size, load_all_events, columns_str,
+                  show_schedule_comment, import_grupa, import_funkcja))
 
             conn.commit()
             conn.close()
-            debug_print(
-                f"Ustawienia zapisane dla {username}: motyw={theme}, kolumny={visible_columns}, komentarz={show_schedule_comment}")
+            debug_print(f"Ustawienia zapisane dla {username}: grupa={import_grupa}, funkcja={import_funkcja}")
             return True
         except Exception as e:
             log_error(f"Błąd podczas zapisywania ustawień: {e}", exception=e)
             return False
 
     def load_settings(self, username=None):
-        """Ładuje ustawienia użytkownika z bazy danych SQL Server"""
+        """Ładuje ustawienia użytkownika, w tym parametry importu."""
         if username is None:
             username = self.get_current_username()
+
+        # Domyślne wartości
+        defaults = {
+            'theme': 'dark', 'font_family': 'Arial', 'font_size': 9,
+            'load_all_events': True, 'visible_columns': None, 'show_schedule_comment': False,
+            'import_grupa': 3, 'import_funkcja': 1  # Domyślnie: Wszyscy / wszyscy
+        }
 
         try:
             conn = DatabaseConnector.get_connection()
             cursor = conn.cursor()
-
             cursor.execute("EXEC GetUserSettings @username=?", (username,))
             result = cursor.fetchone()
             conn.close()
 
             if result:
-                visible_columns = result[4].split(',') if len(result) >= 5 and result[4] else None
-
-                # --- ZMIANA: Dodano wczytywanie nowej opcji ---
-                show_comment = result[5] if len(result) >= 6 and result[5] is not None else False
-
-                return {
+                # Mapuj wyniki na słownik, bezpiecznie sprawdzając długość wyniku
+                settings = defaults.copy()
+                settings.update({
                     'theme': result[0],
                     'font_family': result[1],
                     'font_size': result[2],
-                    'load_all_events': result[3] if len(result) >= 4 else True,
-                    'visible_columns': visible_columns,
-                    'show_schedule_comment': bool(show_comment)
-                }
+                    'load_all_events': result[3] if len(result) > 3 else defaults['load_all_events'],
+                    'visible_columns': result[4].split(',') if len(result) > 4 and result[4] else defaults[
+                        'visible_columns'],
+                    'show_schedule_comment': bool(result[5]) if len(result) > 5 and result[5] is not None else defaults[
+                        'show_schedule_comment'],
+                    'import_grupa': int(result[6]) if len(result) > 6 and result[6] is not None else defaults[
+                        'import_grupa'],
+                    'import_funkcja': int(result[7]) if len(result) > 7 and result[7] is not None else defaults[
+                        'import_funkcja']
+                })
+                return settings
             else:
-                # Domyślne ustawienia
-                return {
-                    'theme': 'dark', 'font_family': 'Arial', 'font_size': 9,
-                    'load_all_events': True, 'visible_columns': None, 'show_schedule_comment': False
-                }
+                return defaults
         except Exception as e:
             log_error(f"Błąd podczas ładowania ustawień: {e}", exception=e)
-            return {
-                'theme': 'dark', 'font_family': 'Arial', 'font_size': 9,
-                'load_all_events': True, 'visible_columns': None, 'show_schedule_comment': False
-            }
+            return defaults
