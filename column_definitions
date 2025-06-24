@@ -55,18 +55,6 @@ class ColumnDefinitions:
             id='nr_kadrowy', name='NumerKadrowy', data_type=DataType.STRING,
             default_value='', description='NumerKadrowy', width=100, selectable_in_ui=True
         ),
-        'data_str': ColumnDefinition(
-            id='data_str', name='Data', data_type=DataType.STRING,
-            default_value='', description='Data w formacie string', required=True, selectable_in_ui=True
-        ),
-        'symbol': ColumnDefinition(
-            id='symbol', name='GrafikSymbol', data_type=DataType.STRING,
-            default_value='', description='GrafikSymbol', selectable_in_ui=False
-        ),
-        'id_wpisu': ColumnDefinition(
-            id='id_wpisu', name='ID wpisu', data_type=DataType.INTEGER,
-            default_value=0, description='ID wpisu w grafiku', selectable_in_ui=False
-        ),
         'rola_nazwa': ColumnDefinition(
             id='rola_nazwa', name='RolaNazwa', data_type=DataType.STRING,
             default_value='', description='RolaNazwa', width=120, selectable_in_ui=True
