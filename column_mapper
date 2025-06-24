@@ -9,19 +9,19 @@ class ColumnMapper:
     def __init__(self):
         self.column_definitions = ColumnDefinitions()
         
-    def map_schedule_row_to_dict(self, raw_row):
-        try:
-            mapped_data = {}
-            for i, (col_id, col_def) in enumerate(self.column_definitions.SCHEDULE_COLUMNS.items()):
-                if i < len(raw_row):
-                    raw_value = raw_row[i]
-                    mapped_data[col_id] = self._convert_value(raw_value, col_def.data_type, col_def.default_value)
-                else:
-                    mapped_data[col_id] = col_def.default_value
-                    log_warning(f"Brak kolumny {i} ({col_id}), używam wartości domyślnej")
-            return mapped_data
-        except Exception as e:
-            raise ColumnMappingError(f"Błąd mapowania wiersza grafiku: {str(e)}")
+    # def map_schedule_row_to_dict(self, raw_row):
+    #     try:
+    #         mapped_data = {}
+    #         for i, (col_id, col_def) in enumerate(self.column_definitions.SCHEDULE_COLUMNS.items()):
+    #             if i < len(raw_row):
+    #                 raw_value = raw_row[i]
+    #                 mapped_data[col_id] = self._convert_value(raw_value, col_def.data_type, col_def.default_value)
+    #             else:
+    #                 mapped_data[col_id] = col_def.default_value
+    #                 log_warning(f"Brak kolumny {i} ({col_id}), używam wartości domyślnej")
+    #         return mapped_data
+    #     except Exception as e:
+    #         raise ColumnMappingError(f"Błąd mapowania wiersza grafiku: {str(e)}")
     
     def map_events_row_to_dict(self, raw_row):
         try:
@@ -55,3 +55,11 @@ class ColumnMapper:
         except (ValueError, TypeError):
             log_warning(f"Nie można skonwertować '{raw_value}' do {target_type}, używam wartości domyślnej")
             return default_value
+
+    def map_pivoted_row_to_dict(self, raw_row, column_names: List[str]) -> Dict:
+        """Mapuje 'szeroki' wiersz (po pivocie) na słownik."""
+        if len(raw_row) != len(column_names):
+            log_warning(f"Niezgodność liczby kolumn! Oczekiwano {len(column_names)}, otrzymano {len(raw_row)}.")
+            return {}
+
+        return dict(zip(column_names, raw_row))
