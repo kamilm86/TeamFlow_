@@ -1,7 +1,7 @@
 USE [ZarzadzaniePraca]
 GO
 
-/****** Object:  Table [dbo].[user_settings]    Script Date: 09.06.2025 18:14:11 ******/
+/****** Object:  Table [dbo].[user_settings]    Script Date: 30.06.2025 02:50:07 ******/
 SET ANSI_NULLS ON
 GO
 
@@ -9,7 +9,7 @@ SET QUOTED_IDENTIFIER ON
 GO
 
 CREATE TABLE [dbo].[user_settings](
-	[username] [nvarchar](100) NOT NULL,
+	[login_windows] [nvarchar](100) NOT NULL,
 	[theme] [nvarchar](50) NULL,
 	[font_family] [nvarchar](100) NULL,
 	[font_size] [int] NULL,
@@ -17,9 +17,17 @@ CREATE TABLE [dbo].[user_settings](
 	[load_all_events_on_unselect] [bit] NOT NULL,
 	[visible_columns] [nvarchar](max) NULL,
 	[ShowScheduleComment] [bit] NOT NULL,
+	[import_grupa] [bit] NULL,
+	[import_funkcja] [bit] NULL,
+	[show_special_symbol] [bit] NULL,
+	[show_location_symbol] [bit] NULL,
+	[special_symbol_position] [nvarchar](11) NULL,
+	[location_symbol_position] [nvarchar](11) NULL,
+	[log_to_file] [bit] NULL,
+	[log_to_console] [bit] NULL,
 PRIMARY KEY CLUSTERED 
 (
-	[username] ASC
+	[login_windows] ASC
 )WITH (PAD_INDEX = OFF, STATISTICS_NORECOMPUTE = OFF, IGNORE_DUP_KEY = OFF, ALLOW_ROW_LOCKS = ON, ALLOW_PAGE_LOCKS = ON, OPTIMIZE_FOR_SEQUENTIAL_KEY = OFF) ON [PRIMARY]
 ) ON [PRIMARY] TEXTIMAGE_ON [PRIMARY]
 GO
@@ -34,36 +42,45 @@ ALTER TABLE [dbo].[user_settings] ADD  DEFAULT ((0)) FOR [ShowScheduleComment]
 GO
 
 
+
+
 ------------------------------------------------
 
 USE [ZarzadzaniePraca]
 GO
 
-/****** Object:  StoredProcedure [dbo].[GetUserSettings]    Script Date: 09.06.2025 18:15:04 ******/
+/****** Object:  StoredProcedure [dbo].[GetUserSettings]    Script Date: 30.06.2025 02:51:24 ******/
 SET ANSI_NULLS ON
 GO
 
 SET QUOTED_IDENTIFIER ON
 GO
 
-CREATE PROCEDURE [dbo].[GetUserSettings]
-    @username NVARCHAR(255)
+ALTER PROCEDURE [dbo].[GetUserSettings]
+    @login_windows NVARCHAR(255)
 AS
 BEGIN
     SET NOCOUNT ON;
     -- Pobierz ustawienia dla danego użytkownika
-    SELECT [theme], [font_family], [font_size], [load_all_events_on_unselect], [visible_columns],[ShowScheduleComment]
+    SELECT [theme], [font_family], [font_size], [load_all_events_on_unselect], [visible_columns],[ShowScheduleComment],import_grupa,import_funkcja,show_special_symbol,
+  show_location_symbol,
+  special_symbol_position,
+  location_symbol_position,
+  log_to_file,
+  log_to_console
     FROM [dbo].[User_Settings]
-    WHERE [Username] = @username
+    WHERE [login_windows] = @login_windows
 END
 GO
+
+
 
 -------------------------------------------------
 
 USE [ZarzadzaniePraca]
 GO
 
-/****** Object:  StoredProcedure [dbo].[SaveUserSettings]    Script Date: 09.06.2025 18:15:34 ******/
+/****** Object:  StoredProcedure [dbo].[SaveUserSettings]    Script Date: 30.06.2025 02:50:44 ******/
 SET ANSI_NULLS ON
 GO
 
@@ -72,21 +89,28 @@ GO
 
 
 -- Modyfikacja istniejącej procedury składowanej
-CREATE PROCEDURE [dbo].[SaveUserSettings]
-    @username NVARCHAR(255),
+ALTER PROCEDURE [dbo].[SaveUserSettings]
+    @login_windows NVARCHAR(255),
     @theme NVARCHAR(50),
     @font_family NVARCHAR(100),
     @font_size INT,
     @load_all_events BIT = 1,
     @visible_columns NVARCHAR(MAX) = NULL,
     -- NOWY PARAMETR
-    @show_schedule_comment BIT = 0
+    @show_schedule_comment BIT = 0,
+	@import_grupa BIT,
+	@import_funkcja BIT,
+	 @show_special_symbol BIT,
+  @show_location_symbol BIT,
+  @special_symbol_position NVARCHAR(11),
+  @location_symbol_position NVARCHAR(11)
+
 AS
 BEGIN
     SET NOCOUNT ON;
 
     -- Sprawdź, czy istnieje wpis dla danego użytkownika
-    IF EXISTS (SELECT 1 FROM [dbo].[User_Settings] WHERE [Username] = @username)
+    IF EXISTS (SELECT 1 FROM [dbo].[User_Settings] WHERE [login_windows] = @login_windows)
     BEGIN
         -- Aktualizuj istniejący wpis
         UPDATE [dbo].[User_Settings]
@@ -98,15 +122,21 @@ BEGIN
             [visible_columns] = ISNULL(@visible_columns, [visible_columns]),
             -- NOWA LINIA DO OBSŁUGI KOMENTARZA
             [ShowScheduleComment] = @show_schedule_comment,
+			import_grupa = @import_grupa,
+			import_funkcja = @import_funkcja,
+		  show_special_symbol = @show_special_symbol,
+  show_location_symbol = @show_location_symbol,
+  special_symbol_position = @special_symbol_position,
+  location_symbol_position = @location_symbol_position,
             [last_update] = GETDATE()
         WHERE 
-            [Username] = @username
+            [login_windows] = @login_windows
     END
     ELSE
     BEGIN
         -- Wstaw nowy wpis
         INSERT INTO [dbo].[User_Settings] (
-            [Username], 
+            [login_windows], 
             [theme], 
             [font_family], 
             [font_size], 
@@ -114,10 +144,16 @@ BEGIN
             [visible_columns],
             -- NOWA KOLUMNA NA LIŚCIE
             [ShowScheduleComment],
+			import_grupa ,
+			import_funkcja ,
+	  show_special_symbol,
+  show_location_symbol,
+  special_symbol_position,
+  location_symbol_position,
             [last_update]
         )
         VALUES (
-            @username, 
+            @login_windows, 
             @theme, 
             @font_family, 
             @font_size, 
@@ -125,11 +161,20 @@ BEGIN
             @visible_columns,
             -- NOWA WARTOŚĆ NA LIŚCIE
             @show_schedule_comment,
+			@import_grupa,
+			@import_funkcja,
+		  @show_special_symbol,
+  @show_location_symbol,
+  @special_symbol_position,
+  @location_symbol_position,
             GETDATE()
         )
     END
 END
 GO
+
+
+
 
 -----------------------------------------------
 USE [ZarzadzaniePraca]
