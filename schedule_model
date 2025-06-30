@@ -1,9 +1,9 @@
 # schedule_model.py - ZMODYFIKOWANA WERSJA
 from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QDate
-from PySide6.QtGui import QColor, QBrush
+from PySide6.QtGui import QColor, QBrush, QFont
 from debug_utils import debug_print, log_warning, log_error
-from symbol_parser import parse_symbol
-from column_definitions import ColumnDefinitions
+from symbol_parser import parse_symbol, get_symbol_description
+
 
 # Definicje ról danych
 ROLE_DATA = Qt.UserRole
@@ -11,17 +11,20 @@ ROLE_ID = Qt.UserRole + 1
 ROLE_TYPE = Qt.UserRole + 2
 ROLE_HAS_MEETING = Qt.UserRole + 3
 ROLE_HAS_OVERTIME = Qt.UserRole + 4
-
+ROLE_SPECIAL_SYMBOL = Qt.UserRole + 5
+ROLE_LOCATION_SYMBOL = Qt.UserRole + 6
+ROLE_ICON_COLOR = Qt.UserRole + 7
 
 class ScheduleTableModel(QAbstractTableModel):
     """
     Model danych z dynamicznymi ikonami i opcjonalną kolumną komentarza.
     """
-    ROLE_DATA = ROLE_DATA
-    ROLE_ID = ROLE_ID
-    ROLE_TYPE = ROLE_TYPE
-    ROLE_HAS_MEETING = ROLE_HAS_MEETING
-    ROLE_HAS_OVERTIME = ROLE_HAS_OVERTIME
+    # ROLE_DATA = ROLE_DATA
+    # ROLE_ID = ROLE_ID
+    # ROLE_TYPE = ROLE_TYPE
+    # ROLE_HAS_MEETING = ROLE_HAS_MEETING
+    # ROLE_HAS_OVERTIME = ROLE_HAS_OVERTIME
+    # ROLE_SPECIAL_SYMBOL = ROLE_SPECIAL_SYMBOL
 
     def __init__(self, parent=None, user_role=None):
         super().__init__(parent)
@@ -45,6 +48,7 @@ class ScheduleTableModel(QAbstractTableModel):
         self.user_role = user_role
         self.keyboard_edit_roles = ["Pracownik WPR", "Lider OUT"]
 
+        from column_definitions import ColumnDefinitions
         self.column_definitions = ColumnDefinitions()
         self._visible_columns = self.column_definitions.DEFAULT_VISIBLE_COLUMNS.copy()
         self._employee_columns = self.column_definitions.get_ui_display_columns()
@@ -53,9 +57,6 @@ class ScheduleTableModel(QAbstractTableModel):
         self._icons_cache_valid = False
 
     def data(self, index, role=Qt.DisplayRole):
-        """
-        Zwraca dane - wersja z ujednoliconą i poprawioną kalkulacją Bilansu RBH.
-        """
         if not index.isValid():
             return None
 
@@ -68,18 +69,42 @@ class ScheduleTableModel(QAbstractTableModel):
         row_data = self._processed_data.get(key, {})
         is_employee_column = col < len(self._visible_columns)
 
-        # --- Role dla danych i wyglądu ---
+        full_symbol_text = ""
+        if not is_employee_column:
+            schedule_col_check = col - len(self._visible_columns)
+            if schedule_col_check < 31:
+                full_symbol_text = row_data.get('days', {}).get(schedule_col_check + 1, {}).get('symbol', '')
 
-        if role == Qt.TextAlignmentRole:
-            if is_employee_column:
-                return Qt.AlignLeft | Qt.AlignVCenter
-            else:
-                schedule_col = col - len(self._visible_columns)
-                # Ustaw wyrównanie dla kolumny komentarza, jeśli jest widoczna
-                if self._show_comment_column and schedule_col == 31 + 2:
-                    return Qt.AlignLeft | Qt.AlignVCenter
-                return Qt.AlignCenter
+        # if role == Qt.FontRole:
+        #     if full_symbol_text:
+        #         font = QFont()
+        #         font.setBold(True)
+        #         return font
+        #     return None
 
+        if role == Qt.ForegroundRole:
+            # Po prostu wywołaj wewnętrzną funkcję pomocniczą, która już ma całą logikę.
+            return self._get_foreground_color(row_data, key, col, is_employee_column)
+
+        # ROLA IKONY SYMBOLU SPECJALNEGO
+        if role == ROLE_SPECIAL_SYMBOL:
+            if full_symbol_text:
+                return parse_symbol(full_symbol_text).get('special_symbol')
+            return None
+
+        # ROLA IKONY LOKALIZACJI
+        if role == ROLE_LOCATION_SYMBOL:
+            if full_symbol_text:
+                return parse_symbol(full_symbol_text).get('location')
+            return None
+
+        if role == ROLE_ICON_COLOR:
+            if not is_employee_column:
+                # Wykorzystujemy istniejącą logikę do pobrania koloru
+                return self._get_foreground_color(row_data, key, col, is_employee_column)
+            return None
+
+        # --- Pozostałe role ---
         if role == Qt.DisplayRole:
             if is_employee_column:
                 col_id = self._visible_columns[col]
@@ -93,84 +118,81 @@ class ScheduleTableModel(QAbstractTableModel):
                     return str(row_data.get(col_id, ''))
             else:
                 schedule_col = col - len(self._visible_columns)
-                if self._days_in_month <= schedule_col < 31: return ""  # Puste dla nieistniejących dni
-
-                if schedule_col < 31:  # Kolumny dni
-                    return row_data.get('days', {}).get(schedule_col + 1, {}).get('symbol', '')
-
-                # --- POCZĄTEK MODYFIKACJI KALKULACJI BILANSU ---
-
-                suma_col_idx, bilans_col_idx, komentarz_col_idx = 31, 31 + 1, 31 + 2
-
-                if schedule_col == suma_col_idx:
+                if schedule_col < 31:
+                    if not full_symbol_text: return ""
+                    parsed = parse_symbol(full_symbol_text)
+                    start_hour, work_hours = parsed.get('start_hour'), parsed.get('work_hours')
+                    if start_hour is not None and work_hours is not None:
+                        return f"{start_hour};{work_hours}"
+                    elif start_hour is not None:
+                        return str(start_hour)
+                    return ""
+                elif schedule_col == 31:
                     return str(row_data.get('total_hours', 0))
-
-                elif schedule_col == bilans_col_idx:
+                elif schedule_col == 31 + 1:
                     try:
-                        etat = float(row_data.get('etat', 8.0))
-                        total_hours = float(row_data.get('total_hours', 0))
+                        etat = float(row_data.get('etat', 8.0));
+                        total_hours = float(row_data.get('total_hours', 0));
                         working_days = self._working_days if hasattr(self,
                                                                      '_working_days') and self._working_days > 0 else 21
-
-                        # Formuła: ilość dni pracujących * Etat - Suma RBH
-                        normative_hours = etat * working_days
-                        balance = normative_hours - total_hours
+                        balance = (etat * working_days) - total_hours
                         return f"{balance:.1f}"
                     except (ValueError, TypeError):
-                        return "0.0"  # Bezpieczny fallback w razie błędu
-
-                elif self._show_comment_column and schedule_col == komentarz_col_idx:
+                        return "0.0"
+                elif self._show_comment_column and schedule_col == 31 + 2:
                     return row_data.get('komentarz_grafik', '')
             return ""
 
+        # if role == Qt.FontRole:  # Pogrubienie pozostaje bez zmian
+        #     if full_symbol_text:
+        #         font = QFont();
+        #         font.setBold(True);
+        #         return font
+        #     return None
+
+        if role == Qt.ToolTipRole:
+            if full_symbol_text: return get_symbol_description(full_symbol_text)
+            return None
+
+        # Pozostałe role bez zmian
+        if role == ROLE_DATA: return self._get_user_data(row_data, key, col, is_employee_column)
+        if role == ROLE_HAS_MEETING: return self._get_dynamic_meeting_icon(key, col, is_employee_column)
+        if role == ROLE_HAS_OVERTIME: return self._get_dynamic_overtime_icon(key, col, is_employee_column)
+        if role == Qt.TextAlignmentRole:
+            if is_employee_column:
+                return Qt.AlignLeft | Qt.AlignVCenter
+            else:
+                schedule_col = col - len(self._visible_columns)
+                if self._show_comment_column and schedule_col == 31 + 2: return Qt.AlignLeft | Qt.AlignVCenter
+                # return Qt.AlignCenter
+                return Qt.AlignBottom | Qt.AlignHCenter
         if role == Qt.BackgroundRole:
             if not is_employee_column:
                 schedule_col = col - len(self._visible_columns)
-
-                # Kolorowanie bilansu RBH
                 if schedule_col == 31 + 1:
                     try:
-                        etat = float(row_data.get('etat', 8.0))
-                        total_hours = float(row_data.get('total_hours', 0))
+                        etat = float(row_data.get('etat', 8.0));
+                        total_hours = float(row_data.get('total_hours', 0));
                         working_days = self._working_days if hasattr(self,
                                                                      '_working_days') and self._working_days > 0 else 21
-
-                        normative_hours = etat * working_days
-                        balance = normative_hours - total_hours
+                        balance = (etat * working_days) - total_hours
                     except (ValueError, TypeError):
                         balance = 0
-
                     if balance != 0:
                         return QBrush(QColor(120, 40, 40) if self._is_dark_theme else QColor(255, 200, 200))
                     elif total_hours > 0:
                         return QBrush(QColor(40, 120, 40) if self._is_dark_theme else QColor(200, 255, 200))
-
-                # Kolorowanie komórek z symbolami (istniejąca logika)
                 elif schedule_col < 31 and schedule_col < self._days_in_month:
-                    symbol = row_data.get('days', {}).get(schedule_col + 1, {}).get('symbol', '')
-                    if symbol:
-                        # ... (istniejąca logika kolorowania bez zmian)
-                        parsed_symbol = parse_symbol(symbol)
-                        if parsed_symbol['special_symbol'] and any(
-                                s in parsed_symbol['special_symbol'] for s in ["OS", "U"]):
-                            return QBrush(QColor(255, 180, 0))
-                        if parsed_symbol['start_hour'] is not None:
-                            return QBrush(self._get_color_by_start_hour(parsed_symbol['start_hour']))
+                    if full_symbol_text:
+                        parsed_symbol = parse_symbol(full_symbol_text)
+                        if parsed_symbol.get('special_symbol') and any(
+                            s in parsed_symbol['special_symbol'] for s in ["OS", "U"]): return QBrush(
+                            QColor(255, 180, 0))
+                        if parsed_symbol.get('start_hour') is not None: return QBrush(
+                            self._get_color_by_start_hour(parsed_symbol['start_hour']))
                         return QBrush(QColor(65, 65, 65) if self._is_dark_theme else QColor(225, 225, 225))
                     else:
                         return QBrush(QColor(55, 55, 55) if self._is_dark_theme else QColor(240, 240, 240))
-
-        # --- KONIEC MODYFIKACJI KALKULACJI BILANSU ---
-
-        # Obsługa pozostałych ról (bez zmian)
-        if role == Qt.ForegroundRole:
-            return self._get_foreground_color(row_data, key, col, is_employee_column)
-        if role == self.ROLE_DATA:
-            return self._get_user_data(row_data, key, col, is_employee_column)
-        if role == self.ROLE_HAS_MEETING:
-            return self._get_dynamic_meeting_icon(key, col, is_employee_column)
-        if role == self.ROLE_HAS_OVERTIME:
-            return self._get_dynamic_overtime_icon(key, col, is_employee_column)
 
         return None
 
@@ -196,6 +218,7 @@ class ScheduleTableModel(QAbstractTableModel):
                 'dtn': row_data.get('dtn', ''),
                 'lokalizacja_domyslna': row_data.get('lokalizacja_domyslna', ''),
                 'komentarz_grafik': row_data.get('komentarz_grafik', ''),
+                'system_czasu_pracy': row_data.get('system_czasu_pracy', ''),
                 'column_type': 'employee'
             }
         else:
@@ -218,7 +241,8 @@ class ScheduleTableModel(QAbstractTableModel):
                     'uzytkownik_id': key[3] or 0,
                     'nr_kadrowy': row_data.get('nr_kadrowy', ''),
                     'etat': row_data.get('etat', 8.0),  # <-- DODANO ETAT
-                    'lokalizacja_domyslna': row_data.get('lokalizacja_domyslna', 'h'), # <-- DODANO LOKALIZACJĘ
+                    'lokalizacja_domyslna': row_data.get('lokalizacja_domyslna'),
+                    'system_czasu_pracy': row_data.get('system_czasu_pracy'),
                     'date_str': date_str,
                     'day': day,
                     'symbol': day_data.get('symbol', ''),
