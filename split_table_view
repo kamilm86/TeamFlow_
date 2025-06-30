@@ -30,7 +30,7 @@ class SplitTableView(QWidget):
         self.employees_view.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.employees_view.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.employees_view.verticalHeader().setVisible(True)
-        self.employees_view.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Expanding)
+        self.employees_view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
         # Ustaw jednolitą wysokość wierszy
         self.employees_view.verticalHeader().setDefaultSectionSize(25)
@@ -39,7 +39,7 @@ class SplitTableView(QWidget):
 
         # Ustawienia nagłówka dla tabeli pracowników
         self.employees_view.horizontalHeader().setFixedHeight(35)
-        self.employees_view.horizontalHeader().setSectionResizeMode(QHeaderView.Fixed)
+        self.employees_view.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self.employees_view.horizontalHeader().setSectionsClickable(True)
 
         # Tworzenie i konfiguracja tabeli grafiku
@@ -353,6 +353,7 @@ class SplitTableView(QWidget):
 
         # Ustaw dokładną szerokość tabeli pracowników
         self.employees_view.setFixedWidth(total_width)
+        # self.employees_view.setMinimumWidth(total_width)
 
     def setRowCount(self, count):
         """Kompatybilność wsteczna z SplitTableWidget"""
