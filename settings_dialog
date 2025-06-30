@@ -2,8 +2,7 @@
 
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                                QPushButton, QComboBox, QGroupBox, QRadioButton,
-                               QFontComboBox, QSpinBox, QCheckBox, QGridLayout)
-# ZMIANA: Dodano 'Qt' do importu
+                               QFontComboBox, QSpinBox, QCheckBox, QGridLayout, QFormLayout)
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
 from styles import AppStyles
@@ -19,7 +18,7 @@ class AppSettingsDialog(QDialog):
         self.current_settings = settings if settings else {}
 
         self.setWindowTitle("Ustawienia")
-        self.setMinimumWidth(400)
+        self.setMinimumWidth(450)  # Zwiększono szerokość, aby pomieścić nowe opcje
 
         self.setup_ui()
         self.apply_dialog_theme()
@@ -29,8 +28,12 @@ class AppSettingsDialog(QDialog):
         """Tworzy i układa wszystkie elementy interfejsu w dialogu."""
         main_layout = QVBoxLayout(self)
 
+        # Istniejące grupy ustawień
         theme_group = self._create_theme_group()
         import_group = self._create_import_group()
+
+        # === NOWA GRUPA DLA IKON W GRAFIKU ===
+        display_options_group = self._create_display_options_group()
 
         self.save_settings_checkbox = QCheckBox("Zapamiętaj ustawienia na stałe")
         self.save_settings_checkbox.setChecked(True)
@@ -44,56 +47,46 @@ class AppSettingsDialog(QDialog):
 
         main_layout.addWidget(theme_group)
         main_layout.addWidget(import_group)
+        main_layout.addWidget(display_options_group)  # Dodanie nowej grupy do layoutu
         main_layout.addLayout(buttons_layout)
         main_layout.addWidget(self.save_settings_checkbox, 0, Qt.AlignRight)
+
+        # Wczytaj stan do nowo utworzonych kontrolek
+        self._load_settings_to_widgets()
 
     def _create_theme_group(self):
         """Tworzy grupę kontrolek do zmiany motywu i czcionki."""
         group = QGroupBox("Wygląd i motyw")
-        layout = QVBoxLayout()
+        layout = QGridLayout()
 
-        theme_layout = QHBoxLayout()
         self.dark_theme_radio = QRadioButton("Ciemny")
         self.light_theme_radio = QRadioButton("Jasny")
-        if self.current_settings.get('theme', 'dark') == 'dark':
-            self.dark_theme_radio.setChecked(True)
-        else:
-            self.light_theme_radio.setChecked(True)
-        theme_layout.addWidget(self.dark_theme_radio)
-        theme_layout.addWidget(self.light_theme_radio)
 
-        font_type_layout = QHBoxLayout()
+        layout.addWidget(self.dark_theme_radio, 0, 0)
+        layout.addWidget(self.light_theme_radio, 0, 1)
+
         self.font_combo = QFontComboBox()
-        current_font_family = self.current_settings.get('font_family', 'Arial')
-        self.font_combo.setCurrentFont(QFont(current_font_family))
-        font_type_layout.addWidget(QLabel("Czcionka:"))
-        font_type_layout.addWidget(self.font_combo)
+        layout.addWidget(QLabel("Czcionka:"), 1, 0)
+        layout.addWidget(self.font_combo, 1, 1)
 
-        font_size_layout = QHBoxLayout()
         self.font_size_spin = QSpinBox()
-        self.font_size_spin.setRange(6, 24)
-        self.font_size_spin.setValue(self.current_settings.get('font_size', 9))
-        font_size_layout.addWidget(QLabel("Rozmiar:"))
-        font_size_layout.addWidget(self.font_size_spin)
+        # --- ZMIANA: Ograniczenie zakresu rozmiaru czcionki ---
+        self.font_size_spin.setRange(7, 9)
+        layout.addWidget(QLabel("Rozmiar:"), 2, 0)
+        layout.addWidget(self.font_size_spin, 2, 1)
 
-        layout.addLayout(theme_layout)
-        layout.addLayout(font_type_layout)
-        layout.addLayout(font_size_layout)
         group.setLayout(layout)
         return group
 
     def _create_import_group(self):
         """Tworzy grupę kontrolek dla parametrów importu grafiku."""
         group = QGroupBox("Ustawienia Importu Grafiku")
-        layout = QGridLayout()
+        layout = QFormLayout()
 
         self.grupa_combo = QComboBox()
         self.grupa_combo.addItem("INBOUND", 1)
         self.grupa_combo.addItem("OUTBOUND", 2)
         self.grupa_combo.addItem("WSZYSCY", 3)
-        current_grupa = self.current_settings.get('import_grupa', 3)
-        index = self.grupa_combo.findData(current_grupa)
-        if index != -1: self.grupa_combo.setCurrentIndex(index)
 
         self.funkcja_combo = QComboBox()
         self.funkcja_combo.addItem("wszyscy", 1)
@@ -102,16 +95,62 @@ class AppSettingsDialog(QDialog):
         self.funkcja_combo.addItem("grupa WZK2h", 4)
         self.funkcja_combo.addItem("cały DBZ", 5)
         self.funkcja_combo.addItem("inne wydziały wsparcia", 6)
-        current_funkcja = self.current_settings.get('import_funkcja', 1)
-        index = self.funkcja_combo.findData(current_funkcja)
-        if index != -1: self.funkcja_combo.setCurrentIndex(index)
 
-        layout.addWidget(QLabel("Importuj grupę:"), 0, 0)
-        layout.addWidget(self.grupa_combo, 0, 1)
-        layout.addWidget(QLabel("Importuj funkcję:"), 1, 0)
-        layout.addWidget(self.funkcja_combo, 1, 1)
+        layout.addRow("Importuj grupę:", self.grupa_combo)
+        layout.addRow("Importuj funkcję:", self.funkcja_combo)
         group.setLayout(layout)
         return group
+
+    def _create_display_options_group(self):
+        """Tworzy grupę kontrolek do konfiguracji wyglądu ikon w grafiku."""
+        group = QGroupBox("Wygląd ikon w komórkach grafiku")
+        layout = QFormLayout()
+        layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+
+        self.show_special_symbol_check = QCheckBox("Pokaż symbol specjalny (np. U, CO)")
+        self.special_symbol_pos_combo = QComboBox()
+        # ZMIANA: Nowe opcje pozycji
+        self.special_symbol_pos_combo.addItems(["Lewy górny róg", "Prawy górny róg"])
+
+        self.show_location_symbol_check = QCheckBox("Pokaż symbol lokalizacji (np. h, s)")
+        self.location_symbol_pos_combo = QComboBox()
+        # ZMIANA: Nowe opcje pozycji
+        self.location_symbol_pos_combo.addItems(["Lewy górny róg", "Prawy górny róg"])
+
+        layout.addRow(self.show_special_symbol_check)
+        layout.addRow("Pozycja symbolu specjalnego:", self.special_symbol_pos_combo)
+        layout.addRow(self.show_location_symbol_check)
+        layout.addRow("Pozycja symbolu lokalizacji:", self.location_symbol_pos_combo)
+
+        group.setLayout(layout)
+        return group
+
+    def _load_settings_to_widgets(self):
+        """Wczytuje zapisane ustawienia i ustawia stan kontrolek w UI."""
+        # Motyw i czcionka
+        if self.current_settings.get('theme', 'dark') == 'dark':
+            self.dark_theme_radio.setChecked(True)
+        else:
+            self.light_theme_radio.setChecked(True)
+        self.font_combo.setCurrentFont(QFont(self.current_settings.get('font_family', 'Arial')))
+        self.font_size_spin.setValue(self.current_settings.get('font_size', 9))
+
+        # Ustawienia importu
+        index_g = self.grupa_combo.findData(self.current_settings.get('import_grupa', 3))
+        if index_g != -1: self.grupa_combo.setCurrentIndex(index_g)
+
+        index_f = self.funkcja_combo.findData(self.current_settings.get('import_funkcja', 1))
+        if index_f != -1: self.funkcja_combo.setCurrentIndex(index_f)
+
+        # Ustawienia wyglądu ikon
+        self.show_special_symbol_check.setChecked(self.current_settings.get('show_special_symbol', True))
+        self.show_location_symbol_check.setChecked(self.current_settings.get('show_location_symbol', True))
+
+        special_pos = self.current_settings.get('special_symbol_position', 'top_left')
+        self.special_symbol_pos_combo.setCurrentIndex(1 if special_pos == 'top_right' else 0)
+
+        location_pos = self.current_settings.get('location_symbol_position', 'top_right')
+        self.location_symbol_pos_combo.setCurrentIndex(1 if location_pos == 'top_right' else 0)
 
     def get_current_settings(self):
         """Zbiera wszystkie ustawienia z dialogu i zwraca jako słownik."""
@@ -121,7 +160,12 @@ class AppSettingsDialog(QDialog):
             'font_size': self.font_size_spin.value(),
             'import_grupa': self.grupa_combo.currentData(),
             'import_funkcja': self.funkcja_combo.currentData(),
-            'save_to_db': self.save_settings_checkbox.isChecked()
+            'save_to_db': self.save_settings_checkbox.isChecked(),
+            # Nowe ustawienia
+            'show_special_symbol': self.show_special_symbol_check.isChecked(),
+            'show_location_symbol': self.show_location_symbol_check.isChecked(),
+            'special_symbol_position': 'top_right' if self.special_symbol_pos_combo.currentIndex() == 1 else 'top_left',
+            'location_symbol_position': 'top_right' if self.location_symbol_pos_combo.currentIndex() == 1 else 'top_left'
         }
 
     def connect_signals(self):
@@ -152,8 +196,13 @@ class AppSettingsDialog(QDialog):
         for button in self.findChildren(QPushButton):
             button.setStyleSheet(button_style)
 
+        checkbox_style = AppStyles.get_checkbox_style(theme_to_apply)
+        for checkbox in self.findChildren(QCheckBox):
+            checkbox.setStyleSheet(checkbox_style)
+
+        combobox_style = AppStyles.get_combobox_style(theme_to_apply)
         for combo in self.findChildren(QComboBox):
-            combo.setStyleSheet(AppStyles.get_combobox_style(theme_to_apply))
+            combo.setStyleSheet(combobox_style)
 
         for spinbox in self.findChildren(QSpinBox):
             spinbox.setStyleSheet(AppStyles.get_line_edit_style(theme_to_apply))
