@@ -1,3 +1,6 @@
+# Plik: settings_db.py
+# UWAGA: ZASTĄP CAŁĄ ZAWARTOŚĆ SWOJEGO PLIKU PONIŻSZYM KODEM
+
 from db_connector import DatabaseConnector
 import os
 import getpass
@@ -10,80 +13,95 @@ class SettingsDatabase:
     def __init__(self):
         pass
 
-    def get_current_username(self):
-        """Pobiera nazwę użytkownika używając getpass"""
+    def get_current_login_windows(self):
+        """Pobiera nazwę użytkownika Windows używając getpass"""
         try:
             return getpass.getuser()
-        except:
+        except Exception:
             return os.environ.get('USERNAME') or 'unknown_user'
 
-    # --- ZMIANA: Dodano parametr `show_schedule_comment` ---
     def save_settings(self, theme, font_family, font_size, load_all_events=True, visible_columns=None,
-                      show_schedule_comment=False, username=None, import_grupa=3, import_funkcja=1):
-        """Zapisuje ustawienia użytkownika, w tym parametry importu."""
-        if username is None:
-            username = self.get_current_username()
+                      show_schedule_comment=False, login_windows=None, import_grupa=3, import_funkcja=1,
+                      show_special_symbol=True, show_location_symbol=True,
+                      special_symbol_position='top_left', location_symbol_position='bottom_left'):
+        """Zapisuje ustawienia użytkownika, w tym parametry importu i wyglądu ikon."""
+        if login_windows is None:
+            login_windows = self.get_current_login_windows()
 
         try:
             conn = DatabaseConnector.get_connection()
             cursor = conn.cursor()
             columns_str = ','.join(visible_columns) if visible_columns else None
 
-            # Zaktualizowano wywołanie procedury o nowe parametry
+            params_to_save = (
+                login_windows, theme, font_family, font_size, load_all_events, columns_str,
+                show_schedule_comment, import_grupa, import_funkcja,
+                show_special_symbol, show_location_symbol,
+                special_symbol_position, location_symbol_position
+            )
+
             cursor.execute("""
-                EXEC SaveUserSettings @username=?, @theme=?, @font_family=?, @font_size=?, 
-                                     @load_all_events=?, @visible_columns=?, @show_schedule_comment=?,
-                                     @import_grupa=?, @import_funkcja=?
-            """, (username, theme, font_family, font_size, load_all_events, columns_str,
-                  show_schedule_comment, import_grupa, import_funkcja))
+                EXEC SaveUserSettings 
+                    @login_windows=?, @theme=?, @font_family=?, @font_size=?, 
+                    @load_all_events=?, @visible_columns=?, @show_schedule_comment=?,
+                    @import_grupa=?, @import_funkcja=?,
+                    @show_special_symbol=?, @show_location_symbol=?,
+                    @special_symbol_position=?, @location_symbol_position=?
+            """, params_to_save)
 
             conn.commit()
             conn.close()
-            debug_print(f"Ustawienia zapisane dla {username}: grupa={import_grupa}, funkcja={import_funkcja}")
+            debug_print(f"Ustawienia zapisane dla {login_windows}")
             return True
         except Exception as e:
             log_error(f"Błąd podczas zapisywania ustawień: {e}", exception=e)
             return False
 
-    def load_settings(self, username=None):
-        """Ładuje ustawienia użytkownika, w tym parametry importu."""
-        if username is None:
-            username = self.get_current_username()
+    def load_settings(self, login_windows=None):
+        """Ładuje ustawienia użytkownika, w tym parametry importu, wyglądu ikon oraz debugowania."""
+        from debug_utils import log_error, debug_print # Dodatkowy import
 
-        # Domyślne wartości
+        if login_windows is None:
+            login_windows = self.get_current_login_windows()
+
         defaults = {
             'theme': 'dark', 'font_family': 'Arial', 'font_size': 9,
             'load_all_events': True, 'visible_columns': None, 'show_schedule_comment': False,
-            'import_grupa': 3, 'import_funkcja': 1  # Domyślnie: Wszyscy / wszyscy
+            'import_grupa': 3, 'import_funkcja': 1,
+            'show_special_symbol': True, 'show_location_symbol': True,
+            'special_symbol_position': 'top_left', 'location_symbol_position': 'top_right',
+            'log_to_file': False,
+            'log_to_console': False
         }
 
         try:
             conn = DatabaseConnector.get_connection()
             cursor = conn.cursor()
-            cursor.execute("EXEC GetUserSettings @username=?", (username,))
+            # Upewnij się, że procedura GetUserSettings zwraca 14 kolumn
+            cursor.execute("EXEC GetUserSettings @login_windows=?", (login_windows,))
             result = cursor.fetchone()
             conn.close()
 
             if result:
-                # Mapuj wyniki na słownik, bezpiecznie sprawdzając długość wyniku
                 settings = defaults.copy()
                 settings.update({
-                    'theme': result[0],
-                    'font_family': result[1],
-                    'font_size': result[2],
-                    'load_all_events': result[3] if len(result) > 3 else defaults['load_all_events'],
-                    'visible_columns': result[4].split(',') if len(result) > 4 and result[4] else defaults[
-                        'visible_columns'],
-                    'show_schedule_comment': bool(result[5]) if len(result) > 5 and result[5] is not None else defaults[
-                        'show_schedule_comment'],
-                    'import_grupa': int(result[6]) if len(result) > 6 and result[6] is not None else defaults[
-                        'import_grupa'],
-                    'import_funkcja': int(result[7]) if len(result) > 7 and result[7] is not None else defaults[
-                        'import_funkcja']
+                    'theme': result[0], 'font_family': result[1], 'font_size': result[2],
+                    'load_all_events': result[3],
+                    'visible_columns': result[4].split(',') if result[4] else defaults['visible_columns'],
+                    'show_schedule_comment': bool(result[5]),
+                    'import_grupa': int(result[6]), 'import_funkcja': int(result[7]),
+                    'show_special_symbol': bool(result[8]), 'show_location_symbol': bool(result[9]),
+                    'special_symbol_position': str(result[10]), 'location_symbol_position': str(result[11]),
+                    'log_to_file': bool(result[12]), 'log_to_console': bool(result[13])
                 })
+                # Jeśli wszystko się uda, zwróć wczytane ustawienia
                 return settings
             else:
+                # Jeśli nie ma ustawień dla użytkownika, zwróć domyślne
+                debug_print("Nie znaleziono ustawień dla użytkownika w bazie. Używam ustawień domyślnych.")
                 return defaults
         except Exception as e:
-            log_error(f"Błąd podczas ładowania ustawień: {e}", exception=e)
+            # Jeśli wystąpi jakikolwiek błąd, zaloguj go i zwróć domyślne
+            log_error(f"Błąd podczas ładowania ustawień dla '{login_windows}'. Sprawdź, czy procedura GetUserSettings zwraca 14 kolumn. Używam ustawień domyślnych.", exception=e)
+            debug_print(f"Użyte ustawienia domyślne z powodu błędu: {defaults}")
             return defaults
