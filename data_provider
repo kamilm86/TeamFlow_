@@ -207,25 +207,27 @@ class DataProvider(QObject):
             log_error(f"Błąd podczas pobierania danych prognozy: {e}", exception=e)
             return []
 
-    def _get_or_load_monthly_data(self, year: int, month: int, grupa: int, funkcja: int, use_cache: bool = True) -> Optional[MonthlyDataContainer]:
+    def _get_or_load_monthly_data(self, year: int, month: int, grupa: int, funkcja: int, use_cache: bool = True) -> \
+    Optional[MonthlyDataContainer]:
         self._current_year = year
         self._current_month = month
-        cache_key = (year, month, grupa, funkcja) # Używamy klucza z 4 wartościami
+
+        # ZMIANA: Klucz cache jest teraz prosty - zależy tylko od roku i miesiąca.
+        cache_key = (year, month)
 
         if use_cache and cache_key in self.monthly_cache:
+            # Jeśli dane dla tego miesiąca są w cache, po prostu je zwróć.
             return self.monthly_cache[cache_key]
 
-        debug_print(f"DataProvider: Tworzę nowy kontener dla {year}-{month} (grupa={grupa}, funkcja={funkcja})")
+        debug_print(
+            f"DataProvider: Tworzę nowy/nadpisuję kontener dla {year}-{month} (z filtrem grupa={grupa}, funkcja={funkcja})")
 
         try:
-            # Przekaż parametry do metody pobierającej dane
+            # Parametry 'grupa' i 'funkcja' są używane TYLKO tutaj, do jednorazowego pobrania danych.
             schedule_data = self._fetch_schedule_data(year, month, grupa, funkcja)
-            events_data = self._fetch_events_data(year, month)
 
-            is_schedule_empty = not any(row.get(str(day)) for row in schedule_data for day in range(1, 32))
-            if is_schedule_empty:
-                # ... istniejąca logika dla sugestii ...
-                pass
+            # Dane o zdarzeniach pobieramy zawsze w całości dla danego miesiąca.
+            events_data = self._fetch_events_data(year, month)
 
             events_cache = self._build_events_cache(events_data)
             processed_data_base = self._build_processed_data_without_icons(schedule_data)
@@ -238,6 +240,7 @@ class DataProvider(QObject):
                 last_updated=time.time()
             )
 
+            # Zapisz kontener pod prostym kluczem. Każde nowe ładowanie nadpisze stary.
             self.monthly_cache[cache_key] = container
             debug_print(f"DataProvider: Stworzono i zapisano w cache nowy kontener dla {year}-{month}.")
             return container
@@ -252,54 +255,59 @@ class DataProvider(QObject):
         container = self._get_or_load_monthly_data(year, month, grupa, funkcja, use_cache)
         return container.schedule_data if container else []
 
-    def get_events_data(self, year: int, month: int, use_cache: bool = True) -> List[Dict]:
-        """Pobiera dane zdarzeń"""
-        # Usunięto nieużywane parametry as_dict, build_index
-        container = self._get_or_load_monthly_data(year, month, use_cache)
+    def get_events_data(self, year: int, month: int, grupa: int, funkcja: int, use_cache: bool = True) -> List[Dict]:
+        """Pobiera dane zdarzeń, używając poprawnego kontekstu filtra do załadowania kontenera."""
+        container = self._get_or_load_monthly_data(year, month, grupa, funkcja, use_cache)
         return container.events_data if container else []
 
     def get_processed_data(self, year: int, month: int, grupa: int, funkcja: int) -> Dict:
         """
         Zwraca processed_data z dynamicznie obliczonymi ikonami.
         """
-        # ZMIANA: Przekazujemy 'grupa' i 'funkcja' do metody ładującej
         container = self._get_or_load_monthly_data(year, month, grupa, funkcja, use_cache=True)
         if not container:
             return {}
 
-        # Sprawdź, czy ikony zostały już obliczone
+        # Sprawdź, czy ikony zostały już obliczone w tej sesji dla tego kontenera
         if not container._icons_calculated_on_this_instance:
             debug_print(f"DataProvider: Obliczam ikony dla {year}-{month} na żądanie w get_processed_data")
+
+            # --- KLUCZOWA ZMIANA ---
+            # Zawsze przekazuj do obliczeń aktualny events_cache z kontenera
             self._update_dynamic_icons(container.processed_data_base, container.events_cache)
+            # --- KONIEC ZMIANY ---
+
             container._icons_calculated_on_this_instance = True
 
         return container.processed_data_base
 
-    def refresh_data(self, year: int, month: int):
+    def refresh_data(self, year: int, month: int, grupa: int, funkcja: int):
         """
         Wymusza pełne odświeżenie danych dla miesiąca (np. po kliknięciu przycisku "Odśwież").
         """
-        cache_key = (year, month)
+        # ZMIANA 1: Klucz cache musi teraz uwzględniać grupę i funkcję
+        cache_key = (year, month, grupa, funkcja)
 
-        debug_print(f"DataProvider: Wymuszone odświeżenie danych dla {year}-{month} (refresh_data)")
+        debug_print(f"DataProvider: Wymuszone odświeżenie danych dla {year}-{month} (grupa={grupa}, funkcja={funkcja})")
 
         if cache_key in self.monthly_cache:
             del self.monthly_cache[cache_key]
-            debug_print(f"DataProvider: Usunięto stary kontener z monthly_cache dla {year}-{month}")
+            debug_print(f"DataProvider: Usunięto stary kontener z monthly_cache dla klucza {cache_key}")
 
-        if cache_key in self._icons_cache_by_month:
-            del self._icons_cache_by_month[cache_key]
+        # Klucz dla cache ikon jest niezależny od grupy/funkcji
+        icons_cache_key = (year, month)
+        if icons_cache_key in self._icons_cache_by_month:
+            del self._icons_cache_by_month[icons_cache_key]
             debug_print(f"DataProvider: Usunięto _icons_cache_by_month dla {year}-{month}")
 
-        # Wywołaj _get_or_load_monthly_data z use_cache=False, aby wymusić ponowne załadowanie z DB
-        # i przetworzenie. Nowy kontener zostanie automatycznie zapisany w cache.
-        container = self._get_or_load_monthly_data(year, month, use_cache=False)
+        # ZMIANA 2: Przekaż 'grupa' i 'funkcja' do wywołania poniżej
+        container = self._get_or_load_monthly_data(year, month, grupa, funkcja, use_cache=False)
 
         if container:
             # Po świeżym załadowaniu, get_processed_data obliczy ikony, jeśli będzie to konieczne.
             self.data_changed.emit("schedule", year, month)
             self.data_changed.emit("events", year, month)
-            self.data_changed.emit("icons", year, month)  # Sygnał, że dane ikon mogły się zmienić
+            self.data_changed.emit("icons", year, month)
         else:
             log_error(f"DataProvider: Nie udało się odświeżyć danych dla {year}-{month}")
 
@@ -307,55 +315,44 @@ class DataProvider(QObject):
         """
         Nakłada informacje o ikonach na dostarczony słownik `processed_data_target`.
         Modyfikuje `processed_data_target` w miejscu.
+        Używa events_cache jako JEDYNEGO źródła informacji o zdarzeniach.
         """
         if not self._current_year or not self._current_month:
             log_error("DataProvider: _current_year lub _current_month nie jest ustawione w _update_dynamic_icons")
             return
 
         debug_print(
-            f"DataProvider: Rozpoczynam _update_dynamic_icons dla {self._current_year}-{self._current_month} (BATCH PROCESSING)...")
+            f"DataProvider (POPRAWIONA WERSJA): Rozpoczynam _update_dynamic_icons dla {self._current_year}-{self._current_month}...")
 
-        icon_updates = {}
-
-        for key, user_data in processed_data_target.items():  # Iteruj po danych, które mają być zaktualizowane
-            user_id = key[3]
-            days_data = user_data.get('days', {})
-
-            for day, day_data_dict in days_data.items():  # day_data_dict to słownik dla dnia
-                date_str = f"{self._current_year}-{self._current_month:02d}-{day:02d}"
-                cache_key_event = (user_id, date_str)
-                # Użyj events_cache przekazanego do funkcji (z kontenera)
-                events_for_cell = events_cache.get(cache_key_event, [])
-
-                active_events = [e for e in events_for_cell if str(e.get('status', '1')) != '0']
-
-                has_spotkania = any(e.get('type') == 'Spotkanie' for e in active_events)
-                has_szkolenia = any(e.get('type') == 'Szkolenie' for e in active_events)
-                has_nadgodziny = any(e.get('type') == 'Nadgodziny' for e in active_events)
-
-                icon_updates[(user_id, day)] = {
-                    'spotkania': has_spotkania,
-                    'szkolenia': has_szkolenia,
-                    'nadgodziny': has_nadgodziny,
-                    'events_list': active_events  # Przechowaj listę aktywnych zdarzeń
-                }
-
-        debug_print(f"DataProvider: _update_dynamic_icons - przygotowano {len(icon_updates)} aktualizacji ikon.")
-
+        # Iterujemy po wszystkich użytkownikach i dniach w danych grafiku
         for key, user_data in processed_data_target.items():
             user_id = key[3]
             days_data = user_data.get('days', {})
 
             for day, day_data_dict in days_data.items():
-                update_key = (user_id, day)
-                if update_key in icon_updates:
-                    updates = icon_updates[update_key]
-                    day_data_dict['spotkania'] = 1 if updates['spotkania'] else 0
-                    day_data_dict['szkolenia'] = 1 if updates['szkolenia'] else 0
-                    day_data_dict['nadgodziny'] = 1 if updates['nadgodziny'] else 0
-                    day_data_dict['events'] = updates['events_list']  # Zaktualizuj listę zdarzeń
+                date_str = f"{self._current_year}-{self._current_month:02d}-{day:02d}"
 
-        debug_print(f"DataProvider: Zakończono _update_dynamic_icons dla {len(icon_updates)} komórek")
+                # Klucz do przeszukania pamięci podręcznej zdarzeń
+                cache_key_event = (user_id, date_str)
+
+                # Pobierz listę zdarzeń dla tej komórki z pamięci podręcznej
+                events_for_cell = events_cache.get(cache_key_event, [])
+
+                # Sprawdź, czy którekolwiek z tych zdarzeń są aktywne (status inny niż '0')
+                active_events = [e for e in events_for_cell if str(e.get('status', '1')) != '0']
+
+                # Ustaw flagi ikon na podstawie AKTYWNYCH zdarzeń
+                has_spotkania = any(e.get('type') == 'Spotkanie' for e in active_events)
+                has_szkolenia = any(e.get('type') == 'Szkolenie' for e in active_events)
+                has_nadgodziny = any(e.get('type') == 'Nadgodziny' for e in active_events)
+
+                # Zaktualizuj słownik dla dnia o informacje o ikonach
+                day_data_dict['spotkania'] = 1 if has_spotkania else 0
+                day_data_dict['szkolenia'] = 1 if has_szkolenia else 0
+                day_data_dict['nadgodziny'] = 1 if has_nadgodziny else 0
+                day_data_dict['events'] = active_events  # Zapisz listę aktywnych zdarzeń
+
+        debug_print(f"DataProvider (POPRAWIONA WERSJA): Zakończono _update_dynamic_icons.")
 
     def get_performance_stats(self):
         """
@@ -477,31 +474,19 @@ class DataProvider(QObject):
         except (ValueError, TypeError):
             return []
 
-        month_key_tuple = self._get_month_cache_key(year, month)
-        container = self.monthly_cache.get(month_key_tuple)
+        # Używamy prostego klucza, aby znaleźć kontener w pamięci podręcznej.
+        cache_key = (year, month)
+        container = self.monthly_cache.get(cache_key)
 
         if not container:
-            # Jeśli kontener nie istnieje, to nie ma zdarzeń w cache dla tego miesiąca
-            # Nie powinno się to zdarzyć, jeśli _get_or_load_monthly_data jest zawsze wołane pierwsze.
-            # Można rozważyć próbę załadowania, ale to może spowolnić.
-            # Na razie zwracamy pustą listę, zakładając, że dane są ładowane spójnie.
-            # debug_print(f"DataProvider: Brak kontenera dla {year}-{month} w get_events_for_user_date. Ładowanie...")
-            # container = self._get_or_load_monthly_data(year, month, use_cache=True)
-            # if not container:
-            #     return []
+            log_warning(f"DataProvider: Brak kontenera w cache dla klucza {cache_key} w get_events_for_user_date.")
             return []
 
         standardized_date = self._standardize_date(date_str)
         cache_key_event = (user_id, standardized_date)
 
-        # Użyj events_cache z kontenera
         events_for_cell = container.events_cache.get(cache_key_event, [])
-
         active_events = [e for e in events_for_cell if str(e.get('status', '1')) != '0']
-
-        # Ograniczenie logowania, aby nie zaśmiecać konsoli
-        # if user_id < 5 and month == self._current_month and year == self._current_year : # Loguj tylko dla kilku pierwszych userów i aktualnego miesiąca
-        #     debug_print(f"DataProvider: get_events_for_user_date({user_id}, {date_str}) -> {len(active_events)} aktywnych z {len(events_for_cell)} (cache: {cache_key_event in container.events_cache})")
 
         return active_events
 
