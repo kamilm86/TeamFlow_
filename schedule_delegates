@@ -1,7 +1,8 @@
-from PySide6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem
+from PySide6.QtWidgets import QStyledItemDelegate, QStyleOptionViewItem, QStyle
 from PySide6.QtCore import Qt, QRect, QPoint
 from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QPolygon
-from schedule_model import ROLE_HAS_MEETING, ROLE_HAS_OVERTIME
+from schedule_model import ROLE_HAS_MEETING, ROLE_HAS_OVERTIME, ROLE_SPECIAL_SYMBOL, ROLE_LOCATION_SYMBOL, ROLE_ICON_COLOR
+
 
 class OvertimeItemDelegate(QStyledItemDelegate):
     """
@@ -10,70 +11,95 @@ class OvertimeItemDelegate(QStyledItemDelegate):
     Dostosowany do pracy z rolami danych w modelu.
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, settings=None, parent=None):
         super().__init__(parent)
+        # Ustawienia domyślne, jeśli żadne nie zostały przekazane
+        self.settings = settings or {
+            'show_special_symbol': True,
+            'show_location_symbol': True,
+            'special_symbol_position': 'top_left',
+            'location_symbol_position': 'top_right'
+        }
 
     def paint(self, painter, option, index):
         """
-        Maluje komórkę z dodatkowymi ikonami dla nadgodzin, spotkań i szkoleń.
-
-        Args:
-            painter: QPainter do rysowania
-            option: QStyleOptionViewItem z opcjami wyświetlania
-            index: QModelIndex wskazujący na komórkę
+        Rysuje komórkę z w pełni konfigurowalnymi pozycjami ikon.
         """
         try:
-            # Najpierw rysujemy standardową komórkę
+            # Rysujemy domyślne tło i główny tekst
             super().paint(painter, option, index)
 
-            # Pobierz flagi bezpośrednio z modelu
+            # Pobierz dane z modelu na podstawie ustawień
+            special_symbol = index.data(ROLE_SPECIAL_SYMBOL) if self.settings.get('show_special_symbol') else None
+            location_symbol = index.data(ROLE_LOCATION_SYMBOL) if self.settings.get('show_location_symbol') else None
+            has_meeting = index.data(ROLE_HAS_MEETING)
             has_overtime = index.data(ROLE_HAS_OVERTIME)
-            has_meeting_or_training = index.data(ROLE_HAS_MEETING)
 
-            # Jeśli element ma jakiekolwiek oznaczenia
-            if has_overtime or has_meeting_or_training:
-                painter.save()
-                # Włącz antyaliasing dla gładkich krawędzi
-                painter.setRenderHint(QPainter.Antialiasing)
+            painter.save()
+            painter.setRenderHint(QPainter.Antialiasing)
 
-                # Określ szerokość i pozycję znaczników
-                marker_width = 8  # Rozmiar znacznika
-                marker_height = 8
+            # --- DYNAMICZNA CZCIONKA DLA IKON ---
+            # Rozmiar czcionki ikony będzie mniejszy od głównej czcionki komórki
+            icon_font = option.font
+            icon_font.setPointSize(max(6, option.font.pointSize() - 2))  # np. 2 punkty mniejsza, minimum 6
 
-                # Rysuj znacznik spotkań/szkoleń (białe kółko) w górnym prawym rogu
-                if has_meeting_or_training:
-                    # Oblicz pozycję w górnym prawym rogu
-                    top_right_x = option.rect.right() - marker_width - 2  # -2 to margines
-                    top_right_y = option.rect.top() + 2  # +2 to margines
+            # --- Kolor dla ikon tekstowych (biały na zaznaczeniu) ---
+            if option.state & QStyle.State_Selected:
+                painter.setPen(QPen(Qt.white))
+            else:
+                brush = index.data(ROLE_ICON_COLOR)
+                painter.setPen(QPen(brush.color() if brush else Qt.black))
 
-                    # Rysujemy kółko z białym wypełnieniem i czarną obwódką
-                    painter.setBrush(QBrush(QColor(255, 255, 255, 240)))  # Białe wypełnienie
-                    painter.setPen(QPen(QColor(0, 0, 0, 220), 1.0))  # Czarna obwódka
-                    painter.drawEllipse(
-                        top_right_x,
-                        top_right_y,
-                        marker_width,
-                        marker_height
-                    )
+            # --- LOGIKA RYSUJĄCA IKONY W ZADANYCH POZYCJACH ---
 
-                # Rysuj znacznik nadgodzin (czerwony trójkąt) w dolnym prawym rogu
-                if has_overtime:
-                    # Oblicz pozycję w dolnym prawym rogu
-                    bottom_right_x = option.rect.right() - marker_width - 2  # -2 to margines
-                    bottom_right_y = option.rect.bottom() - marker_height - 2  # -2 to margines
+            # 1. Ikona symbolu specjalnego
+            if special_symbol:
+                icon_font.setBold(False)
+                painter.setFont(icon_font)
+                pos_key = self.settings.get('special_symbol_position', 'top_left')
+                rect = QRect(option.rect)
+                align = Qt.AlignTop
+                if pos_key == 'top_left':
+                    align |= Qt.AlignLeft
+                else:  # top_right
+                    align |= Qt.AlignRight
+                painter.drawText(rect.adjusted(3, 1, -3, -1), align, special_symbol)
 
-                    # Czerwony trójkąt z czarną obwódką
-                    painter.setBrush(QBrush(QColor(220, 0, 0, 220)))  # Czerwone wypełnienie
-                    painter.setPen(QPen(Qt.black, 1.0))  # Czarna obwódka
+            # 2. Ikona lokalizacji
+            if location_symbol:
+                icon_font.setBold(False)
+                painter.setFont(icon_font)
+                pos_key = self.settings.get('location_symbol_position', 'top_right')
+                rect = QRect(option.rect)
+                align = Qt.AlignTop
+                if pos_key == 'top_left':
+                    align |= Qt.AlignLeft
+                else:  # top_right
+                    align |= Qt.AlignRight
+                painter.drawText(rect.adjusted(3, 1, -3, -1), align, location_symbol)
 
-                    triangle = QPolygon()
-                    triangle.append(QPoint(bottom_right_x, bottom_right_y + marker_height))
-                    triangle.append(QPoint(bottom_right_x + marker_width, bottom_right_y + marker_height))
-                    triangle.append(QPoint(bottom_right_x + marker_width, bottom_right_y))
-                    painter.drawPolygon(triangle)
+            # 3. Ikona zdarzeń (spotkanie/szkolenie) - NOWA POZYCJA
+            if has_meeting:
+                marker_size = 6
+                # Lewy dolny róg
+                x = option.rect.left() + 1
+                y = option.rect.bottom() - marker_size - 1
+                painter.setBrush(QBrush(QColor(255, 255, 255, 240)))
+                painter.setPen(QPen(QColor(0, 0, 0, 220), 1.0))
+                painter.drawEllipse(x, y, marker_size, marker_size)
 
-                painter.restore()
+            # 4. Ikona nadgodzin - POZOSTAJE BEZ ZMIAN
+            if has_overtime:
+                marker_size = 6
+                # Prawy dolny róg
+                x = option.rect.right() - marker_size - 1
+                y = option.rect.bottom() - marker_size - 1
+                painter.setBrush(QBrush(QColor(220, 0, 0, 220)))
+                painter.setPen(QPen(Qt.black, 1.0))
+                triangle = QPolygon(
+                    [QPoint(x, y + marker_size), QPoint(x + marker_size, y + marker_size), QPoint(x + marker_size, y)])
+                painter.drawPolygon(triangle)
+
+            painter.restore()
         except Exception as e:
-            # W przypadku błędu po prostu wyświetl domyślny wygląd komórki
             print(f"Błąd podczas rysowania delegata: {e}")
-            QStyledItemDelegate.paint(self, painter, option, index)
