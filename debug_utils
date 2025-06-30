@@ -1,313 +1,194 @@
+# Plik: debug_utils.py
+
 import datetime
 import traceback
 import sys
-import os
 from pathlib import Path
+import os
 
-"""
-Narzędzia do debugowania i logowania z opcją zapisu do pliku.
-"""
 
-# Globalny przełącznik dla trybu debug
-DEBUG_MODE = False  # Ustaw na False w produkcji
+# --- NOWA FUNKCJA DO WYSZUKIWANIA FOLDERU POBRANE ---
+def _get_downloads_path():
+    """
+    Znajduje ścieżkę do folderu Pobrane użytkownika, działając niezależnie
+    od wersji językowej systemu Windows. W przypadku innych systemów (Linux, macOS)
+    używa domyślnej ścieżki.
+    """
+    if sys.platform == "win32":
+        try:
+            import winreg
+            key = winreg.OpenKey(winreg.HKEY_CURRENT_USER,
+                                 r'Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders')
+            # GUID dla folderu Downloads jest stały
+            downloads_guid = '{374DE290-123F-4565-9164-39C4925E467B}'
+            path, _ = winreg.QueryValueEx(key, downloads_guid)
+            winreg.CloseKey(key)
+            # Rozwijamy zmienne środowiskowe, takie jak %USERPROFILE%
+            return Path(os.path.expandvars(path))
+        except Exception:
+            # W razie błędu odczytu rejestru, wracamy do standardowej nazwy
+            return Path.home() / "Downloads"
+    else:
+        # Dla systemów innych niż Windows (Linux, macOS)
+        return Path.home() / "Downloads"
 
-# Konfiguracja logowania do pliku
-LOG_TO_FILE = False  # Czy zapisywać logi do pliku
-LOG_TO_CONSOLE = False  # Czy wyświetlać logi w konsoli
-LOG_FILE_PATH = None  # Ścieżka do pliku logów (None = automatyczna)
-MAX_LOG_FILE_SIZE = 10 * 1024 * 1024  # 10MB maksymalny rozmiar pliku
-MAX_LOG_FILES = 5  # Maksymalna liczba plików archiwnych
 
-# Zabezpieczenie przed rekurencją
-_in_debug_print = False
+# --- KONIEC NOWEJ FUNKCJI ---
+
+
+# Globalne zmienne, które będą konfigurowane przez setup_logging
+LOG_TO_FILE = False
+LOG_TO_CONSOLE = True
+LOG_FILE_PATH = None
+MAX_LOG_FILE_SIZE = 10 * 1024 * 1024
+MAX_LOG_FILES = 5
+
 _log_file_handle = None
+_in_debug_print = False
 
-def setup_logging(log_to_file=True, log_to_console=True, log_file_path=None, max_file_size=10*1024*1024, max_files=5):
+
+def setup_logging(log_to_file=False, log_to_console=False):
     """
-    Konfiguruje system logowania.
-    
-    Args:
-        log_to_file (bool): Czy zapisywać do pliku
-        log_to_console (bool): Czy wyświetlać w konsoli
-        log_file_path (str): Ścieżka do pliku logów (None = automatyczna)
-        max_file_size (int): Maksymalny rozmiar pliku w bajtach
-        max_files (int): Maksymalna liczba plików archiwnych
+    Konfiguruje system logowania na podstawie ustawień z bazy danych.
     """
-    global LOG_TO_FILE, LOG_TO_CONSOLE, LOG_FILE_PATH, MAX_LOG_FILE_SIZE, MAX_LOG_FILES
-    
+    global LOG_TO_FILE, LOG_TO_CONSOLE, LOG_FILE_PATH
+
     LOG_TO_FILE = log_to_file
     LOG_TO_CONSOLE = log_to_console
-    MAX_LOG_FILE_SIZE = max_file_size
-    MAX_LOG_FILES = max_files
-    
-    if log_file_path:
-        LOG_FILE_PATH = log_file_path
-    else:
-        # Automatyczna ścieżka - folder logs w katalogu aplikacji
-        app_dir = Path(__file__).parent
-        logs_dir = app_dir / "logs"
-        logs_dir.mkdir(exist_ok=True)
-        
-        # Nazwa pliku z datą
-        today = datetime.datetime.now().strftime("%Y-%m-%d")
-        LOG_FILE_PATH = logs_dir / f"teamflow_{today}.log"
-    
+
     if LOG_TO_FILE:
-        _init_log_file()
+        try:
+            # --- ZMIANA: Użycie nowej funkcji do znalezienia ścieżki ---
+            downloads_dir = _get_downloads_path()
+
+            app_logs_dir = downloads_dir / "TeamFlowAppLogs"
+            app_logs_dir.mkdir(exist_ok=True)
+
+            today = datetime.datetime.now().strftime("%Y-%m-%d")
+            LOG_FILE_PATH = app_logs_dir / f"teamflow_{today}.log"
+
+            _init_log_file()
+            debug_print(f"Logowanie do pliku skonfigurowane w: {LOG_FILE_PATH}")
+
+        except Exception as e:
+            print(f"KRYTYCZNY BŁĄD: Nie można skonfigurować logowania do pliku: {e}", file=sys.stderr)
+            LOG_TO_FILE = False
+
 
 def _init_log_file():
-    """Inicjalizuje plik logów"""
+    """Inicjalizuje lub otwiera plik logów."""
     global _log_file_handle
-    
+    if not LOG_FILE_PATH: return
+
     try:
-        # Sprawdź czy plik nie jest za duży
         if LOG_FILE_PATH.exists() and LOG_FILE_PATH.stat().st_size > MAX_LOG_FILE_SIZE:
             _rotate_log_files()
-        
-        # Otwórz plik w trybie append
+
         _log_file_handle = open(LOG_FILE_PATH, 'a', encoding='utf-8')
-        
-        # Zapisz separator sesji
+
         session_start = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        _log_file_handle.write(f"\n{'='*50}\n")
-        _log_file_handle.write(f"NOWA SESJA: {session_start}\n")
-        _log_file_handle.write(f"{'='*50}\n")
+        _log_file_handle.write(f"\n{'=' * 50}\nNOWA SESJA: {session_start}\n{'=' * 50}\n")
         _log_file_handle.flush()
-        
+
     except Exception as e:
         print(f"Błąd podczas inicjalizacji pliku logów: {e}", file=sys.stderr)
         global LOG_TO_FILE
         LOG_TO_FILE = False
 
+
 def _rotate_log_files():
-    """Rotuje pliki logów gdy osiągną maksymalny rozmiar"""
+    """Rotuje pliki logów, gdy osiągną maksymalny rozmiar."""
+    global _log_file_handle
     try:
-        # Zamknij obecny plik jeśli jest otwarty
-        global _log_file_handle
         if _log_file_handle:
             _log_file_handle.close()
             _log_file_handle = None
-        
-        # Przenieś stare pliki
+
         for i in range(MAX_LOG_FILES - 1, 0, -1):
             old_file = Path(str(LOG_FILE_PATH) + f".{i}")
             new_file = Path(str(LOG_FILE_PATH) + f".{i + 1}")
-            
             if old_file.exists():
                 if new_file.exists():
-                    new_file.unlink()  # Usuń najstarszy plik
+                    new_file.unlink()
                 old_file.rename(new_file)
-        
-        # Przenieś obecny plik na .1
+
         if LOG_FILE_PATH.exists():
-            backup_file = Path(str(LOG_FILE_PATH) + ".1")
-            if backup_file.exists():
-                backup_file.unlink()
-            LOG_FILE_PATH.rename(backup_file)
-            
+            LOG_FILE_PATH.rename(Path(str(LOG_FILE_PATH) + ".1"))
+
     except Exception as e:
         print(f"Błąd podczas rotacji plików logów: {e}", file=sys.stderr)
 
+
 def _write_to_file(message):
-    """Zapisuje wiadomość do pliku logów"""
+    """Zapisuje wiadomość do pliku logów."""
     global _log_file_handle
-    
-    if not LOG_TO_FILE or not _log_file_handle:
-        return
-        
+    if not LOG_TO_FILE or not _log_file_handle: return
     try:
         _log_file_handle.write(message + "\n")
         _log_file_handle.flush()
-        
-        # Sprawdź rozmiar pliku co jakiś czas
         if _log_file_handle.tell() > MAX_LOG_FILE_SIZE:
-            _log_file_handle.close()
-            _log_file_handle = None
-            _rotate_log_files()
             _init_log_file()
-            
     except Exception as e:
         print(f"Błąd podczas zapisu do pliku logów: {e}", file=sys.stderr)
 
-def get_current_time():
-    """
-    Zwraca aktualny czas w formacie HH:MM:SS.
-    POPRAWKA: Zabezpieczenie przed rekurencją
-    """
-    try:
-        return datetime.datetime.now().strftime("%H:%M:%S")
-    except RecursionError:
-        return "??:??:??"
-    except Exception:
-        return "ERROR"
 
 def debug_print(*args, **kwargs):
-    """
-    Funkcja wyświetlająca komunikaty debugowania z opcją zapisu do pliku.
-    POPRAWKA: Zabezpieczenie przed nieskończoną rekurencją.
-    """
+    """Wyświetla komunikaty debugowania."""
     global _in_debug_print
-    
-    # Zabezpieczenie przed rekurencją
-    if _in_debug_print:
-        return
-        
-    if not DEBUG_MODE:
-        return
-        
+    if _in_debug_print: return
+
     try:
         _in_debug_print = True
-        
-        # Prostsze pobieranie czasu
-        try:
-            current_time = datetime.datetime.now().strftime("%H:%M:%S")
+        current_time = datetime.datetime.now().strftime("%H:%M:%S")
+        message = " ".join(map(str, args))
+
+        if LOG_TO_CONSOLE:
+            print(f"[{current_time}][DEBUG] {message}", **kwargs)
+
+        if LOG_TO_FILE:
             current_datetime = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        except:
-            current_time = "??:??:??"
-            current_datetime = "????-??-?? ??:??:??"
-        
-        # Sformatuj wiadomość
-        message_parts = [str(arg) for arg in args]
-        message = " ".join(message_parts)
-        
-        console_message = f"[{current_time}][DEBUG] {message}"
-        file_message = f"[{current_datetime}][DEBUG] {message}"
-        
-        # Wyświetl w konsoli
-        if LOG_TO_CONSOLE:
-            print(console_message, **kwargs)
-        
-        # Zapisz do pliku
-        if LOG_TO_FILE:
-            _write_to_file(file_message)
-        
-    except RecursionError:
-        # W przypadku rekurencji użyj podstawowego print
-        fallback_msg = f"[RECURSION][DEBUG] {' '.join(str(arg) for arg in args)}"
-        if LOG_TO_CONSOLE:
-            print(fallback_msg, **kwargs)
-        if LOG_TO_FILE:
-            _write_to_file(fallback_msg)
-        
-    except Exception as e:
-        # W przypadku innych błędów użyj sys.stderr
-        error_msg = f"[ERROR in debug_print]: {e}"
-        print(error_msg, file=sys.stderr)
-        if LOG_TO_FILE:
-            _write_to_file(error_msg)
-        
+            _write_to_file(f"[{current_datetime}][DEBUG] {message}")
+
     finally:
         _in_debug_print = False
 
+
 def log_error(message, exception=None):
-    """
-    Loguje błąd z opcją zapisu do pliku.
-    POPRAWKA: Zabezpieczenie przed rekurencją.
-    """
+    """Loguje błąd."""
     try:
-        current_time = datetime.datetime.now().strftime("%H:%M:%S")
         current_datetime = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        console_message = f"[{current_time}][ERROR] {message}"
-        file_message = f"[{current_datetime}][ERROR] {message}"
-        
-        if LOG_TO_CONSOLE:
-            print(console_message)
-        if LOG_TO_FILE:
-            _write_to_file(file_message)
-            
+        full_message = f"[{current_datetime}][ERROR] {message}"
+
+        if LOG_TO_CONSOLE: print(full_message, file=sys.stderr)
+        if LOG_TO_FILE: _write_to_file(full_message)
+
         if exception:
-            if LOG_TO_CONSOLE:
-                traceback.print_exc()
-            if LOG_TO_FILE:
-                _write_to_file(traceback.format_exc())
-                
-    except RecursionError:
-        fallback_msg = f"[RECURSION][ERROR] {message}"
-        print(fallback_msg)
-        if LOG_TO_FILE:
-            _write_to_file(fallback_msg)
-    except Exception:
-        fallback_msg = f"[CRITICAL ERROR] {message}"
-        print(fallback_msg, file=sys.stderr)
+            tb_str = traceback.format_exc()
+            if LOG_TO_CONSOLE: print(tb_str, file=sys.stderr)
+            if LOG_TO_FILE: _write_to_file(tb_str)
+
+    except Exception as e:
+        print(f"[BŁĄD KRYTYCZNY W LOGERZE]: {e}", file=sys.stderr)
+
 
 def log_warning(message):
-    """
-    Loguje ostrzeżenie z opcją zapisu do pliku.
-    POPRAWKA: Zabezpieczenie przed rekurencją.
-    """
-    if not DEBUG_MODE:
-        return
-        
+    """Loguje ostrzeżenie."""
     try:
-        current_time = datetime.datetime.now().strftime("%H:%M:%S")
         current_datetime = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        console_message = f"[{current_time}][WARNING] {message}"
-        file_message = f"[{current_datetime}][WARNING] {message}"
-        
-        if LOG_TO_CONSOLE:
-            print(console_message)
-        if LOG_TO_FILE:
-            _write_to_file(file_message)
-            
-    except RecursionError:
-        fallback_msg = f"[RECURSION][WARNING] {message}"
-        print(fallback_msg)
-        if LOG_TO_FILE:
-            _write_to_file(fallback_msg)
-    except Exception:
-        fallback_msg = f"[CRITICAL WARNING] {message}"
-        print(fallback_msg, file=sys.stderr)
+        full_message = f"[{current_datetime}][WARNING] {message}"
+        if LOG_TO_CONSOLE: print(full_message)
+        if LOG_TO_FILE: _write_to_file(full_message)
+    except Exception as e:
+        print(f"[BŁĄD KRYTYCZNY W LOGERZE]: {e}", file=sys.stderr)
 
-def log_info(message):
-    """
-    Loguje informację z opcją zapisu do pliku.
-    POPRAWKA: Zabezpieczenie przed rekurencją.
-    """
-    if not DEBUG_MODE:
-        return
-        
-    try:
-        current_time = datetime.datetime.now().strftime("%H:%M:%S")
-        current_datetime = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        
-        console_message = f"[{current_time}][INFO] {message}"
-        file_message = f"[{current_datetime}][INFO] {message}"
-        
-        if LOG_TO_CONSOLE:
-            print(console_message)
-        if LOG_TO_FILE:
-            _write_to_file(file_message)
-            
-    except RecursionError:
-        fallback_msg = f"[RECURSION][INFO] {message}"
-        print(fallback_msg)
-        if LOG_TO_FILE:
-            _write_to_file(fallback_msg)
-    except Exception:
-        fallback_msg = f"[CRITICAL INFO] {message}"
-        print(fallback_msg, file=sys.stderr)
 
 def close_log_file():
-    """Zamyka plik logów - wywołaj przy zamykaniu aplikacji"""
+    """Zamyka plik logów."""
     global _log_file_handle
-    
     if _log_file_handle:
         try:
-            session_end = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-            _log_file_handle.write(f"\nKONIEC SESJI: {session_end}\n")
-            _log_file_handle.write("="*50 + "\n")
             _log_file_handle.close()
         except:
             pass
         finally:
             _log_file_handle = None
-
-# Automatyczna inicjalizacja przy imporcie modułu
-try:
-    if LOG_TO_FILE:
-        setup_logging()
-except Exception as e:
-    print(f"Błąd podczas automatycznej inicjalizacji logowania: {e}", file=sys.stderr)
-    LOG_TO_FILE = False
