@@ -16,7 +16,7 @@ import matplotlib.pyplot as plt
 
 from collections import defaultdict
 import datetime as dt
-from debug_utils import log_error
+from debug_utils import log_error, debug_print
 from symbol_parser import parse_symbol
 
 class HourlyStaffingTableModel(QAbstractTableModel):
@@ -69,7 +69,8 @@ class HourlyStaffingTableModel(QAbstractTableModel):
         if is_total_row:
             if role == Qt.DisplayRole:
                 total = self._daily_totals[col]
-                return f"{total:.1f}" if total > 0 else ""
+                # ZMIANA: Wyświetlanie jako liczba całkowita
+                return str(int(round(total))) if total > 0 else ""
             if role == Qt.FontRole:
                 font = QFont(); font.setBold(True); return font
             if role == Qt.BackgroundRole:
@@ -83,7 +84,8 @@ class HourlyStaffingTableModel(QAbstractTableModel):
             value = self._data[row][col]
 
         if role == Qt.DisplayRole:
-            return f"{value:.1f}" if value > 0 else ""
+            # ZMIANA: Wyświetlanie jako liczba całkowita
+            return str(int(round(value))) if value > 0 else ""
         if role == Qt.TextAlignmentRole:
             return Qt.AlignCenter
         if role == Qt.BackgroundRole and value > 0:
@@ -128,6 +130,7 @@ class HourlyStaffingTableModel(QAbstractTableModel):
             if role == Qt.TextAlignmentRole:
                 return Qt.AlignCenter
         return None
+
 
 class MplChartCanvas(FigureCanvas):
     """Widget-kontener dla wykresu Matplotlib."""
@@ -465,9 +468,9 @@ class AbsenceDetailTableModel(QAbstractTableModel):
         return None
 
 class StaffingDetailsWindow(QDialog):
-    def __init__(self, parent, data_provider, year, month):
+    def __init__(self, parent, data_provider, year, month, grupa, funkcja):
         super().__init__(parent)
-        self.parent_widget, self.data_provider, self._year, self._month = parent, data_provider, year, month
+        self.parent_widget, self.data_provider, self._year, self._month, self._grupa, self._funkcja = parent, data_provider, year, month, grupa, funkcja
         self._days_in_month = QDate(self._year, self._month, 1).daysInMonth()
         self.is_dark_theme = parent.is_dark_theme if hasattr(parent, 'is_dark_theme') else False
         self.setWindowTitle(f"Szczegóły obsady i analizy dla {month:02}/{year}")
@@ -650,47 +653,223 @@ class StaffingDetailsWindow(QDialog):
         self.tabs.setStyleSheet(AppStyles.get_tab_widget_style(theme))
 
     def load_and_display_data(self):
-        # --- Sekcja prognozy (teraz na początku, bo jest niezależna) ---
+        # --- KROK 1: POBRANIE WSPÓLNYCH DANYCH BAZOWYCH ---
+        # Najpierw pobieramy wszystkie dane, od których zależą wszystkie zakładki.
+        self._filtered_schedule_data = self.parent_widget.filter_processed_data()
+        all_events = self.data_provider.get_events_data(self._year, self._month, self._grupa, self._funkcja)
+        debug_print(
+            f"StaffingDetailsWindow: Pobrane dane bazowe - {len(self._filtered_schedule_data)} pracowników do analizy.")
+
+        # --- KROK 2: WYKONANIE WSZYSTKICH OBLICZEŃ DLA ZAKŁADEK ---
+
+        # Obliczenia dla "Prognoza vs. Rzeczywistość"
+        actual_staffing_data = self._calculate_actual_staffing_matrix()
         raw_forecast_data = self.data_provider.get_forecast_data(self._year, self._month)
-        self._populate_forecast_filters(raw_forecast_data)
+        self._populate_forecast_filters(raw_forecast_data, actual_staffing_data)
         filtered_forecast_data = self._filter_forecast_data(raw_forecast_data)
-
-        # NOWA LOGIKA KALKULACJI MACIERZY
         forecast_matrix = self._calculate_matrix_from_forecast(filtered_forecast_data, 'Prognoza')
-        actual_matrix = self._calculate_matrix_from_forecast(filtered_forecast_data, 'IluKons')
-
+        selected_group_name = self.forecast_group_combo.currentText()
+        actual_matrix = actual_staffing_data.get(selected_group_name, [[0.0] * self._days_in_month for _ in range(24)])
         view_mode = self.forecast_view_mode_combo.currentData()
+
+        # Obliczenia dla "Obsada Godzinowa" (z uwzględnieniem filtra)
+        hourly_option = self.hourly_staffing_options_combo.currentData()
+        hourly_staffing_data = self._calculate_hourly_staffing(self._filtered_schedule_data, all_events, hourly_option)
+
+        # Obliczenia dla "Obsada Dzienna" (z uwzględnieniem filtra)
+        daily_option = self.daily_staffing_options_combo.currentData()
+        daily_staffing_data = self._calculate_daily_staffing(self._filtered_schedule_data, all_events, daily_option)
+
+        # Obliczenia dla pozostałych zakładek
+        overtime_data = self._calculate_overtime_summary_detailed(self._filtered_schedule_data, all_events)
+        absence_data = self._calculate_absence_analysis(self._filtered_schedule_data)
+        flexibility_data = self._calculate_flexibility_analysis(self._filtered_schedule_data)
+        counts, rbh = self._calculate_special_symbols_summary(self._filtered_schedule_data)
+
+        # --- KROK 3: AKTUALIZACJA WSZYSTKICH MODELI I WIDOKÓW ---
+
+        # Aktualizacja modelu i wykresu "Prognoza vs. Rzeczywistość"
         self._forecast_model.update_data(self._year, self._month, forecast_matrix, actual_matrix, view_mode)
 
-        # --- Istniejąca logika dla pozostałych zakładek ---
-        # Uwaga: Ta sekcja nadal zależy od filtrów z okna głównego
-        self._filtered_schedule_data = self.parent_widget.filter_processed_data()
-        all_events = self.data_provider.get_events_data(self._year, self._month)
-
-        hourly_staffing_data = self._calculate_hourly_staffing(self._filtered_schedule_data, all_events)
+        # Aktualizacja modelu "Obsada Godzinowa"
         self._hourly_staffing_model.update_data(hourly_staffing_data, self._year, self._month)
 
-        daily_staffing_data = self._calculate_daily_staffing(self._filtered_schedule_data, all_events,
-                                                             self.daily_staffing_options_combo.currentData())
+        # Aktualizacja modelu i wykresu "Obsada Dzienna"
         self._daily_staffing_model.update_data(self._year, self._month, daily_staffing_data)
         self._update_daily_staffing_chart(daily_staffing_data)
 
-        overtime_data = self._calculate_overtime_summary_detailed(self._filtered_schedule_data, all_events)
+        # Aktualizacja pozostałych modeli i wykresów
         self._overtime_model.update_data(overtime_data)
         self._update_overtime_charts(overtime_data)
 
-        absence_data = self._calculate_absence_analysis(self._filtered_schedule_data)
         self._update_absence_tab(absence_data)
 
-        flexibility_data = self._calculate_flexibility_analysis(self._filtered_schedule_data)
         self._flexibility_model.update_data(flexibility_data['table_data'])
         self._update_flexibility_chart(flexibility_data['chart_data'])
 
-        counts, rbh = self._calculate_special_symbols_summary(self._filtered_schedule_data)
         self._symbols_count_model.update_data(self._year, self._month, counts)
         self._symbols_rbh_model.update_data(self._year, self._month, rbh)
 
+        # Na koniec dostosuj szerokość kolumn we wszystkich tabelach
         self._adjust_columns()
+
+    def _get_events_duration_per_hour(self, all_events: list) -> dict:
+        """
+        Przetwarza listę zdarzeń i zwraca słownik z czasem trwania spotkań/szkoleń
+        dla każdego użytkownika, w każdej godzinie danego dnia.
+        Format zwracany: {user_id: {day: {hour: total_minutes}}}
+        """
+        event_durations = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
+
+        for event in all_events:
+            event_type = event.get('type')
+            if event_type not in ['Spotkanie', 'Szkolenie']:
+                continue
+
+            try:
+                user_id = int(event.get('user_id'))
+                date_key = event.get('date_key', '')
+                time_from_str = event.get('time_from', '')
+                time_to_str = event.get('time_to', '')
+
+                if not all([user_id, date_key, time_from_str, time_to_str]):
+                    continue
+
+                day = int(date_key.split('-')[2])
+                start_time = dt.datetime.strptime(time_from_str, '%H:%M')
+                end_time = dt.datetime.strptime(time_to_str, '%H:%M')
+
+                if end_time <= start_time:
+                    end_time += dt.timedelta(days=1)
+
+                current_time = start_time
+                while current_time < end_time:
+                    hour_slot = current_time.hour
+
+                    # Oblicz, ile minut tego zdarzenia przypada na bieżący slot godzinowy
+                    next_hour = (current_time + dt.timedelta(hours=1)).replace(minute=0, second=0)
+                    slot_end_time = min(end_time, next_hour)
+                    duration_in_slot = (slot_end_time - current_time).total_seconds() / 60
+
+                    event_durations[user_id][day][hour_slot] += duration_in_slot
+
+                    current_time = next_hour
+            except (ValueError, TypeError, IndexError) as e:
+                log_error(f"Błąd przetwarzania zdarzenia w _get_events_duration_per_hour: {event}, błąd: {e}")
+                continue
+
+        return event_durations
+
+    def _calculate_actual_staffing_matrix(self) -> dict:
+        """
+        Oblicza macierz obsady rzeczywistej na podstawie danych grafiku i zdarzeń,
+        a następnie agreguje ją do zdefiniowanych grup.
+        WERSJA POPRAWIONA: Uwzględnia pole 'korekta' w czasie pracy.
+        """
+        # --- ETAP 1: Przygotowanie danych ---
+        schedule_data = self.parent_widget.filter_processed_data()
+        all_events = self.data_provider.get_events_data(self._year, self._month, self.parent_widget.import_grupa,
+                                                        self.parent_widget.import_funkcja)
+        events_map = self._get_events_duration_per_hour(all_events)
+
+        days_in_month = self._days_in_month
+
+        granular_staffing = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
+
+        # --- ETAP 2: Zliczanie dostępnych konsultantów godzina po godzinie ---
+        for user_key, user_data in schedule_data.items():
+            user_id = user_key[3]
+            user_info = {
+                'WydzialGrafik': user_key[0],
+                'RolaNazwa': user_data.get('rola_nazwa', ''),
+                'JęzykNazwa': user_data.get('jezyk', ''),
+                'SystemCzasuPracyNazwa': user_data.get('system_czasu_pracy', '')
+            }
+
+            # --- POCZĄTEK ZMIANY: Pobranie korekty ---
+            # Pobieramy korektę dla danego pracownika. Domyślnie 0.
+            try:
+                korekta = float(user_data.get('korekta', 0.0) or 0.0)
+            except (ValueError, TypeError):
+                korekta = 0.0
+            # --- KONIEC ZMIANY ---
+
+            for day, day_info in user_data.get('days', {}).items():
+                parsed_symbol = parse_symbol(day_info.get('symbol', ''))
+                start_hour = parsed_symbol.get('start_hour')
+                base_work_hours = parsed_symbol.get('work_hours')
+
+                # --- POCZĄTEK ZMIANY: Zastosowanie korekty ---
+                final_work_hours = None
+                if base_work_hours is not None:
+                    # Dodajemy korektę do bazowych godzin pracy
+                    final_work_hours = base_work_hours + korekta
+                # --- KONIEC ZMIANY ---
+
+                # Sprawdzamy, czy pracownik w ogóle pracuje w danym dniu (po korekcie)
+                if start_hour is None or final_work_hours is None or final_work_hours <= 0:
+                    continue
+
+                # Iterujemy po każdej godzinie pracy (już z uwzględnieniem korekty)
+                for h in range(max(0, int(final_work_hours))):
+                    current_hour = (start_hour + h) % 24
+
+                    event_minutes = events_map.get(user_id, {}).get(day, {}).get(current_hour, 0)
+                    if event_minutes > 30:
+                        continue
+
+                    grouping_key = (
+                        user_info['WydzialGrafik'],
+                        user_info['RolaNazwa'],
+                        user_info['JęzykNazwa'],
+                        user_info['SystemCzasuPracyNazwa'],
+                        parsed_symbol.get('location') or user_data.get('lokalizacja_domyslna', 'h')
+                    )
+                    granular_staffing[day][current_hour][grouping_key] += 1
+
+        # --- ETAP 3: Agregacja do finalnych grup (bez zmian) ---
+        final_group_names = [
+            "MASS+WELCAMER+GOLD", "NUMEN+FIRMA", "CZAT", "WELCOMER", "GOLD",
+            "NUMEN+FIRMA VOICE", "WELCOMER VOICE", "TOTAL", "TOTAL VOICE"
+        ]
+        aggregated_results = {name: [[0.0] * days_in_month for _ in range(24)] for name in final_group_names}
+
+        for day in range(1, days_in_month + 1):
+            for hour in range(24):
+                if day not in granular_staffing or hour not in granular_staffing[day]:
+                    continue
+
+                sums = defaultdict(float)
+                for grouping_key, count in granular_staffing[day][hour].items():
+                    wydzial, rola, jezyk, system_pracy, lokalizacja = grouping_key
+                    sums['TOTAL'] += count
+                    if wydzial in ['WNT', 'WZK1v', 'WZK2v']: sums['TOTAL_VOICE'] += count
+                    if wydzial in ['WZK3v', 'WZK3w']: sums['TOTAL_VOICE'] += count * 0.6
+                    if wydzial == 'WZFv': sums['TOTAL_VOICE'] += count * 0.8
+                    if wydzial in ['WZKv', 'WZK3w']: sums['MASS_WELC_GOLD_A'] += count * 0.6
+                    if wydzial in ['WNT', 'WZK1v', 'WZK2v', 'WZK3v']: sums['MASS_WELC_GOLD_B'] += count
+                    if wydzial in ['WZFv', 'WZFc']: sums['NUMEN_FIRMA'] += count
+                    if wydzial == 'WZFv': sums['CZAT_A'] += count * 0.2
+                    if wydzial in ['WZK3v', 'WZK3w']: sums['CZAT_B'] += count * 0.4
+                    if wydzial in ['WZK1c', 'WZK2c', 'WZK3c', 'WZFc', 'OBDc']: sums['CZAT_C'] += count
+                    if wydzial in ['WZK3v', 'WZK3c', 'WZK3w']: sums['WELCOMER'] += count
+                    if wydzial in ['WZK2v', 'WZK2c']: sums['GOLD'] += count
+                    if wydzial == 'WZFv': sums['NUMEN_FIRMA_VOICE'] += count * 0.8
+                    if wydzial in ['WZK3v', 'WZK3w']: sums['WELCOMER_VOICE'] += count * 0.6
+
+                day_idx = day - 1
+                aggregated_results["TOTAL"][hour][day_idx] = sums['TOTAL']
+                aggregated_results["TOTAL VOICE"][hour][day_idx] = sums['TOTAL_VOICE']
+                aggregated_results["MASS+WELCAMER+GOLD"][hour][day_idx] = sums['MASS_WELC_GOLD_A'] + sums[
+                    'MASS_WELC_GOLD_B']
+                aggregated_results["NUMEN+FIRMA"][hour][day_idx] = sums['NUMEN_FIRMA']
+                aggregated_results["CZAT"][hour][day_idx] = sums['CZAT_A'] + sums['CZAT_B'] + sums['CZAT_C']
+                aggregated_results["WELCOMER"][hour][day_idx] = sums['WELCOMER']
+                aggregated_results["GOLD"][hour][day_idx] = sums['GOLD']
+                aggregated_results["NUMEN+FIRMA VOICE"][hour][day_idx] = sums['NUMEN_FIRMA_VOICE']
+                aggregated_results["WELCOMER VOICE"][hour][day_idx] = sums['WELCOMER_VOICE']
+
+        return aggregated_results
 
     def _calculate_overtime_summary_detailed(self, schedule_data, all_events):
         summary = defaultdict(lambda: {"wypłata": 0.0, "odbiór": 0.0, "odpracowanie": 0.0})
@@ -753,7 +932,25 @@ class StaffingDetailsWindow(QDialog):
             return '#f8f9fa', 'black', '#ced4da'
 
     def _create_hourly_staffing_tab(self):
-        widget = QWidget(); layout = QVBoxLayout(widget); layout.setContentsMargins(0, 5, 0, 0)
+        # ZMIANA: Dodanie filtra do zakładki
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(5, 5, 5, 5)
+
+        # Layout dla opcji filtra
+        options_layout = QHBoxLayout()
+        options_layout.addStretch()
+        self.hourly_staffing_options_combo = QComboBox()
+        self.hourly_staffing_options_combo.addItem("Grafik + Nadgodziny", "all")
+        self.hourly_staffing_options_combo.addItem("Tylko Grafik", "schedule_only")
+        self.hourly_staffing_options_combo.addItem("Tylko Nadgodziny", "overtime_only")
+        self.hourly_staffing_options_combo.currentIndexChanged.connect(self.load_and_display_data)
+
+        options_layout.addWidget(QLabel("Pokaż dane dla:"))
+        options_layout.addWidget(self.hourly_staffing_options_combo)
+        layout.addLayout(options_layout)
+
+        # Tabela (bez zmian)
         self.hourly_staffing_view = QTableView()
         self._hourly_staffing_model = HourlyStaffingTableModel(self._year, self._month, self)
         self.hourly_staffing_view.setModel(self._hourly_staffing_model)
@@ -762,6 +959,7 @@ class StaffingDetailsWindow(QDialog):
         self.hourly_staffing_view.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.hourly_staffing_view.setEditTriggers(QAbstractItemView.NoEditTriggers)
         layout.addWidget(self.hourly_staffing_view)
+
         self.tabs.addTab(widget, "Obsada Godzinowa")
 
     def _create_daily_staffing_tab(self):
@@ -1302,42 +1500,49 @@ class StaffingDetailsWindow(QDialog):
         #    Metody rysujące wykresy już używają `self.is_dark_theme` do wyboru kolorów.
         self.load_and_display_data()
 
-    def _calculate_hourly_staffing(self, schedule_data, all_events):
+    def _calculate_hourly_staffing(self, schedule_data, all_events, option="all"):
+        # ZMIANA: Dostosowanie logiki do wybranej opcji filtra
         days = self._days_in_month
         matrix = [[0.0] * days for _ in range(24)]
-        if schedule_data:
-            for user_schedule in schedule_data.values():
-                for day, day_info in user_schedule.get('days', {}).items():
-                    parsed = parse_symbol(day_info.get('symbol', ''))
-                    if parsed.get('special_symbol') and any(
-                            s in parsed['special_symbol'] for s in
-                            ["U", "CO", "UZ", "CR", "NN", "NW", "Z", "UB"]):
+
+        # Obliczenia dla grafiku
+        if option in ['all', 'schedule_only']:
+            if schedule_data:
+                for user_schedule in schedule_data.values():
+                    for day, day_info in user_schedule.get('days', {}).items():
+                        parsed = parse_symbol(day_info.get('symbol', ''))
+                        if parsed.get('special_symbol') and any(
+                                s in parsed['special_symbol'] for s in
+                                ["U", "CO", "UZ", "CR", "NN", "NW", "Z", "UB"]):
+                            continue
+                        start, hours = parsed.get('start_hour'), parsed.get('work_hours')
+                        if start is not None and hours is not None and hours > 0:
+                            for h in range(int(hours)):
+                                if 0 <= (start + h) % 24 < 24 and 0 <= day - 1 < days:
+                                    matrix[(start + h) % 24][day - 1] += 1.0
+
+        # Obliczenia dla nadgodzin
+        if option in ['all', 'overtime_only']:
+            filtered_user_ids = {k[3] for k in schedule_data.keys()}
+            for event in all_events:
+                if event.get('type') == 'Nadgodziny' and event.get('user_id') in filtered_user_ids:
+                    try:
+                        day = int(event.get('date_key', '').split('-')[2])
+                        t_from = dt.datetime.strptime(event.get('time_from', '00:00'), '%H:%M')
+                        t_to = dt.datetime.strptime(event.get('time_to', '00:00'), '%H:%M')
+                        duration_s = (t_to - t_from).total_seconds()
+                        if duration_s < 0:
+                            duration_s += 86400
+                        current_time = t_from
+                        while duration_s > 1:
+                            hour_slot, minutes_in_slot = current_time.hour, 60 - current_time.minute
+                            seconds_in_slot = min(minutes_in_slot * 60, duration_s)
+                            if 0 <= hour_slot < 24 and 0 <= day - 1 < days:
+                                matrix[hour_slot][day - 1] += seconds_in_slot / 3600.0
+                            duration_s -= seconds_in_slot
+                            current_time += dt.timedelta(seconds=seconds_in_slot)
+                    except (ValueError, IndexError):
                         continue
-                    start, hours = parsed.get('start_hour'), parsed.get('work_hours')
-                    if start is not None and hours is not None and hours > 0:
-                        for h in range(int(hours)):
-                            if 0 <= (start + h) % 24 < 24 and 0 <= day - 1 < days:
-                                matrix[(start + h) % 24][day - 1] += 1.0
-        filtered_user_ids = {k[3] for k in schedule_data.keys()}
-        for event in all_events:
-            if event.get('type') == 'Nadgodziny' and event.get('user_id') in filtered_user_ids:
-                try:
-                    day = int(event.get('date_key', '').split('-')[2])
-                    t_from = dt.datetime.strptime(event.get('time_from', '00:00'), '%H:%M')
-                    t_to = dt.datetime.strptime(event.get('time_to', '00:00'), '%H:%M')
-                    duration_s = (t_to - t_from).total_seconds()
-                    if duration_s < 0:
-                        duration_s += 86400
-                    current_time = t_from
-                    while duration_s > 1:
-                        hour_slot, minutes_in_slot = current_time.hour, 60 - current_time.minute
-                        seconds_in_slot = min(minutes_in_slot * 60, duration_s)
-                        if 0 <= hour_slot < 24 and 0 <= day - 1 < days:
-                            matrix[hour_slot][day - 1] += seconds_in_slot / 3600.0
-                        duration_s -= seconds_in_slot
-                        current_time += dt.timedelta(seconds=seconds_in_slot)
-                except (ValueError, IndexError):
-                    continue
         return matrix
 
     def _calculate_daily_staffing(self, schedule_data, all_events, option):
@@ -1366,23 +1571,24 @@ class StaffingDetailsWindow(QDialog):
                         continue
         return {dept: [daily_data.get(d, 0) for d in range(days_in_month)] for dept, daily_data in summary.items()}
 
-
-    def _calculate_special_symbols_summary(self, schedule_data):
-        summary = defaultdict(lambda: defaultdict(lambda: {'count': 0, 'hours': 0.0}))
-        days = self._days_in_month
-        for user_schedule in schedule_data.values():
-            for day, day_info in user_schedule.get('days', {}).items():
-                parsed = parse_symbol(day_info.get('symbol', ''))
-                symbol = parsed.get('special_symbol')
-                if symbol:
-                    summary[symbol][day - 1]['count'] += 1
-                    summary[symbol][day - 1]['hours'] += float(parsed.get('work_hours') or 8.0)
-        counts_matrix = {s: [d.get(i, {}).get('count', 0) for i in range(days)] for s, d in summary.items()}
-        rbh_matrix = {s: [int(round(d.get(i, {}).get('hours', 0))) for i in range(days)] for s, d in summary.items()}
-        return counts_matrix, rbh_matrix
-
-    def _populate_forecast_filters(self, raw_data):
+    def _populate_forecast_filters(self, raw_data, actual_staffing_groups):  # Dodano drugi argument
         """Wypełnia ComboBoxy z filtrami na podstawie dostępnych danych."""
+        # --- ZMIANA: Logika dla forecast_group_combo ---
+        group_combo = self.forecast_group_combo
+        group_combo.blockSignals(True)
+        current_group = group_combo.currentText()
+        group_combo.clear()
+
+        # Wypełnij listę nazwami zagregowanych grup
+        if actual_staffing_groups:
+            group_combo.addItems(sorted(actual_staffing_groups.keys()))
+
+        index = group_combo.findText(current_group)
+        group_combo.setCurrentIndex(index if index != -1 else 0)
+        group_combo.blockSignals(False)
+        # --- KONIEC ZMIANY ---
+
+
         filters_config = {
             'GrupaNazwa': self.forecast_group_combo,
             'WydzialGrafik': self.forecast_wydzial_combo,
@@ -1442,6 +1648,22 @@ class StaffingDetailsWindow(QDialog):
                 filtered_data = [row for row in filtered_data if row.get(col_name) == selected_value]
 
         return filtered_data
+
+    def _calculate_special_symbols_summary(self, schedule_data):
+        summary = defaultdict(lambda: defaultdict(lambda: {'count': 0, 'hours': 0.0}))
+        days = self._days_in_month
+        for user_schedule in schedule_data.values():
+            for day, day_info in user_schedule.get('days', {}).items():
+                parsed = parse_symbol(day_info.get('symbol', ''))
+                symbol = parsed.get('special_symbol')
+                if symbol:
+                    summary[symbol][day - 1]['count'] += 1
+                    summary[symbol][day - 1]['hours'] += float(parsed.get('work_hours') or 8.0)
+        counts_matrix = {s: [d.get(i, {}).get('count', 0) for i in range(days)] for s, d in summary.items()}
+        rbh_matrix = {s: [int(round(d.get(i, {}).get('hours', 0))) for i in range(days)] for s, d in summary.items()}
+        return counts_matrix, rbh_matrix
+
+
 
     def _calculate_matrix_from_forecast(self, filtered_data, column_name):
         """Tworzy macierz 24x(dni) sumując wartości z podanej kolumny."""
