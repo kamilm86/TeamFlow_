@@ -281,6 +281,27 @@ class DataProvider(QObject):
 
         return container.processed_data_base
 
+    def get_department_to_group_mapping(self):
+        """
+        Zwraca słownik mapujący zagregowane grupy na zbiory wydziałów (WydzialGrafik).
+        Centralizuje logikę biznesową dotyczącą przynależności do grup.
+        """
+        # Ta logika jest odzwierciedleniem tego, jak liczona jest obsada rzeczywista
+        # w metodzie _calculate_actual_staffing_matrix.
+        mapping = {
+            "TOTAL VOICE": {'WNT', 'WZK1v', 'WZK2v', 'WZK3v', 'WZK3w', 'WZFv'},
+            "MASS+WELCAMER+GOLD": {'WZKv', 'WZK3w', 'WNT', 'WZK1v', 'WZK2v', 'WZK3v'},
+            "NUMEN+FIRMA": {'WZFv', 'WZFc'},
+            "CZAT": {'WZFv', 'WZK3v', 'WZK3w', 'WZK1c', 'WZK2c', 'WZK3c', 'WZFc', 'OBDc'},
+            "WELCOMER": {'WZK3v', 'WZK3c', 'WZK3w'},
+            "GOLD": {'WZK2v', 'WZK2c'},
+            "NUMEN+FIRMA_VOICE": {'WZFv'},
+            "WELCOMER VOICE": {'WZK3v', 'WZK3w'}
+        }
+        # Grupa TOTAL jest specjalnym przypadkiem - zawiera wszystkie wydziały.
+        # Nie dodajemy jej tutaj, będzie obsługiwana osobno.
+        return mapping
+
     def refresh_data(self, year: int, month: int, grupa: int, funkcja: int):
         """
         Wymusza pełne odświeżenie danych dla miesiąca (np. po kliknięciu przycisku "Odśwież").
