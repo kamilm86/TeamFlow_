@@ -1260,27 +1260,25 @@ class WorkScheduleWindow(QMainWindow):
         """Tworzy lewy panel z filtrami"""
         self._left_panel = QWidget()
         self._left_panel.setStyleSheet(AppStyles.get_left_panel_style("dark" if self.is_dark_theme else "light"))
-        self._left_panel.setMinimumWidth(280)  # Zwiększamy minimalną szerokość panelu
-        self._left_panel.setMaximumWidth(280)  # Zwiększamy maksymalną szerokość panelu
+        self._left_panel.setMinimumWidth(280)
+        self._left_panel.setMaximumWidth(280)
 
         filters_layout = QVBoxLayout(self._left_panel)
         filters_layout.setContentsMargins(10, 10, 10, 10)
-        filters_layout.setSpacing(6)  # Zmniejsz odstępy między elementami
+        filters_layout.setSpacing(6)
 
-        # Tytuł filtrów
         filters_title = QLabel("Filtry")
         filters_title.setStyleSheet(AppStyles.get_label_style("dark" if self.is_dark_theme else "light", is_title=True))
         filters_layout.addWidget(filters_title)
 
-        # Kolejność zgodnie z oznaczeniami na zdjęciu
-        # 1. Wydział
-        self.add_horizontal_filter("Wydział:", "wydzial_combo", filters_layout)
+        # --- ZMIANA: Dodano nowy filtr "Grupa" ---
+        self.add_horizontal_filter("Grupa:", "grupa_main_filter_combo", filters_layout)
+        # --- KONIEC ZMIANY ---
 
-        # 2. Przełożony - pole tekstowe i lista w układzie pionowym
+        self.add_horizontal_filter("Wydział:", "wydzial_combo", filters_layout)
         self.add_horizontal_search_filter("Przełożony:", "przelozony_filter", filters_layout)
         self.przelozony_filter.textChanged.connect(self.filter_przelozony_list)
 
-        # Lista przełożonych
         self.przelozony_list = QListWidget()
         self.przelozony_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.przelozony_list.setStyleSheet(AppStyles.get_list_style("dark" if self.is_dark_theme else "light"))
@@ -1288,11 +1286,9 @@ class WorkScheduleWindow(QMainWindow):
         self.przelozony_list.itemSelectionChanged.connect(self.filter_data)
         filters_layout.addWidget(self.przelozony_list)
 
-        # 3. Użytkownik
         self.add_horizontal_search_filter("Użytkownik:", "uzytkownik_filter", filters_layout)
         self.uzytkownik_filter.textChanged.connect(self.filter_uzytkownik_list)
 
-        # Lista użytkowników
         self.uzytkownik_list = QListWidget()
         self.uzytkownik_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.uzytkownik_list.setStyleSheet(AppStyles.get_list_style("dark" if self.is_dark_theme else "light"))
@@ -1300,22 +1296,13 @@ class WorkScheduleWindow(QMainWindow):
         self.uzytkownik_list.itemSelectionChanged.connect(self.filter_data)
         filters_layout.addWidget(self.uzytkownik_list)
 
-        # 4. DTN
+        # Pozostałe filtry bez zmian
         self.add_horizontal_filter("DTN:", "dtn_combo", filters_layout)
-
-        # 5. Etat
         self.add_horizontal_filter("Etat:", "etat_combo", filters_layout)
-
-        # 6. Rola
         self.add_horizontal_filter("Rola:", "rola_combo", filters_layout)
-
-        # 7. Język
         self.add_horizontal_filter("Język:", "jezyk_combo", filters_layout)
-
-        # 8. System Czasu Pracy
         self.add_horizontal_filter("System Pracy:", "system_czasu_pracy_combo", filters_layout)
 
-        # Przycisk wyczyść filtry
         self.clear_filters_button = QPushButton("Wyczyść filtry")
         self.clear_filters_button.setStyleSheet(AppStyles.get_button_style("dark" if self.is_dark_theme else "light"))
         self.clear_filters_button.clicked.connect(self.clear_filters)
@@ -1869,56 +1856,64 @@ class WorkScheduleWindow(QMainWindow):
                 if hasattr(self, 'table'):
                     self.table.set_model(self.schedule_model)
                     self.table.adjust_employees_table_width()
-                    self._set_schedule_columns_width()
+                    self._apply_dynamic_sizes()
 
         except Exception as e:
             log_error(f"Błąd w show_column_select_dialog: {e}", exception=e)
             QMessageBox.critical(self, "Błąd", f"Wystąpił błąd podczas zmiany kolumn: {str(e)}", QMessageBox.Ok)
 
-    def _set_schedule_columns_width(self):
+    def _apply_dynamic_sizes(self):
         """
-        OSTATECZNA, POPRAWIONA WERSJA: Ustawia szerokość i widoczność kolumn w widoku grafiku,
-        uwzględniając dynamiczną szerokość w zależności od rozmiaru czcionki.
+        NOWA METODA: Ustawia dynamiczne rozmiary (szerokość kolumn i wysokość wierszy)
+        w zależności od wybranego rozmiaru czcionki.
+        WERSJA POPRAWIONA: Prawidłowo ukrywa nieistniejące dni miesiąca.
         """
-        if not hasattr(self, 'table') or not hasattr(self.table, 'schedule_view') or not self.schedule_model:
+        if not hasattr(self, 'table') or not self.table.employees_view.model():
             return
 
+        # Konfiguracja dynamicznych rozmiarów
+        width_map = {7: 35, 8: 40, 9: 45}
+        day_column_width = width_map.get(self.current_font_size, 40)
+
+        height_map = {7: 25, 8: 25, 9: 25}
+        row_height = height_map.get(self.current_font_size, 25)
+
+        # Zastosowanie ustawień
         header = self.table.schedule_view.horizontalHeader()
-        model = self.schedule_model
+        model = self.table.employees_view.model()
 
-        # --- NOWA LOGIKA: Mapa rozmiaru czcionki na szerokość kolumny ---
-        font_size_to_width_map = {
-            7: 35,
-            8: 40,
-            9: 45
-        }
-        # Użyj .get() z wartością domyślną, aby uniknąć błędu
-        day_column_width = font_size_to_width_map.get(self.current_font_size, 40)
-        # --- KONIEC NOWEJ LOGIKI ---
-
-        for i in range(model.columnCount()):
-            if not header.isSectionHidden(i):
-                header.showSection(i)
-
-        special_widths = {
-            "Suma\nRBH": 45,
-            "Bilans\nRBH": 45,
-            "Komentarz": 300
-        }
+        special_widths = {"Suma\nRBH": 45, "Bilans\nRBH": 45, "Komentarz": 300}
 
         for logical_index in range(model.columnCount()):
             header_text = model.headerData(logical_index, Qt.Horizontal, Qt.DisplayRole)
-
-            # ZMIANA: Użyj dynamicznej szerokości dla kolumn dni
             width_to_set = special_widths.get(header_text, day_column_width)
             header.resizeSection(logical_index, width_to_set)
 
+        # --- NOWA, POPRAWIONA LOGIKA UKRYWANIA KOLUMN ---
         days_in_month = model._days_in_month
         employee_cols_count = len(model.get_visible_columns())
 
-        for day_offset in range(days_in_month, 31):
-            model_col_to_hide = employee_cols_count + day_offset
-            header.setSectionHidden(model_col_to_hide, True)
+        # Pętla po wszystkich 31 potencjalnych dniach
+        for day in range(1, 32):
+            # Oblicz indeks kolumny w pełnym modelu
+            schedule_col_offset = day - 1
+            logical_index = employee_cols_count + schedule_col_offset
+
+            # Sprawdź, czy indeks jest w ogóle w zakresie (na wszelki wypadek)
+            if logical_index < model.columnCount():
+                # Jeśli dany dzień istnieje w bieżącym miesiącu, pokaż kolumnę.
+                # Jeśli nie, ukryj ją.
+                if day <= days_in_month:
+                    header.setSectionHidden(logical_index, False)
+                else:
+                    header.setSectionHidden(logical_index, True)
+        # --- KONIEC NOWEJ LOGIKI ---
+
+        # Ustawienie wysokości wierszy
+        self.table._force_sync_heights(row_height)
+
+        # Na koniec, dostosuj szerokość pierwszej tabeli
+        self.table.adjust_employees_table_width()
 
     def delete_event_from_row(self, row):
         """
@@ -3261,52 +3256,51 @@ class WorkScheduleWindow(QMainWindow):
 
     def filter_processed_data(self):
         """
-        Filtruje przetworzone dane na podstawie bieżących filtrów.
-        Zwraca przefiltrowane dane w formacie słownikowym.
-
-        Returns:
-            dict: Przefiltrowane dane
+        Filtruje przetworzone dane na podstawie wszystkich filtrów, w tym nowego filtra "Grupa".
         """
-        # Pobierz wszystkie dane z processed_data
-        all_data = self.processed_data.copy() if hasattr(self, 'processed_data') else {}
-
-        # Jeśli nie ma danych do filtrowania, zwróć pusty słownik
-        if not all_data:
+        if not hasattr(self, 'processed_data') or not self.processed_data:
             return {}
 
-        # Pobierz wybrane filtry
-        selected_wydzialy = self.wydzial_combo.get_selected_items() if hasattr(self, 'wydzial_combo') else []
-        selected_przelozeni = self.get_list_selected_items(self.przelozony_list) if hasattr(self,
-                                                                                            'przelozony_list') else []
-        selected_uzytkownicy = self.get_list_selected_items(self.uzytkownik_list) if hasattr(self,
-                                                                                             'uzytkownik_list') else []
-        selected_dtn = self.dtn_combo.get_selected_items() if hasattr(self, 'dtn_combo') else []
-        selected_role = self.rola_combo.get_selected_items() if hasattr(self, 'rola_combo') else []
-        selected_jezyki = self.jezyk_combo.get_selected_items() if hasattr(self, 'jezyk_combo') else []
-        selected_etaty = self.etat_combo.get_selected_items() if hasattr(self, 'etat_combo') else []
-        selected_scp = self.system_czasu_pracy_combo.get_selected_items() if hasattr(self,
-                                                                                     'system_czasu_pracy_combo') else []
+        # Pobierz wybór ze wszystkich filtrów
+        selected_wydzialy = set(self.wydzial_combo.get_selected_items())
+        selected_przelozeni = self.get_list_selected_items(self.przelozony_list)
+        selected_uzytkownicy = self.get_list_selected_items(self.uzytkownik_list)
+        selected_dtn = self.dtn_combo.get_selected_items()
+        selected_role = self.rola_combo.get_selected_items()
+        selected_jezyki = self.jezyk_combo.get_selected_items()
+        selected_etaty = self.etat_combo.get_selected_items()
+        selected_scp = self.system_czasu_pracy_combo.get_selected_items()
 
-        # Filtruj dane
+        # --- NOWA LOGIKA FILTROWANIA GRUP ---
+        selected_grupy = self.grupa_main_filter_combo.get_selected_items()
+        allowed_depts_from_groups = set()
+
+        if selected_grupy:
+            group_mapping = self.data_provider.get_department_to_group_mapping()
+            for group_name in selected_grupy:
+                # Rozszerz zbiór dozwolonych wydziałów o te z wybranej grupy
+                allowed_depts_from_groups.update(group_mapping.get(group_name, set()))
+
+            # Jeżeli użytkownik wybrał też konkretne wydziały, znajdź część wspólną
+            if selected_wydzialy:
+                selected_wydzialy = selected_wydzialy.intersection(allowed_depts_from_groups)
+            else:  # Jeżeli nie wybrał wydziałów, użyj tych wynikających z wyboru grupy
+                selected_wydzialy = allowed_depts_from_groups
+        # --- KONIEC NOWEJ LOGIKI ---
+
         filtered_data = {}
-        for key, data in all_data.items():
-            wydzial, przelozony, uzytkownik_dane, uzytkownik = key
+        for key, data in self.processed_data.items():
+            wydzial, przelozony, uzytkownik_dane, uzytkownik_id = key
 
-            # Pobierz wartości pól do filtrowania
-            dtn = str(data.get('dtn', ''))
-            rola_nazwa = data.get('rola_nazwa', '')
-            jezyk = data.get('jezyk', '')
-            etat = str(data.get('etat', '')) if data.get('etat') is not None else ''
-            system_czasu_pracy = data.get('system_czasu_pracy', '')
-            # Sprawdź, czy dane spełniają kryteria filtrowania
+            # Warunki filtrowania - teraz selected_wydzialy jest już odpowiednio zawężone
             if (not selected_wydzialy or wydzial in selected_wydzialy) and \
                     (not selected_przelozeni or przelozony in selected_przelozeni) and \
                     (not selected_uzytkownicy or str(uzytkownik_dane) in selected_uzytkownicy) and \
-                    (not selected_dtn or dtn in selected_dtn) and \
-                    (not selected_role or rola_nazwa in selected_role) and \
-                    (not selected_jezyki or jezyk in selected_jezyki) and \
-                    (not selected_etaty or etat in selected_etaty):
-                # Dodaj dane do przefiltrowanych wyników
+                    (not selected_dtn or str(data.get('dtn', '')) in selected_dtn) and \
+                    (not selected_role or data.get('rola_nazwa', '') in selected_role) and \
+                    (not selected_jezyki or data.get('jezyk', '') in selected_jezyki) and \
+                    (not selected_etaty or str(data.get('etat', '')) in selected_etaty) and \
+                    (not selected_scp or data.get('system_czasu_pracy', '') in selected_scp):
                 filtered_data[key] = data
 
         return filtered_data
@@ -3696,7 +3690,7 @@ class WorkScheduleWindow(QMainWindow):
             self.events_table.viewport().update()
 
         debug_print("Zakończono aplikowanie danych")
-        self._set_schedule_columns_width()
+        self._apply_dynamic_sizes()
 
     def clear_events_cache(self, year, month):
         """
@@ -4248,95 +4242,69 @@ class WorkScheduleWindow(QMainWindow):
         return selected
 
     def update_filters(self):
-        """
-        LEKKO ZMODYFIKOWANA: processed_data przychodzi gotowe
-        """
+        """Wypełnia wszystkie filtry na podstawie załadowanych danych."""
         try:
-            debug_print("Rozpoczynam aktualizację filtrów...")
-
-            # Sprawdź czy mamy processed_data (już gotowe z DataProvider)
             if not hasattr(self, 'processed_data') or not self.processed_data:
-                debug_print("Brak processed_data - pomijam aktualizację filtrów")
                 return
 
-            # Zapamiętaj bieżące zaznaczenia
-            selected_wydzialy = self.wydzial_combo.get_selected_items() if hasattr(self, 'wydzial_combo') else []
-            selected_dtn = self.dtn_combo.get_selected_items() if hasattr(self, 'dtn_combo') else []
-            selected_role = self.rola_combo.get_selected_items() if hasattr(self, 'rola_combo') else []
-            selected_jezyki = self.jezyk_combo.get_selected_items() if hasattr(self, 'jezyk_combo') else []
-            selected_etaty = self.etat_combo.get_selected_items() if hasattr(self, 'etat_combo') else []
-            selected_scp = self.system_czasu_pracy_combo.get_selected_items() if hasattr(self, 'system_czasu_pracy_combo') else []
-            selected_przelozeni = self.get_list_selected_items(self.przelozony_list)
-            selected_uzytkownicy = self.get_list_selected_items(self.uzytkownik_list)
+            # --- ZMIANA: Logika dla nowego filtra "Grupa" ---
+            if hasattr(self, 'grupa_main_filter_combo'):
+                selected_grupy = self.grupa_main_filter_combo.get_selected_items()
+                group_mapping = self.data_provider.get_department_to_group_mapping()
+                # Grupy do wyboru to klucze ze słownika mapowania
+                self.grupa_main_filter_combo.add_items(sorted(group_mapping.keys()))
+                self.grupa_main_filter_combo.select_items(selected_grupy)
+            # --- KONIEC ZMIANY ---
 
-            # ZMIANA: Korzystaj z gotowego processed_data zamiast budować je od nowa
+            # Istniejąca logika dla pozostałych filtrów (bez zmian)
             if hasattr(self, 'wydzial_combo'):
-                wydzialy = set()
-                for key in self.processed_data.keys():
-                    wydzial = key[0]
-                    if wydzial:
-                        wydzialy.add(wydzial)
-                self.wydzial_combo.add_items(sorted(wydzialy))
+                selected_wydzialy = self.wydzial_combo.get_selected_items()
+                wydzialy = sorted(set(key[0] for key in self.processed_data.keys() if key[0]))
+                self.wydzial_combo.add_items(wydzialy)
                 self.wydzial_combo.select_items(selected_wydzialy)
-                debug_print(f"Dodano {len(wydzialy)} wydziałów")
 
-            # Reszta logiki bez zmian - wszystkie pozostałe filtry
+            # ... reszta metody pozostaje bez zmian ...
             if hasattr(self, 'dtn_combo'):
-                dtn_values = set()
-                for _, data in self.processed_data.items():
-                    dtn = str(data.get('dtn', ''))
-                    if dtn:
-                        dtn_values.add(dtn)
-                self.dtn_combo.add_items(sorted(dtn_values))
+                selected_dtn = self.dtn_combo.get_selected_items()
+                dtn_values = sorted(
+                    set(str(data.get('dtn', '')) for data in self.processed_data.values() if data.get('dtn', '')))
+                self.dtn_combo.add_items(dtn_values)
                 self.dtn_combo.select_items(selected_dtn)
 
             if hasattr(self, 'rola_combo'):
-                role = set()
-                for _, data in self.processed_data.items():
-                    rola = data.get('rola_nazwa', '')
-                    if rola:
-                        role.add(rola)
-                self.rola_combo.add_items(sorted(role))
+                selected_role = self.rola_combo.get_selected_items()
+                role = sorted(set(
+                    data.get('rola_nazwa', '') for data in self.processed_data.values() if data.get('rola_nazwa', '')))
+                self.rola_combo.add_items(role)
                 self.rola_combo.select_items(selected_role)
 
             if hasattr(self, 'jezyk_combo'):
-                jezyki = set()
-                for _, data in self.processed_data.items():
-                    jezyk = data.get('jezyk', '')
-                    if jezyk:
-                        jezyki.add(jezyk)
-                self.jezyk_combo.add_items(sorted(jezyki))
+                selected_jezyki = self.jezyk_combo.get_selected_items()
+                jezyki = sorted(
+                    set(data.get('jezyk', '') for data in self.processed_data.values() if data.get('jezyk', '')))
+                self.jezyk_combo.add_items(jezyki)
                 self.jezyk_combo.select_items(selected_jezyki)
 
             if hasattr(self, 'etat_combo'):
-                etaty = set()
-                for _, data in self.processed_data.items():
-                    etat = str(data.get('etat', '')) if data.get('etat') is not None else ''
-                    if etat:
-                        etaty.add(etat)
+                selected_etaty = self.etat_combo.get_selected_items()
+                etaty = set(str(data.get('etat', '')) for data in self.processed_data.values() if
+                            data.get('etat') is not None and str(data.get('etat', '')))
                 sorted_etaty = sorted(etaty, key=lambda x: float(x) if x.replace('.', '', 1).isdigit() else 0)
                 self.etat_combo.add_items(sorted_etaty)
                 self.etat_combo.select_items(selected_etaty)
 
             if hasattr(self, 'system_czasu_pracy_combo'):
-                scp_values = set()
-                for _, data in self.processed_data.items():
-                    scp = data.get('system_czasu_pracy', '')
-                    if scp:
-                        scp_values.add(scp)
-                self.system_czasu_pracy_combo.add_items(sorted(scp_values))
-                self.system_czasu_pracy_combo.select_items(selected_scp)  # selected_scp zdefiniujemy w kolejnym kroku
+                selected_scp = self.system_czasu_pracy_combo.get_selected_items()
+                scp_values = sorted(set(data.get('system_czasu_pracy', '') for data in self.processed_data.values() if
+                                        data.get('system_czasu_pracy', '')))
+                self.system_czasu_pracy_combo.add_items(scp_values)
+                self.system_czasu_pracy_combo.select_items(selected_scp)
 
-            # Aktualizacja przełożonych i użytkowników
-            self.update_przelozony_filter(selected_przelozeni)
-            self.update_uzytkownik_filter(selected_uzytkownicy)
-
-            debug_print("Zakończono aktualizację filtrów")
+            self.update_przelozony_filter()
+            self.update_uzytkownik_filter()
 
         except Exception as e:
-            import traceback
-            log_error(f"Błąd podczas aktualizacji filtrów: {e}")
-            traceback.print_exc()
+            log_error(f"Błąd podczas aktualizacji filtrów: {e}", exception=e)
 
     def update_przelozony_filter(self, selected_przelozeni=None):
         """
@@ -4449,7 +4417,7 @@ class WorkScheduleWindow(QMainWindow):
 
             # Aktualizuj model - to wywoła zoptymalizowaną metodę update_data
             self.schedule_model.update_data(schedule_data, year, month)
-            self._set_schedule_columns_width()
+            self._apply_dynamic_sizes()
         else:
             # Jeśli rok i miesiąc nie uległy zmianie, tylko zastosuj filtry
             filtered_data = self.filter_processed_data()
@@ -6654,7 +6622,7 @@ class WorkScheduleWindow(QMainWindow):
             self.staffing_details_win.set_current_theme(is_dark)
 
         if hasattr(self, 'table'):
-            self._set_schedule_columns_width()
+            self._apply_dynamic_sizes()
             self.table.adjust_employees_table_width()
 
     def closeEvent(self, event):
