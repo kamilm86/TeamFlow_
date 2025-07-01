@@ -268,13 +268,15 @@ class SplitTableView(QWidget):
         # Wymuszamy ponowną synchronizację wysokości z opóźnieniem
         self._sync_timer.start(50)
 
-    def _force_sync_heights(self):
-        """UPROSZCZONA METODA: Wymusza synchronizację wysokości wierszy"""
+    def _force_sync_heights(self, row_height=25):
+        """
+        UPROSZCZONA METODA: Wymusza synchronizację wysokości wierszy.
+        WERSJA POPRAWIONA: Przyjmuje wysokość jako parametr.
+        """
         if not self.employees_view.model():
             return
 
-        # Ustaw jednolitą wysokość dla wszystkich wierszy
-        row_height = 25
+        # Ustaw jednolitą wysokość dla wszystkich wierszy na podstawie parametru
         row_count = self.employees_view.model().rowCount()
 
         for row in range(row_count):
