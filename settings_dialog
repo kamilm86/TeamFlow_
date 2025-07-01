@@ -18,7 +18,7 @@ class AppSettingsDialog(QDialog):
         self.current_settings = settings if settings else {}
 
         self.setWindowTitle("Ustawienia")
-        self.setMinimumWidth(450)  # Zwiększono szerokość, aby pomieścić nowe opcje
+        self.setMinimumWidth(450)
 
         self.setup_ui()
         self.apply_dialog_theme()
@@ -28,11 +28,8 @@ class AppSettingsDialog(QDialog):
         """Tworzy i układa wszystkie elementy interfejsu w dialogu."""
         main_layout = QVBoxLayout(self)
 
-        # Istniejące grupy ustawień
         theme_group = self._create_theme_group()
         import_group = self._create_import_group()
-
-        # === NOWA GRUPA DLA IKON W GRAFIKU ===
         display_options_group = self._create_display_options_group()
 
         self.save_settings_checkbox = QCheckBox("Zapamiętaj ustawienia na stałe")
@@ -47,12 +44,12 @@ class AppSettingsDialog(QDialog):
 
         main_layout.addWidget(theme_group)
         main_layout.addWidget(import_group)
-        main_layout.addWidget(display_options_group)  # Dodanie nowej grupy do layoutu
+        main_layout.addWidget(display_options_group)
         main_layout.addLayout(buttons_layout)
         main_layout.addWidget(self.save_settings_checkbox, 0, Qt.AlignRight)
 
-        # Wczytaj stan do nowo utworzonych kontrolek
         self._load_settings_to_widgets()
+
 
     def _create_theme_group(self):
         """Tworzy grupę kontrolek do zmiany motywu i czcionki."""
@@ -65,7 +62,13 @@ class AppSettingsDialog(QDialog):
         layout.addWidget(self.dark_theme_radio, 0, 0)
         layout.addWidget(self.light_theme_radio, 0, 1)
 
-        self.font_combo = QFontComboBox()
+        self.font_combo = QComboBox()
+        # Tworzymy wyselekcjonowaną listę czcionek
+        preferred_fonts = [
+            "Segoe UI", "Calibri", "Arial", "Tahoma", "Verdana", "Trebuchet MS"
+        ]
+        self.font_combo.addItems(preferred_fonts)
+
         layout.addWidget(QLabel("Czcionka:"), 1, 0)
         layout.addWidget(self.font_combo, 1, 1)
 
@@ -132,7 +135,11 @@ class AppSettingsDialog(QDialog):
             self.dark_theme_radio.setChecked(True)
         else:
             self.light_theme_radio.setChecked(True)
-        self.font_combo.setCurrentFont(QFont(self.current_settings.get('font_family', 'Arial')))
+
+        # Domyślną czcionką jest teraz 'Segoe UI', standardowa dla nowoczesnych interfejsów
+        default_font = self.current_settings.get('font_family', 'Segoe UI')
+        self.font_combo.setCurrentText(default_font)
+
         self.font_size_spin.setValue(self.current_settings.get('font_size', 9))
 
         # Ustawienia importu
@@ -154,14 +161,14 @@ class AppSettingsDialog(QDialog):
 
     def get_current_settings(self):
         """Zbiera wszystkie ustawienia z dialogu i zwraca jako słownik."""
+        font_family = self.font_combo.currentText()
         return {
             'theme': 'dark' if self.dark_theme_radio.isChecked() else 'light',
-            'font_family': self.font_combo.currentFont().family(),
+            'font_family': font_family,
             'font_size': self.font_size_spin.value(),
             'import_grupa': self.grupa_combo.currentData(),
             'import_funkcja': self.funkcja_combo.currentData(),
             'save_to_db': self.save_settings_checkbox.isChecked(),
-            # Nowe ustawienia
             'show_special_symbol': self.show_special_symbol_check.isChecked(),
             'show_location_symbol': self.show_location_symbol_check.isChecked(),
             'special_symbol_position': 'top_right' if self.special_symbol_pos_combo.currentIndex() == 1 else 'top_left',
@@ -174,13 +181,13 @@ class AppSettingsDialog(QDialog):
         self.cancel_button.clicked.connect(self.reject)
 
         self.dark_theme_radio.toggled.connect(self._emit_live_preview_changes)
-        self.font_combo.currentFontChanged.connect(self._emit_live_preview_changes)
+        self.font_combo.currentTextChanged.connect(self._emit_live_preview_changes)
         self.font_size_spin.valueChanged.connect(self._emit_live_preview_changes)
 
     def _emit_live_preview_changes(self):
         """Emituje sygnał ze zmianami motywu, aby główne okno mogło je pokazać na żywo."""
         selected_theme = 'dark' if self.dark_theme_radio.isChecked() else 'light'
-        font_family = self.font_combo.currentFont().family()
+        font_family = self.font_combo.currentText()
         font_size = self.font_size_spin.value()
 
         self.live_theme_changed.emit(selected_theme, font_family, font_size)
@@ -189,20 +196,15 @@ class AppSettingsDialog(QDialog):
     def apply_dialog_theme(self):
         """Stosuje motyw dla samego okna dialogowego."""
         theme_to_apply = 'dark' if self.dark_theme_radio.isChecked() else 'light'
-
         self.setStyleSheet(AppStyles.get_dialog_style(theme_to_apply))
-
         button_style = AppStyles.get_button_style(theme_to_apply)
         for button in self.findChildren(QPushButton):
             button.setStyleSheet(button_style)
-
         checkbox_style = AppStyles.get_checkbox_style(theme_to_apply)
         for checkbox in self.findChildren(QCheckBox):
             checkbox.setStyleSheet(checkbox_style)
-
         combobox_style = AppStyles.get_combobox_style(theme_to_apply)
         for combo in self.findChildren(QComboBox):
             combo.setStyleSheet(combobox_style)
-
         for spinbox in self.findChildren(QSpinBox):
             spinbox.setStyleSheet(AppStyles.get_line_edit_style(theme_to_apply))
