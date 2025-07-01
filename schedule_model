@@ -136,7 +136,7 @@ class ScheduleTableModel(QAbstractTableModel):
                         working_days = self._working_days if hasattr(self,
                                                                      '_working_days') and self._working_days > 0 else 21
                         balance = (etat * working_days) - total_hours
-                        return f"{balance:.1f}"
+                        return str(int(round(balance)))
                     except (ValueError, TypeError):
                         return "0.0"
                 elif self._show_comment_column and schedule_col == 31 + 2:
