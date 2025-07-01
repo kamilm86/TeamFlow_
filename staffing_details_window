@@ -654,63 +654,50 @@ class StaffingDetailsWindow(QDialog):
 
     def load_and_display_data(self):
         # --- KROK 1: POBRANIE WSPÓLNYCH DANYCH BAZOWYCH ---
-        # Najpierw pobieramy wszystkie dane, od których zależą wszystkie zakładki.
         self._filtered_schedule_data = self.parent_widget.filter_processed_data()
         all_events = self.data_provider.get_events_data(self._year, self._month, self._grupa, self._funkcja)
-        debug_print(
-            f"StaffingDetailsWindow: Pobrane dane bazowe - {len(self._filtered_schedule_data)} pracowników do analizy.")
-
-        # --- KROK 2: WYKONANIE WSZYSTKICH OBLICZEŃ DLA ZAKŁADEK ---
-
-        # Obliczenia dla "Prognoza vs. Rzeczywistość"
-        actual_staffing_data = self._calculate_actual_staffing_matrix()
         raw_forecast_data = self.data_provider.get_forecast_data(self._year, self._month)
+
+        # --- KROK 2: OBLICZENIA DLA ZAKŁADKI "PROGNOZA" ---
+        actual_staffing_data = self._calculate_actual_staffing_matrix()
         self._populate_forecast_filters(raw_forecast_data, actual_staffing_data)
+
         filtered_forecast_data = self._filter_forecast_data(raw_forecast_data)
         forecast_matrix = self._calculate_matrix_from_forecast(filtered_forecast_data, 'Prognoza')
+
         selected_group_name = self.forecast_group_combo.currentText()
-        actual_matrix = actual_staffing_data.get(selected_group_name, [[0.0] * self._days_in_month for _ in range(24)])
+        # Specjalna obsługa dla opcji "-Wszystkie-", która porównuje do grupy 'TOTAL'
+        group_to_compare = 'TOTAL' if selected_group_name == "-Wszystkie-" else selected_group_name
+        actual_matrix = actual_staffing_data.get(group_to_compare, [[0.0] * self._days_in_month for _ in range(24)])
+
         view_mode = self.forecast_view_mode_combo.currentData()
-
-        # Obliczenia dla "Obsada Godzinowa" (z uwzględnieniem filtra)
-        hourly_option = self.hourly_staffing_options_combo.currentData()
-        hourly_staffing_data = self._calculate_hourly_staffing(self._filtered_schedule_data, all_events, hourly_option)
-
-        # Obliczenia dla "Obsada Dzienna" (z uwzględnieniem filtra)
-        daily_option = self.daily_staffing_options_combo.currentData()
-        daily_staffing_data = self._calculate_daily_staffing(self._filtered_schedule_data, all_events, daily_option)
-
-        # Obliczenia dla pozostałych zakładek
-        overtime_data = self._calculate_overtime_summary_detailed(self._filtered_schedule_data, all_events)
-        absence_data = self._calculate_absence_analysis(self._filtered_schedule_data)
-        flexibility_data = self._calculate_flexibility_analysis(self._filtered_schedule_data)
-        counts, rbh = self._calculate_special_symbols_summary(self._filtered_schedule_data)
-
-        # --- KROK 3: AKTUALIZACJA WSZYSTKICH MODELI I WIDOKÓW ---
-
-        # Aktualizacja modelu i wykresu "Prognoza vs. Rzeczywistość"
         self._forecast_model.update_data(self._year, self._month, forecast_matrix, actual_matrix, view_mode)
 
-        # Aktualizacja modelu "Obsada Godzinowa"
+        # --- KROK 3: OBLICZENIA I AKTUALIZACJA POZOSTAŁYCH ZAKŁADEK ---
+        hourly_option = self.hourly_staffing_options_combo.currentData()
+        hourly_staffing_data = self._calculate_hourly_staffing(self._filtered_schedule_data, all_events, hourly_option)
         self._hourly_staffing_model.update_data(hourly_staffing_data, self._year, self._month)
 
-        # Aktualizacja modelu i wykresu "Obsada Dzienna"
+        daily_option = self.daily_staffing_options_combo.currentData()
+        daily_staffing_data = self._calculate_daily_staffing(self._filtered_schedule_data, all_events, daily_option)
         self._daily_staffing_model.update_data(self._year, self._month, daily_staffing_data)
         self._update_daily_staffing_chart(daily_staffing_data)
 
-        # Aktualizacja pozostałych modeli i wykresów
+        overtime_data = self._calculate_overtime_summary_detailed(self._filtered_schedule_data, all_events)
         self._overtime_model.update_data(overtime_data)
         self._update_overtime_charts(overtime_data)
 
+        absence_data = self._calculate_absence_analysis(self._filtered_schedule_data)
         self._update_absence_tab(absence_data)
 
+        flexibility_data = self._calculate_flexibility_analysis(self._filtered_schedule_data)
         self._flexibility_model.update_data(flexibility_data['table_data'])
         self._update_flexibility_chart(flexibility_data['chart_data'])
 
+        counts, rbh = self._calculate_special_symbols_summary(self._filtered_schedule_data)
         self._symbols_count_model.update_data(self._year, self._month, counts)
         self._symbols_rbh_model.update_data(self._year, self._month, rbh)
 
-        # Na koniec dostosuj szerokość kolumn we wszystkich tabelach
         self._adjust_columns()
 
     def _get_events_duration_per_hour(self, all_events: list) -> dict:
@@ -762,75 +749,56 @@ class StaffingDetailsWindow(QDialog):
 
     def _calculate_actual_staffing_matrix(self) -> dict:
         """
-        Oblicza macierz obsady rzeczywistej na podstawie danych grafiku i zdarzeń,
-        a następnie agreguje ją do zdefiniowanych grup.
-        WERSJA POPRAWIONA: Uwzględnia pole 'korekta' w czasie pracy.
+        Oblicza macierz obsady rzeczywistej, uwzględniając pole 'korekta'.
         """
-        # --- ETAP 1: Przygotowanie danych ---
         schedule_data = self.parent_widget.filter_processed_data()
         all_events = self.data_provider.get_events_data(self._year, self._month, self.parent_widget.import_grupa,
                                                         self.parent_widget.import_funkcja)
         events_map = self._get_events_duration_per_hour(all_events)
-
         days_in_month = self._days_in_month
-
         granular_staffing = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
 
-        # --- ETAP 2: Zliczanie dostępnych konsultantów godzina po godzinie ---
         for user_key, user_data in schedule_data.items():
             user_id = user_key[3]
             user_info = {
-                'WydzialGrafik': user_key[0],
-                'RolaNazwa': user_data.get('rola_nazwa', ''),
+                'WydzialGrafik': user_key[0], 'RolaNazwa': user_data.get('rola_nazwa', ''),
                 'JęzykNazwa': user_data.get('jezyk', ''),
                 'SystemCzasuPracyNazwa': user_data.get('system_czasu_pracy', '')
             }
-
-            # --- POCZĄTEK ZMIANY: Pobranie korekty ---
-            # Pobieramy korektę dla danego pracownika. Domyślnie 0.
             try:
                 korekta = float(user_data.get('korekta', 0.0) or 0.0)
             except (ValueError, TypeError):
                 korekta = 0.0
-            # --- KONIEC ZMIANY ---
 
             for day, day_info in user_data.get('days', {}).items():
                 parsed_symbol = parse_symbol(day_info.get('symbol', ''))
                 start_hour = parsed_symbol.get('start_hour')
                 base_work_hours = parsed_symbol.get('work_hours')
 
-                # --- POCZĄTEK ZMIANY: Zastosowanie korekty ---
                 final_work_hours = None
                 if base_work_hours is not None:
-                    # Dodajemy korektę do bazowych godzin pracy
                     final_work_hours = base_work_hours + korekta
-                # --- KONIEC ZMIANY ---
 
-                # Sprawdzamy, czy pracownik w ogóle pracuje w danym dniu (po korekcie)
                 if start_hour is None or final_work_hours is None or final_work_hours <= 0:
                     continue
 
-                # Iterujemy po każdej godzinie pracy (już z uwzględnieniem korekty)
                 for h in range(max(0, int(final_work_hours))):
                     current_hour = (start_hour + h) % 24
-
                     event_minutes = events_map.get(user_id, {}).get(day, {}).get(current_hour, 0)
                     if event_minutes > 30:
                         continue
 
                     grouping_key = (
-                        user_info['WydzialGrafik'],
-                        user_info['RolaNazwa'],
-                        user_info['JęzykNazwa'],
+                        user_info['WydzialGrafik'], user_info['RolaNazwa'], user_info['JęzykNazwa'],
                         user_info['SystemCzasuPracyNazwa'],
                         parsed_symbol.get('location') or user_data.get('lokalizacja_domyslna', 'h')
                     )
                     granular_staffing[day][current_hour][grouping_key] += 1
 
-        # --- ETAP 3: Agregacja do finalnych grup (bez zmian) ---
+        # --- ZMIANA: Dodano brakujące nazwy grup 'TOTAL VOICE' i 'WELCOMER VOICE' ---
         final_group_names = [
             "MASS+WELCAMER+GOLD", "NUMEN+FIRMA", "CZAT", "WELCOMER", "GOLD",
-            "NUMEN+FIRMA VOICE", "WELCOMER VOICE", "TOTAL", "TOTAL VOICE"
+            "NUMEN+FIRMA_VOICE", "WELCOMER VOICE", "TOTAL", "TOTAL VOICE"
         ]
         aggregated_results = {name: [[0.0] * days_in_month for _ in range(24)] for name in final_group_names}
 
@@ -838,7 +806,6 @@ class StaffingDetailsWindow(QDialog):
             for hour in range(24):
                 if day not in granular_staffing or hour not in granular_staffing[day]:
                     continue
-
                 sums = defaultdict(float)
                 for grouping_key, count in granular_staffing[day][hour].items():
                     wydzial, rola, jezyk, system_pracy, lokalizacja = grouping_key
@@ -866,7 +833,7 @@ class StaffingDetailsWindow(QDialog):
                 aggregated_results["CZAT"][hour][day_idx] = sums['CZAT_A'] + sums['CZAT_B'] + sums['CZAT_C']
                 aggregated_results["WELCOMER"][hour][day_idx] = sums['WELCOMER']
                 aggregated_results["GOLD"][hour][day_idx] = sums['GOLD']
-                aggregated_results["NUMEN+FIRMA VOICE"][hour][day_idx] = sums['NUMEN_FIRMA_VOICE']
+                aggregated_results["NUMEN+FIRMA_VOICE"][hour][day_idx] = sums['NUMEN_FIRMA_VOICE']
                 aggregated_results["WELCOMER VOICE"][hour][day_idx] = sums['WELCOMER_VOICE']
 
         return aggregated_results
@@ -992,57 +959,28 @@ class StaffingDetailsWindow(QDialog):
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(5, 5, 5, 5)
 
-        # Użyjemy siatki (grid) dla lepszego ułożenia filtrów
-        options_layout = QGridLayout()
-
-        # Filtry - wiersz 1
+        options_layout = QHBoxLayout()
+        options_layout.addWidget(QLabel("Grupa:"))
         self.forecast_group_combo = QComboBox()
-        self.forecast_group_combo.setMinimumWidth(150)
+        self.forecast_group_combo.setMinimumWidth(200)
+        options_layout.addWidget(self.forecast_group_combo)
 
-        self.forecast_wydzial_combo = QComboBox()
-        self.forecast_wydzial_combo.setMinimumWidth(150)
+        options_layout.addSpacing(20)
 
-        self.forecast_rola_combo = QComboBox()
-        self.forecast_rola_combo.setMinimumWidth(120)
-
-        options_layout.addWidget(QLabel("Grupa:"), 0, 0)
-        options_layout.addWidget(self.forecast_group_combo, 0, 1)
-        options_layout.addWidget(QLabel("Wydział:"), 0, 2)
-        options_layout.addWidget(self.forecast_wydzial_combo, 0, 3)
-        options_layout.addWidget(QLabel("Rola:"), 0, 4)
-        options_layout.addWidget(self.forecast_rola_combo, 0, 5)
-
-        # Filtry - wiersz 2
-        self.forecast_jezyk_combo = QComboBox()
-        self.forecast_system_pracy_combo = QComboBox()
-        self.forecast_lokalizacja_combo = QComboBox()
-
-        options_layout.addWidget(QLabel("Język:"), 1, 0)
-        options_layout.addWidget(self.forecast_jezyk_combo, 1, 1)
-        options_layout.addWidget(QLabel("System Pracy:"), 1, 2)
-        options_layout.addWidget(self.forecast_system_pracy_combo, 1, 3)
-        options_layout.addWidget(QLabel("Lokalizacja:"), 1, 4)
-        options_layout.addWidget(self.forecast_lokalizacja_combo, 1, 5)
-
-        # Widok (Prognoza, Różnica, itp.)
+        options_layout.addWidget(QLabel("Widok:"))
         self.forecast_view_mode_combo = QComboBox()
         self.forecast_view_mode_combo.addItem("Pokaż: Prognozę", "forecast")
         self.forecast_view_mode_combo.addItem("Pokaż: Obsadę rzeczywistą", "actual")
         self.forecast_view_mode_combo.addItem("Pokaż: Różnicę (Obsada - Prog.)", "diff")
         self.forecast_view_mode_combo.addItem("Pokaż: Pokrycie (%)", "coverage")
+        options_layout.addWidget(self.forecast_view_mode_combo)
 
-        options_layout.addWidget(QLabel("Widok:"), 0, 6)
-        options_layout.addWidget(self.forecast_view_mode_combo, 0, 7)
-        options_layout.setColumnStretch(8, 1)  # Dodaj pustą przestrzeń na końcu
+        options_layout.addStretch()
 
-        # Połącz sygnały wszystkich filtrów z jedną funkcją odświeżającą
-        for combo in [self.forecast_group_combo, self.forecast_wydzial_combo, self.forecast_rola_combo,
-                      self.forecast_jezyk_combo, self.forecast_system_pracy_combo,
-                      self.forecast_lokalizacja_combo, self.forecast_view_mode_combo]:
-            combo.currentIndexChanged.connect(self.load_and_display_data)
+        self.forecast_group_combo.currentIndexChanged.connect(self.load_and_display_data)
+        self.forecast_view_mode_combo.currentIndexChanged.connect(self.load_and_display_data)
 
         layout.addLayout(options_layout)
-
         self.forecast_table_view = QTableView()
         self._forecast_model = ForecastComparisonTableModel(self._year, self._month, self)
         self.forecast_table_view.setModel(self._forecast_model)
@@ -1050,7 +988,6 @@ class StaffingDetailsWindow(QDialog):
         self.forecast_table_view.verticalHeader().setDefaultSectionSize(22)
         self.forecast_table_view.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         self.forecast_table_view.setEditTriggers(QAbstractItemView.NoEditTriggers)
-
         layout.addWidget(self.forecast_table_view)
         self.tabs.addTab(widget, "Prognoza vs. Rzeczywistość")
 
@@ -1571,83 +1508,45 @@ class StaffingDetailsWindow(QDialog):
                         continue
         return {dept: [daily_data.get(d, 0) for d in range(days_in_month)] for dept, daily_data in summary.items()}
 
-    def _populate_forecast_filters(self, raw_data, actual_staffing_groups):  # Dodano drugi argument
-        """Wypełnia ComboBoxy z filtrami na podstawie dostępnych danych."""
-        # --- ZMIANA: Logika dla forecast_group_combo ---
-        group_combo = self.forecast_group_combo
-        group_combo.blockSignals(True)
-        current_group = group_combo.currentText()
-        group_combo.clear()
+    def _populate_forecast_filters(self, raw_data, actual_staffing_groups):
+        """Wypełnia ComboBox 'Grupa' i ustawia 'TOTAL' jako domyślny."""
+        combo = self.forecast_group_combo
+        combo.blockSignals(True)
+        current_selection = combo.currentText()
+        combo.clear()
 
-        # Wypełnij listę nazwami zagregowanych grup
-        if actual_staffing_groups:
-            group_combo.addItems(sorted(actual_staffing_groups.keys()))
+        items = []
+        if raw_data:
+            items = sorted(list(set(row.get('GrupaNazwa') for row in raw_data if row.get('GrupaNazwa'))))
 
-        index = group_combo.findText(current_group)
-        group_combo.setCurrentIndex(index if index != -1 else 0)
-        group_combo.blockSignals(False)
-        # --- KONIEC ZMIANY ---
+        # Logika zapewniająca, że 'TOTAL' jest pierwszy na liście
+        if "TOTAL" in items:
+            items.remove("TOTAL")
+            final_items = ["TOTAL"] + items
+        else:
+            final_items = items
 
+        combo.addItems(final_items)
 
-        filters_config = {
-            'GrupaNazwa': self.forecast_group_combo,
-            'WydzialGrafik': self.forecast_wydzial_combo,
-            'RolaNazwa': self.forecast_rola_combo,
-            'JezykNazwa': self.forecast_jezyk_combo,
-            'SystemCzasuPracyNazwa': self.forecast_system_pracy_combo,
-            'Lokalizacja': self.forecast_lokalizacja_combo
-        }
+        # Ustaw wybór - jeśli poprzedni istniał, przywróć go, w przeciwnym razie ustaw na pierwszy (TOTAL)
+        index = combo.findText(current_selection)
+        combo.setCurrentIndex(index if index != -1 and current_selection else 0)
 
-        for col_name, combo in filters_config.items():
-            combo.blockSignals(True)
-            current_selection = combo.currentText()
-            combo.clear()
-
-            items = sorted(list(set(row.get(col_name) for row in raw_data if row.get(col_name))))
-
-            # --- ZMODYFIKOWANA LOGIKA DLA GRUPY ---
-            if col_name == 'GrupaNazwa':
-                # Zawsze dodaj "TOTAL" jako pierwszą, gwarantowaną opcję
-                combo.addItem("TOTAL")
-
-                # Dodaj pozostałe grupy, odfiltrowując "TOTAL", aby uniknąć duplikatu
-                other_items = [item for item in items if item != "TOTAL"]
-                combo.addItems(other_items)
-            else:
-                # Dla innych filtrów zachowaj "-Wszystkie-"
-                combo.addItem("-Wszystkie-")
-                combo.addItems(items)
-
-            # Przywróć poprzedni wybór, jeśli nadal istnieje
-            index = combo.findText(current_selection)
-            if index != -1:
-                combo.setCurrentIndex(index)
-            else:
-                combo.setCurrentIndex(0)
-
-            combo.blockSignals(False)
+        combo.blockSignals(False)
 
     def _filter_forecast_data(self, raw_data):
-        """Filtruje surowe dane prognozy na podstawie wyboru w ComboBoxach."""
-        filters = {
-            'GrupaNazwa': self.forecast_group_combo.currentText(),
-            'WydzialGrafik': self.forecast_wydzial_combo.currentText(),
-            'RolaNazwa': self.forecast_rola_combo.currentText(),
-            'JezykNazwa': self.forecast_jezyk_combo.currentText(),
-            'SystemCzasuPracyNazwa': self.forecast_system_pracy_combo.currentText(),
-            'Lokalizacja': self.forecast_lokalizacja_combo.currentText()
-        }
+        """Filtruje dane prognozy na podstawie wyboru w ComboBoxie 'Grupa'."""
+        selected_group = self.forecast_group_combo.currentText()
 
         if not raw_data:
             return []
 
-        filtered_data = raw_data
+        # W odróżnieniu od filtra w oknie głównym, tu nie ma opcji "-Wszystkie-"
+        # więc zawsze filtrujemy po wybranej grupie
+        if not selected_group:
+            return []  # Zwróć pustą listę, jeśli nic nie jest wybrane
 
-        for col_name, selected_value in filters.items():
-            if selected_value and selected_value != "-Wszystkie-":
-                filtered_data = [row for row in filtered_data if row.get(col_name) == selected_value]
-
-        return filtered_data
+        return [row for row in raw_data if row.get('GrupaNazwa') == selected_group]
 
     def _calculate_special_symbols_summary(self, schedule_data):
         summary = defaultdict(lambda: defaultdict(lambda: {'count': 0, 'hours': 0.0}))
