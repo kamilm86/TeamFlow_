@@ -19,8 +19,13 @@ import datetime as dt
 from debug_utils import log_error, debug_print
 from symbol_parser import parse_symbol
 
+
 class HourlyStaffingTableModel(QAbstractTableModel):
-    """Ulepszony model danych dla tabeli z obsadą godzinową z wierszem sumy."""
+    """
+    Ulepszony model danych dla tabeli z obsadą godzinową,
+    który dynamicznie zmienia kolory w zależności od wybranego widoku.
+    """
+
     def __init__(self, year, month, parent=None):
         super().__init__(parent)
         self._year, self._month = year, month
@@ -32,6 +37,14 @@ class HourlyStaffingTableModel(QAbstractTableModel):
             self._days_in_month = 31
         self._is_dark_theme = parent.is_dark_theme if hasattr(parent, 'is_dark_theme') else False
         self._daily_totals = [0.0] * self._days_in_month
+        # ZMIANA: Dodajemy atrybut przechowujący aktualny tryb widoku
+        self._view_option = "all"
+
+    # NOWA METODA: Pozwala na ustawienie trybu widoku z zewnątrz
+    def set_view_option(self, option: str):
+        """Ustawia tryb widoku (np. 'all', 'overtime_only') i odświeża tabelę."""
+        self._view_option = option
+        self.layoutChanged.emit()
 
     def set_theme(self, is_dark_theme):
         if self._is_dark_theme != is_dark_theme:
@@ -48,9 +61,11 @@ class HourlyStaffingTableModel(QAbstractTableModel):
         if self._data:
             for row_data in self._data:
                 if row_data:
-                    max_val = max(max_val, max(row_data))
+                    valid_row_data = [x for x in row_data if x is not None]
+                    if valid_row_data:
+                        max_val = max(max_val, max(valid_row_data))
                     for col_idx, value in enumerate(row_data):
-                        if col_idx < len(self._daily_totals):
+                        if col_idx < len(self._daily_totals) and value is not None:
                             self._daily_totals[col_idx] += value
         self._max_value = max_val if max_val > 0 else 1.0
         self.endResetModel()
@@ -69,37 +84,50 @@ class HourlyStaffingTableModel(QAbstractTableModel):
         if is_total_row:
             if role == Qt.DisplayRole:
                 total = self._daily_totals[col]
-                # ZMIANA: Wyświetlanie jako liczba całkowita
-                return str(int(round(total))) if total > 0 else ""
+                return str(int(round(total))) if total != 0 else ""
             if role == Qt.FontRole:
-                font = QFont(); font.setBold(True); return font
+                font = QFont();
+                font.setBold(True);
+                return font
             if role == Qt.BackgroundRole:
                 return QBrush(QColor(225, 225, 235) if not self._is_dark_theme else QColor(55, 55, 65))
-            if role == Qt.TextAlignmentRole:
-                return Qt.AlignCenter
+            if role == Qt.TextAlignmentRole: return Qt.AlignCenter
             return None
 
-        value = 0
+        value = 0.0
         if row < len(self._data) and col < len(self._data[row]):
-            value = self._data[row][col]
+            value = self._data[row][col] or 0.0
 
         if role == Qt.DisplayRole:
-            # ZMIANA: Wyświetlanie jako liczba całkowita
-            return str(int(round(value))) if value > 0 else ""
-        if role == Qt.TextAlignmentRole:
-            return Qt.AlignCenter
+            return str(int(round(value))) if value != 0 else ""
+        if role == Qt.TextAlignmentRole: return Qt.AlignCenter
+
         if role == Qt.BackgroundRole and value > 0:
+            # --- ZMIANA: Logika wyboru palety kolorów ---
             factor = min((value / self._max_value) ** 0.5, 1.0)
-            if self._is_dark_theme:
-                start_color = QColor(25, 50, 25)
-                end_color = QColor(120, 240, 120)
+
+            # Jeśli widok to "Tylko Nadgodziny", użyj palety czerwonej
+            if self._view_option == "overtime_only":
+                if self._is_dark_theme:
+                    start_color = QColor(60, 25, 25)  # Ciemna czerwień
+                    end_color = QColor(240, 120, 120)  # Jasna czerwień
+                else:
+                    start_color = QColor(255, 230, 230)  # Bardzo jasna czerwień
+                    end_color = QColor(180, 0, 0)  # Ciemna czerwień
+            # W przeciwnym razie, użyj standardowej palety zielonej
             else:
-                start_color = QColor(230, 255, 230)
-                end_color = QColor(0, 100, 0)
+                if self._is_dark_theme:
+                    start_color = QColor(25, 50, 25)
+                    end_color = QColor(120, 240, 120)
+                else:
+                    start_color = QColor(230, 255, 230)
+                    end_color = QColor(0, 100, 0)
+
             r = int(start_color.red() + (end_color.red() - start_color.red()) * factor)
             g = int(start_color.green() + (end_color.green() - start_color.green()) * factor)
             b = int(start_color.blue() + (end_color.blue() - start_color.blue()) * factor)
             return QBrush(QColor(r, g, b))
+
         if role == Qt.ForegroundRole and value > 0:
             bg_brush = self.data(index, Qt.BackgroundRole)
             if bg_brush:
@@ -658,28 +686,32 @@ class StaffingDetailsWindow(QDialog):
         all_events = self.data_provider.get_events_data(self._year, self._month, self._grupa, self._funkcja)
         raw_forecast_data = self.data_provider.get_forecast_data(self._year, self._month)
 
-        # --- KROK 2: OBLICZENIA DLA ZAKŁADKI "PROGNOZA" ---
-        actual_staffing_data = self._calculate_actual_staffing_matrix()
-        self._populate_forecast_filters(raw_forecast_data, actual_staffing_data)
+        # Wypełnienie filtrów (w tym lokalizacji)
+        self._populate_location_filter(self.hourly_location_combo)
+        self._populate_location_filter(self.daily_location_combo)
+        self._populate_forecast_filters(raw_forecast_data,
+                                        self._calculate_actual_staffing_matrix())  # Przeniesiono tutaj
 
-        filtered_forecast_data = self._filter_forecast_data(raw_forecast_data)
-        forecast_matrix = self._calculate_matrix_from_forecast(filtered_forecast_data, 'Prognoza')
-
-        selected_group_name = self.forecast_group_combo.currentText()
-        # Specjalna obsługa dla opcji "-Wszystkie-", która porównuje do grupy 'TOTAL'
-        group_to_compare = 'TOTAL' if selected_group_name == "-Wszystkie-" else selected_group_name
-        actual_matrix = actual_staffing_data.get(group_to_compare, [[0.0] * self._days_in_month for _ in range(24)])
-
-        view_mode = self.forecast_view_mode_combo.currentData()
-        self._forecast_model.update_data(self._year, self._month, forecast_matrix, actual_matrix, view_mode)
-
-        # --- KROK 3: OBLICZENIA I AKTUALIZACJA POZOSTAŁYCH ZAKŁADEK ---
+        # --- KROK 2: POBRANIE WYBORU UŻYTKOWNIKA Z FILTRÓW ---
         hourly_option = self.hourly_staffing_options_combo.currentData()
-        hourly_staffing_data = self._calculate_hourly_staffing(self._filtered_schedule_data, all_events, hourly_option)
-        self._hourly_staffing_model.update_data(hourly_staffing_data, self._year, self._month)
+        hourly_location = self.hourly_location_combo.currentText()
 
         daily_option = self.daily_staffing_options_combo.currentData()
-        daily_staffing_data = self._calculate_daily_staffing(self._filtered_schedule_data, all_events, daily_option)
+        daily_location = self.daily_location_combo.currentText()
+
+        # --- Dodano komunikaty diagnostyczne ---
+        debug_print(f"--- Odświeżanie danych w oknie analiz ---")
+        debug_print(f"Obsada godzinowa: Opcja='{hourly_option}', Lokalizacja='{hourly_location}'")
+        debug_print(f"Obsada dzienna: Opcja='{daily_option}', Lokalizacja='{daily_location}'")
+
+        # --- KROK 3: OBLICZENIA I AKTUALIZACJA ZAKŁADEK ---
+        hourly_staffing_data = self._calculate_hourly_staffing(self._filtered_schedule_data, all_events, hourly_option,
+                                                               hourly_location)
+        self._hourly_staffing_model.update_data(hourly_staffing_data, self._year, self._month)
+        self._hourly_staffing_model.set_view_option(hourly_option)
+
+        daily_staffing_data = self._calculate_daily_staffing(self._filtered_schedule_data, all_events, daily_option,
+                                                             daily_location)
         self._daily_staffing_model.update_data(self._year, self._month, daily_staffing_data)
         self._update_daily_staffing_chart(daily_staffing_data)
 
@@ -699,6 +731,30 @@ class StaffingDetailsWindow(QDialog):
         self._symbols_rbh_model.update_data(self._year, self._month, rbh)
 
         self._adjust_columns()
+
+    def _populate_location_filter(self, combo_box: QComboBox):
+        """Wypełnia podany ComboBox unikalnymi lokalizacjami z danych."""
+        if not self._filtered_schedule_data: return
+
+        combo_box.blockSignals(True)
+        current_selection = combo_box.currentText()
+        combo_box.clear()
+
+        locations = set()
+        for user_schedule in self._filtered_schedule_data.values():
+            default_location = user_schedule.get('lokalizacja_domyslna', 'h')
+            for day_info in user_schedule.get('days', {}).values():
+                symbol = day_info.get('symbol', '')
+                if symbol:
+                    loc = parse_symbol(symbol).get('location') or default_location
+                    locations.add(loc)
+
+        combo_box.addItem("-Wszystkie-")
+        combo_box.addItems(sorted(list(locations)))
+
+        index = combo_box.findText(current_selection)
+        combo_box.setCurrentIndex(index if index != -1 else 0)
+        combo_box.blockSignals(False)
 
     def _get_events_duration_per_hour(self, all_events: list) -> dict:
         """
@@ -899,25 +955,36 @@ class StaffingDetailsWindow(QDialog):
             return '#f8f9fa', 'black', '#ced4da'
 
     def _create_hourly_staffing_tab(self):
-        # ZMIANA: Dodanie filtra do zakładki
         widget = QWidget()
         layout = QVBoxLayout(widget)
         layout.setContentsMargins(5, 5, 5, 5)
 
-        # Layout dla opcji filtra
         options_layout = QHBoxLayout()
         options_layout.addStretch()
+
+        # Filtr rodzaju danych (istniejący)
+        options_layout.addWidget(QLabel("Pokaż dane dla:"))
         self.hourly_staffing_options_combo = QComboBox()
+        self.hourly_staffing_options_combo.addItem("Grafik - Spotkania/Szkolenia", "schedule_minus_events")
         self.hourly_staffing_options_combo.addItem("Grafik + Nadgodziny", "all")
         self.hourly_staffing_options_combo.addItem("Tylko Grafik", "schedule_only")
         self.hourly_staffing_options_combo.addItem("Tylko Nadgodziny", "overtime_only")
+        self.hourly_staffing_options_combo.addItem("Tylko Spotkania/Szkolenia", "events_only")
         self.hourly_staffing_options_combo.currentIndexChanged.connect(self.load_and_display_data)
-
-        options_layout.addWidget(QLabel("Pokaż dane dla:"))
         options_layout.addWidget(self.hourly_staffing_options_combo)
+
+        options_layout.addSpacing(15)
+
+        # --- NOWA LOGIKA: Filtr lokalizacji ---
+        options_layout.addWidget(QLabel("Lokalizacja:"))
+        self.hourly_location_combo = QComboBox()
+        self.hourly_location_combo.setMinimumWidth(120)
+        self.hourly_location_combo.currentIndexChanged.connect(self.load_and_display_data)
+        options_layout.addWidget(self.hourly_location_combo)
+        # --- KONIEC NOWEJ LOGIKI ---
+
         layout.addLayout(options_layout)
 
-        # Tabela (bez zmian)
         self.hourly_staffing_view = QTableView()
         self._hourly_staffing_model = HourlyStaffingTableModel(self._year, self._month, self)
         self.hourly_staffing_view.setModel(self._hourly_staffing_model)
@@ -935,13 +1002,28 @@ class StaffingDetailsWindow(QDialog):
         layout.setContentsMargins(0, 5, 0, 0)
         options_layout = QHBoxLayout()
         options_layout.addStretch()
+
+        # Filtr rodzaju danych (istniejący)
+        options_layout.addWidget(QLabel("Pokaż dane dla:"))
         self.daily_staffing_options_combo = QComboBox()
+        self.daily_staffing_options_combo.addItem("Grafik - Spotkania/Szkolenia", "schedule_minus_events")
         self.daily_staffing_options_combo.addItem("Grafik i Nadgodziny", "all")
         self.daily_staffing_options_combo.addItem("Tylko Grafik", "schedule_only")
         self.daily_staffing_options_combo.addItem("Tylko Nadgodziny", "overtime_only")
+        self.daily_staffing_options_combo.addItem("Tylko Spotkania/Szkolenia", "events_only")
         self.daily_staffing_options_combo.currentIndexChanged.connect(self.load_and_display_data)
-        options_layout.addWidget(QLabel("Pokaż dane dla:"))
         options_layout.addWidget(self.daily_staffing_options_combo)
+
+        options_layout.addSpacing(15)
+
+        # --- NOWA LOGIKA: Filtr lokalizacji ---
+        options_layout.addWidget(QLabel("Lokalizacja:"))
+        self.daily_location_combo = QComboBox()
+        self.daily_location_combo.setMinimumWidth(120)
+        self.daily_location_combo.currentIndexChanged.connect(self.load_and_display_data)
+        options_layout.addWidget(self.daily_location_combo)
+        # --- KONIEC NOWEJ LOGIKI ---
+
         layout.addLayout(options_layout)
         splitter = QSplitter(Qt.Vertical)
         self.daily_staffing_view = QTableView()
@@ -1437,76 +1519,240 @@ class StaffingDetailsWindow(QDialog):
         #    Metody rysujące wykresy już używają `self.is_dark_theme` do wyboru kolorów.
         self.load_and_display_data()
 
-    def _calculate_hourly_staffing(self, schedule_data, all_events, option="all"):
-        # ZMIANA: Dostosowanie logiki do wybranej opcji filtra
+    def _calculate_hourly_staffing(self, schedule_data, all_events, option="all", location_filter=None):
+        """Oblicza obsadę godzinową, uwzględniając wszystkie filtry."""
         days = self._days_in_month
-        matrix = [[0.0] * days for _ in range(24)]
+        schedule_matrix = np.zeros((24, days))
+        overtime_matrix = np.zeros((24, days))
+        events_matrix = np.zeros((24, days))
 
-        # Obliczenia dla grafiku
-        if option in ['all', 'schedule_only']:
-            if schedule_data:
-                for user_schedule in schedule_data.values():
-                    for day, day_info in user_schedule.get('days', {}).items():
-                        parsed = parse_symbol(day_info.get('symbol', ''))
-                        if parsed.get('special_symbol') and any(
-                                s in parsed['special_symbol'] for s in
-                                ["U", "CO", "UZ", "CR", "NN", "NW", "Z", "UB"]):
-                            continue
-                        start, hours = parsed.get('start_hour'), parsed.get('work_hours')
-                        if start is not None and hours is not None and hours > 0:
-                            for h in range(int(hours)):
-                                if 0 <= (start + h) % 24 < 24 and 0 <= day - 1 < days:
-                                    matrix[(start + h) % 24][day - 1] += 1.0
+        events_map = self._get_events_duration_per_hour(all_events)
+        location_map = self._get_daily_location_map(schedule_data)
 
-        # Obliczenia dla nadgodzin
-        if option in ['all', 'overtime_only']:
-            filtered_user_ids = {k[3] for k in schedule_data.keys()}
-            for event in all_events:
-                if event.get('type') == 'Nadgodziny' and event.get('user_id') in filtered_user_ids:
-                    try:
-                        day = int(event.get('date_key', '').split('-')[2])
-                        t_from = dt.datetime.strptime(event.get('time_from', '00:00'), '%H:%M')
-                        t_to = dt.datetime.strptime(event.get('time_to', '00:00'), '%H:%M')
-                        duration_s = (t_to - t_from).total_seconds()
-                        if duration_s < 0:
-                            duration_s += 86400
-                        current_time = t_from
-                        while duration_s > 1:
-                            hour_slot, minutes_in_slot = current_time.hour, 60 - current_time.minute
-                            seconds_in_slot = min(minutes_in_slot * 60, duration_s)
-                            if 0 <= hour_slot < 24 and 0 <= day - 1 < days:
-                                matrix[hour_slot][day - 1] += seconds_in_slot / 3600.0
-                            duration_s -= seconds_in_slot
-                            current_time += dt.timedelta(seconds=seconds_in_slot)
-                    except (ValueError, IndexError):
+        # 1. Przetwarzanie grafiku i zdarzeń (spotkania/szkolenia)
+        for user_key, user_schedule in schedule_data.items():
+            user_id = user_key[3]
+            korekta = float(user_schedule.get('korekta', 0.0) or 0.0)
+
+            for day, day_info in user_schedule.get('days', {}).items():
+                day_idx = day - 1
+                shift_location = location_map.get((user_id, day))
+
+                if location_filter and location_filter != "-Wszystkie-" and shift_location != location_filter:
+                    continue
+
+                parsed = parse_symbol(day_info.get('symbol', ''))
+                start, base_hours = parsed.get('start_hour'), parsed.get('work_hours')
+                final_hours = base_hours + korekta if base_hours is not None else 0
+
+                if start is not None and final_hours > 0:
+                    for h in range(max(0, int(final_hours))):
+                        hour = (start + h) % 24
+                        schedule_matrix[hour, day_idx] += 1.0
+                        if events_map.get(user_id, {}).get(day, {}).get(hour, 0) > 30:
+                            events_matrix[hour, day_idx] += 1.0
+
+        # 2. Przetwarzanie nadgodzin
+        user_ids_in_view = {k[3] for k in schedule_data.keys()}
+        for event in all_events:
+            if event.get('type') == 'Nadgodziny' and event.get('user_id') in user_ids_in_view:
+                try:
+                    user_id = event.get('user_id')
+                    day = int(event.get('date_key', '0-0-0').split('-')[2])
+
+                    event_location = location_map.get((user_id, day))
+                    if location_filter and location_filter != "-Wszystkie-" and event_location != location_filter:
                         continue
-        return matrix
 
-    def _calculate_daily_staffing(self, schedule_data, all_events, option):
-        summary = defaultdict(lambda: defaultdict(float))
-        days_in_month = self._days_in_month
-        if option in ['all', 'schedule_only']:
-            for user_key, user_schedule in schedule_data.items():
-                wydzial = user_key[0] or "Brak"
-                for day, day_info in user_schedule.get('days', {}).items():
-                    hours = parse_symbol(day_info.get('symbol', '')).get('work_hours')
-                    if hours:
-                        summary[wydzial][day - 1] += float(hours)
-        if option in ['all', 'overtime_only']:
-            user_to_dept = {user_key[3]: user_key[0] or "Brak" for user_key in schedule_data.keys()}
-            for event in all_events:
-                if event.get('type') == 'Nadgodziny' and event.get('user_id') in user_to_dept:
-                    try:
-                        day = int(event.get('date_key', '').split('-')[2])
-                        t_from = dt.datetime.strptime(event.get('time_from', '00:00'), '%H:%M')
-                        t_to = dt.datetime.strptime(event.get('time_to', '00:00'), '%H:%M')
-                        duration = (t_to - t_from).total_seconds() / 3600.0
-                        if duration < 0:
-                            duration += 24.0
-                        summary[user_to_dept[event.get('user_id')]][day - 1] += duration
-                    except (ValueError, IndexError):
+                    day_idx = day - 1
+                    t_from = dt.datetime.strptime(event.get('time_from', '00:00'), '%H:%M')
+                    t_to = dt.datetime.strptime(event.get('time_to', '00:00'), '%H:%M')
+                    duration_s = (t_to - t_from).total_seconds()
+                    if duration_s < 0: duration_s += 86400
+
+                    current_time = t_from
+                    while duration_s > 1:
+                        hour, minutes_in_slot = current_time.hour, 60 - current_time.minute
+                        seconds_in_slot = min(minutes_in_slot * 60, duration_s)
+                        if 0 <= hour < 24 and 0 <= day_idx < days:
+                            overtime_matrix[hour, day_idx] += seconds_in_slot / 3600.0
+                        duration_s -= seconds_in_slot
+                        current_time += dt.timedelta(seconds=seconds_in_slot)
+                except (ValueError, IndexError):
+                    continue
+
+        # 3. Zwróć wynik w zależności od wybranej opcji
+        if option == "schedule_only": return schedule_matrix.tolist()
+        if option == "overtime_only": return overtime_matrix.tolist()
+        if option == "all": return (schedule_matrix + overtime_matrix).tolist()
+        if option == "events_only": return events_matrix.tolist()
+        if option == "schedule_minus_events": return (schedule_matrix - events_matrix).tolist()
+
+        return np.zeros((24, days)).tolist()
+
+    # Metoda do podmiany nr 2
+    def _calculate_daily_staffing(self, schedule_data, all_events, option="all", location_filter=None):
+        """Oblicza obsadę dzienną, uwzględniając wszystkie filtry."""
+        summary_schedule = defaultdict(lambda: defaultdict(float))
+        summary_overtime = defaultdict(lambda: defaultdict(float))
+        summary_events = defaultdict(lambda: defaultdict(float))
+
+        events_map = self._get_events_duration_per_hour(all_events)
+        location_map = self._get_daily_location_map(schedule_data)
+
+        # 1. Oblicz sumy dzienne dla grafiku i zdarzeń
+        for user_key, user_schedule in schedule_data.items():
+            user_id, wydzial = user_key[3], user_key[0] or "Brak"
+            korekta = float(user_schedule.get('korekta', 0.0) or 0.0)
+
+            for day, day_info in user_schedule.get('days', {}).items():
+                shift_location = location_map.get((user_id, day))
+                if location_filter and location_filter != "-Wszystkie-" and shift_location != location_filter:
+                    continue
+
+                parsed = parse_symbol(day_info.get('symbol', ''))
+                start, base_hours = parsed.get('start_hour'), parsed.get('work_hours')
+                final_hours = base_hours + korekta if base_hours is not None else 0
+
+                if start is not None and final_hours > 0:
+                    summary_schedule[wydzial][day - 1] += final_hours
+                    lost_hours = sum(1 for h in range(int(final_hours)) if
+                                     events_map.get(user_id, {}).get(day, {}).get((start + h) % 24, 0) > 30)
+                    if lost_hours > 0:
+                        summary_events[wydzial][day - 1] += lost_hours
+
+        # 2. Oblicz sumy dzienne dla nadgodzin
+        user_to_dept = {k[3]: k[0] or "Brak" for k in schedule_data.keys()}
+        for event in all_events:
+            if event.get('type') == 'Nadgodziny' and event.get('user_id') in user_to_dept:
+                try:
+                    user_id = event.get('user_id')
+                    day = int(event.get('date_key', '0-0-0').split('-')[2])
+
+                    event_location = location_map.get((user_id, day))
+                    if location_filter and location_filter != "-Wszystkie-" and event_location != location_filter:
                         continue
-        return {dept: [daily_data.get(d, 0) for d in range(days_in_month)] for dept, daily_data in summary.items()}
+
+                    t_from = dt.datetime.strptime(event.get('time_from', '00:00'), '%H:%M')
+                    t_to = dt.datetime.strptime(event.get('time_to', '00:00'), '%H:%M')
+                    duration = (t_to - t_from).total_seconds() / 3600.0
+                    if duration < 0: duration += 24.0
+                    summary_overtime[user_to_dept[user_id]][day - 1] += duration
+                except (ValueError, IndexError):
+                    continue
+
+        # --- ZMIANA: Ta część kodu była brakująca w poprzedniej wersji ---
+        # 3. Połącz wyniki w zależności od opcji
+        all_depts = set(summary_schedule.keys()) | set(summary_overtime.keys()) | set(summary_events.keys())
+        final_summary = defaultdict(lambda: [0.0] * self._days_in_month)
+
+        for dept in all_depts:
+            for day_idx in range(self._days_in_month):
+                s = summary_schedule[dept].get(day_idx, 0.0)
+                o = summary_overtime[dept].get(day_idx, 0.0)
+                e = summary_events[dept].get(day_idx, 0.0)
+
+                if option == "schedule_only":
+                    final_summary[dept][day_idx] = s
+                elif option == "overtime_only":
+                    final_summary[dept][day_idx] = o
+                elif option == "all":
+                    final_summary[dept][day_idx] = s + o
+                elif option == "events_only":
+                    final_summary[dept][day_idx] = e
+                elif option == "schedule_minus_events":
+                    final_summary[dept][day_idx] = s - e
+
+        return final_summary
+
+    def _calculate_daily_staffing(self, schedule_data, all_events, option="all", location_filter=None):
+        """Oblicza obsadę dzienną, uwzględniając wszystkie filtry."""
+        summary_schedule = defaultdict(lambda: defaultdict(float))
+        summary_overtime = defaultdict(lambda: defaultdict(float))
+        summary_events = defaultdict(lambda: defaultdict(float))
+
+        events_map = self._get_events_duration_per_hour(all_events)
+        location_map = self._get_daily_location_map(schedule_data)
+
+        # 1. Oblicz sumy dzienne dla grafiku i zdarzeń
+        for user_key, user_schedule in schedule_data.items():
+            user_id, wydzial = user_key[3], user_key[0] or "Brak"
+            korekta = float(user_schedule.get('korekta', 0.0) or 0.0)
+
+            for day, day_info in user_schedule.get('days', {}).items():
+                shift_location = location_map.get((user_id, day))
+                if location_filter and location_filter != "-Wszystkie-" and shift_location != location_filter:
+                    continue
+
+                parsed = parse_symbol(day_info.get('symbol', ''))
+                start, base_hours = parsed.get('start_hour'), parsed.get('work_hours')
+                final_hours = base_hours + korekta if base_hours is not None else 0
+
+                if start is not None and final_hours > 0:
+                    summary_schedule[wydzial][day - 1] += final_hours
+                    lost_hours = sum(1 for h in range(int(final_hours)) if
+                                     events_map.get(user_id, {}).get(day, {}).get((start + h) % 24, 0) > 30)
+                    if lost_hours > 0:
+                        summary_events[wydzial][day - 1] += lost_hours
+
+        # 2. Oblicz sumy dzienne dla nadgodzin
+        user_to_dept = {k[3]: k[0] or "Brak" for k in schedule_data.keys()}
+        for event in all_events:
+            if event.get('type') == 'Nadgodziny' and event.get('user_id') in user_to_dept:
+                try:
+                    user_id = event.get('user_id')
+                    day = int(event.get('date_key', '0-0-0').split('-')[2])
+
+                    event_location = location_map.get((user_id, day))
+                    if location_filter and location_filter != "-Wszystkie-" and event_location != location_filter:
+                        continue
+
+                    t_from = dt.datetime.strptime(event.get('time_from', '00:00'), '%H:%M')
+                    t_to = dt.datetime.strptime(event.get('time_to', '00:00'), '%H:%M')
+                    duration = (t_to - t_from).total_seconds() / 3600.0
+                    if duration < 0: duration += 24.0
+                    summary_overtime[user_to_dept[user_id]][day - 1] += duration
+                except (ValueError, IndexError):
+                    continue
+
+        # --- TA CZĘŚĆ BYŁA BRAKUJĄCA LUB NIEKOMPLETNA ---
+        # 3. Połącz wyniki w zależności od opcji i zwróć je
+        all_depts = set(summary_schedule.keys()) | set(summary_overtime.keys()) | set(summary_events.keys())
+        final_summary = defaultdict(lambda: [0.0] * self._days_in_month)
+        for dept in all_depts:
+            for day_idx in range(self._days_in_month):
+                s = summary_schedule[dept].get(day_idx, 0.0)
+                o = summary_overtime[dept].get(day_idx, 0.0)
+                e = summary_events[dept].get(day_idx, 0.0)
+
+                if option == "schedule_only":
+                    final_summary[dept][day_idx] = s
+                elif option == "overtime_only":
+                    final_summary[dept][day_idx] = o
+                elif option == "all":
+                    final_summary[dept][day_idx] = s + o
+                elif option == "events_only":
+                    final_summary[dept][day_idx] = e
+                elif option == "schedule_minus_events":
+                    final_summary[dept][day_idx] = s - e
+
+        return final_summary
+
+    def _get_daily_location_map(self, schedule_data: dict) -> dict:
+        """
+        Tworzy słownik mapujący (user_id, dzień) na lokalizację pracy w tym dniu.
+        """
+        location_map = {}
+        for user_key, user_schedule in schedule_data.items():
+            user_id = user_key[3]
+            default_location = user_schedule.get('lokalizacja_domyslna', 'h')
+            for day, day_info in user_schedule.get('days', {}).items():
+                symbol = day_info.get('symbol', '')
+                if symbol:
+                    # Lokalizacja jest brana z symbolu, a jeśli jej tam nie ma - z domyślnej pracownika
+                    location = parse_symbol(symbol).get('location') or default_location
+                    location_map[(user_id, day)] = location
+        return location_map
 
     def _populate_forecast_filters(self, raw_data, actual_staffing_groups):
         """Wypełnia ComboBox 'Grupa' i ustawia 'TOTAL' jako domyślny."""
