@@ -401,21 +401,15 @@ class DataProvider(QObject):
 
     def _build_processed_data_without_icons(self, schedule_data: List[Dict]) -> Dict:
         """
-        NOWA WERSJA: Przetwarza dane z już spivotowanego zapytania SQL.
-        Nie wykonuje już operacji PIVOT w Pythonie.
+        Przetwarza dane z już spivotowanego zapytania SQL.
+        WERSJA POPRAWIONA: Oblicza sumę godzin po stronie aplikacji, ignorując
+        kolumny SumaRBH i BilansRBH z bazy danych.
         """
         if not self._current_year or not self._current_month or not schedule_data:
             return {}
 
         processed_data = {}
-
-        # Pobieramy nazwy kolumn z pierwszego wiersza (jeśli jest to obiekt pyodbc.Row)
-        # To wymagałoby dostosowania _fetch_schedule_data, więc dla uproszczenia
-        # załóżmy, że znamy strukturę. Najlepiej jest zmodyfikować _fetch_schedule_data.
-        # Na razie przyjmijmy, że _fetch_schedule_data zwraca listę słowników.
-        # Zmodyfikujmy więc _fetch_schedule_data.
-
-        for row_dict in schedule_data:  # Zakładamy, że schedule_data to teraz lista słowników
+        for row_dict in schedule_data:
             uzytkownik_id = row_dict.get('Uzytkownik', 0)
 
             key = (
@@ -425,10 +419,10 @@ class DataProvider(QObject):
                 uzytkownik_id
             )
 
+            # Inicjalizujemy słownik z danymi pracownika, bez sumy godzin
             processed_data[key] = {
                 'days': {},
-                'total_hours': row_dict.get('SumaRBH', 0),
-                'bilans_rbh': row_dict.get('BilansRBH', 0),
+                'total_hours': 0,  # Inicjalizujemy sumę jako 0
                 'rola_nazwa': row_dict.get('RolaNazwa', ''),
                 'pod_rola_nazwa': row_dict.get('PodRolaNazwa', ''),
                 'etat': row_dict.get('Etat', 8.0),
@@ -442,17 +436,30 @@ class DataProvider(QObject):
                 'system_czasu_pracy': row_dict.get('SystemCzasuPracy', '')
             }
 
+            # --- NOWA LOGIKA: Obliczanie sumy godzin po stronie aplikacji ---
+            calculated_total_hours = 0
             for day in range(1, 32):
                 symbol = row_dict.get(str(day))
-                if symbol is not None:  # Ważne, aby obsłużyć dni bez wpisu (NULL z bazy)
+                if symbol is not None:
                     parsed_symbol = parse_symbol(symbol)
+
+                    # Używamy `or 0`, aby obsłużyć None zwracane przez parser
+                    work_h = parsed_symbol.get('work_hours', 0) or 0
+                    calculated_total_hours += work_h
+
+                    # Zapisujemy dane dnia do słownika
                     processed_data[key]['days'][day] = {
                         'symbol': symbol,
-                        'hours': parsed_symbol.get('work_hours', 0),
+                        'hours': work_h,
                         'start_hour': parsed_symbol.get('start_hour'),
                     }
 
-        debug_print(f"DataProvider (NOWA WERSJA): Zakończono budowanie danych dla {len(processed_data)} użytkowników.")
+            # Po przejściu przez wszystkie dni, przypisujemy obliczoną sumę
+            processed_data[key]['total_hours'] = calculated_total_hours
+            # --- KONIEC NOWEJ LOGIKI ---
+
+        debug_print(
+            f"DataProvider: Zakończono budowanie danych dla {len(processed_data)} użytkowników z sumą godzin obliczoną w aplikacji.")
         return processed_data
 
     @lru_cache(maxsize=100)  # Cache dla kluczy miesięcy
