@@ -2,17 +2,21 @@
 
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTableView,
                                QHeaderView, QPushButton, QSpacerItem, QSizePolicy)
-from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, Signal
+# ZMIANA: Dodano import dla QSortFilterProxyModel
+from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, Signal, QSortFilterProxyModel
 from PySide6.QtGui import QColor, QBrush
 from styles import AppStyles
 import datetime
 
+
 class AuditLogTableModel(QAbstractTableModel):
     """Model danych dla tabeli z historią zmian."""
+
     def __init__(self, data=None, parent=None):
         super().__init__(parent)
         self._data = data or []
-        self._headers = ["Data Zmiany", "Pracownik", "Symbol po zmianie", "Typ modyfikacji", "Zmodyfikowano o", "Zmodyfikował"]
+        self._headers = ["Data Zmiany", "Pracownik", "Symbol po zmianie", "Typ modyfikacji", "Zmodyfikowano o",
+                         "Zmodyfikował"]
 
     def rowCount(self, parent=QModelIndex()):
         return len(self._data)
@@ -36,15 +40,19 @@ class AuditLogTableModel(QAbstractTableModel):
             if col == 0:
                 val = row_data.get('Data')
                 return val.strftime('%Y-%m-%d') if isinstance(val, datetime.date) else ''
-            elif col == 1: return str(row_data.get('Uzytkownik', ''))
-            elif col == 2: return row_data.get('Symbol', '')
-            elif col == 3: return row_data.get('TypModyfikacji', '')
+            elif col == 1:
+                return str(row_data.get('UzytkownikDane', ''))  # Poprawka na UzytkownikDane dla spójności
+            elif col == 2:
+                return row_data.get('Symbol', '')
+            elif col == 3:
+                return row_data.get('TypModyfikacji', '')
             elif col == 4:
                 val = row_data.get('DataModyfikacji')
                 return val.strftime('%Y-%m-%d %H:%M:%S') if isinstance(val, datetime.datetime) else ''
-            elif col == 5: return row_data.get('Modyfikujacy', '')
+            elif col == 5:
+                return row_data.get('Modyfikujacy', '')
 
-        if role == Qt.ForegroundRole and col == 3:  # Kolorowanie typu modyfikacji
+        if role == Qt.ForegroundRole and col == 3:
             op_type = row_data.get('TypModyfikacji', '')
             if op_type == 'Wstawienie symbolu':
                 return QBrush(QColor("lightgreen"))
@@ -61,38 +69,45 @@ class AuditLogTableModel(QAbstractTableModel):
         self._data = new_data
         self.endResetModel()
 
-class AuditLogWindow(QDialog):
-    """Nowe okno do wyświetlania historii zmian w grafiku."""
 
-    # Sygnał emitowany, gdy użytkownik kliknie "Odśwież"
+class AuditLogWindow(QDialog):
+    """Okno do wyświetlania historii zmian w grafiku z sortowaniem i płynnym skalowaniem."""
+
     refresh_requested = Signal()
 
     def __init__(self, audit_data, is_dark_theme, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Historia Zmian Grafiku")
-        self.setMinimumSize(600, 400)
+        self.setMinimumSize(800, 500)  # Zwiększono domyślny rozmiar dla lepszej czytelności
 
         main_layout = QVBoxLayout(self)
         self.audit_table_view = QTableView()
         main_layout.addWidget(self.audit_table_view)
 
-        # Dodanie przycisków na dole okna
         button_layout = QHBoxLayout()
         button_layout.addSpacerItem(QSpacerItem(40, 20, QSizePolicy.Expanding, QSizePolicy.Minimum))
-
         self.refresh_button = QPushButton("Odśwież")
         self.refresh_button.clicked.connect(self.refresh_requested.emit)
-
         self.close_button = QPushButton("Zamknij")
         self.close_button.clicked.connect(self.accept)
-
         button_layout.addWidget(self.refresh_button)
         button_layout.addWidget(self.close_button)
         main_layout.addLayout(button_layout)
 
-        # Konfiguracja modelu i widoku
-        self.model = AuditLogTableModel(audit_data)
-        self.audit_table_view.setModel(self.model)
+        # --- NOWA LOGIKA: Użycie QSortFilterProxyModel do sortowania ---
+        # 1. Tworzymy nasz główny model danych (źródło)
+        self.source_model = AuditLogTableModel(audit_data)
+
+        # 2. Tworzymy model proxy, który będzie zarządzał sortowaniem
+        self.proxy_model = QSortFilterProxyModel()
+        self.proxy_model.setSourceModel(self.source_model)
+
+        # 3. Ustawiamy model PROXY w tabeli, a nie model źródłowy
+        self.audit_table_view.setModel(self.proxy_model)
+
+        # 4. Włączamy sortowanie w widoku tabeli
+        self.audit_table_view.setSortingEnabled(True)
+        # --- KONIEC NOWEJ LOGIKI ---
 
         # Ustawianie stylu i rozmiarów
         theme = "dark" if is_dark_theme else "light"
@@ -101,11 +116,20 @@ class AuditLogWindow(QDialog):
         self.refresh_button.setStyleSheet(AppStyles.get_button_style(theme))
         self.close_button.setStyleSheet(AppStyles.get_button_style(theme))
 
-        self.audit_table_view.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
+        # --- ZMIANA: Poprawka wydajności skalowania okna ---
+        # Ustawiamy tryb interaktywny, który jest szybki i pozwala użytkownikowi zmieniać rozmiar
+        self.audit_table_view.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
+        # Jednorazowo dopasowujemy kolumny do zawartości po załadowaniu danych
+        self.audit_table_view.resizeColumnsToContents()
         self.audit_table_view.horizontalHeader().setStretchLastSection(True)
-        self.audit_table_view.setSortingEnabled(True)
+        # --- KONIEC ZMIANY ---
+
+        # Ustawiamy domyślne sortowanie po dacie modyfikacji (kolumna 4) malejąco
         self.audit_table_view.sortByColumn(4, Qt.DescendingOrder)
 
     def update_model_data(self, new_data):
         """Publiczna metoda do aktualizacji danych w tabeli."""
-        self.model.update_data(new_data)
+        # ZMIANA: Aktualizujemy model źródłowy, a proxy zajmie się resztą
+        self.source_model.update_data(new_data)
+        # Dopasowujemy kolumny na nowo po aktualizacji danych
+        self.audit_table_view.resizeColumnsToContents()
