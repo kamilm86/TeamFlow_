@@ -58,23 +58,18 @@ class AppSettingsDialog(QDialog):
 
         self.dark_theme_radio = QRadioButton("Ciemny")
         self.light_theme_radio = QRadioButton("Jasny")
-
         layout.addWidget(self.dark_theme_radio, 0, 0)
         layout.addWidget(self.light_theme_radio, 0, 1)
 
         self.font_combo = QComboBox()
-        # Tworzymy wyselekcjonowaną listę czcionek
-        preferred_fonts = [
-            "Segoe UI", "Calibri", "Arial", "Tahoma", "Verdana", "Trebuchet MS"
-        ]
+        preferred_fonts = ["Segoe UI", "Calibri", "Arial", "Tahoma", "Verdana", "Trebuchet MS"]
         self.font_combo.addItems(preferred_fonts)
-
         layout.addWidget(QLabel("Czcionka:"), 1, 0)
         layout.addWidget(self.font_combo, 1, 1)
 
         self.font_size_spin = QSpinBox()
-        # --- ZMIANA: Ograniczenie zakresu rozmiaru czcionki ---
-        self.font_size_spin.setRange(7, 9)
+        # --- ZMIANA: Rozszerzenie zakresu rozmiaru czcionki ---
+        self.font_size_spin.setRange(7, 12)
         layout.addWidget(QLabel("Rozmiar:"), 2, 0)
         layout.addWidget(self.font_size_spin, 2, 1)
 
