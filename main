@@ -3635,7 +3635,7 @@ class WorkScheduleWindow(QMainWindow):
                     f"{len(events_data)} zdarzeń, {len(processed_data)} użytkowników")
 
         # Aktualizuj model grafiku
-        self.schedule_model.update_data(self.data_provider, year, month, self.import_grupa, self.import_funkcja)
+        self.schedule_model.update_data(processed_data, year, month)
 
         # Wyczyść model zdarzeń
         debug_print("Model zdarzeń pozostaje pusty - oczekuje na zaznaczenie komórek")
