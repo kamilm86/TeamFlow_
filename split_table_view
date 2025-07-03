@@ -96,6 +96,11 @@ class SplitTableView(QWidget):
         # Konfiguracja menu kontekstowego dla nagłówków
         self.schedule_view.horizontalHeader().setContextMenuPolicy(Qt.CustomContextMenu)
 
+    def set_header_height(self, height):
+        """Ustawia stałą wysokość dla obu nagłówków poziomych."""
+        self.employees_view.horizontalHeader().setFixedHeight(height)
+        self.schedule_view.horizontalHeader().setFixedHeight(height)
+
     def set_schedule_columns_width(self):
         """Ustawia stałą szerokość wszystkich kolumn dni w tabeli grafiku"""
         if not self._model:
