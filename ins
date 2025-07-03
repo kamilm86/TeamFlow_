@@ -1,117 +1,49 @@
- Instrukcja Obsługi Aplikacji TeamFlowApp
-1. Wprowadzenie
-Witaj w TeamFlowApp, nowoczesnym narzędziu stworzonym przez zespół CC FLOW w celu usprawnienia i automatyzacji procesów planowania oraz analizy grafików pracy. Aplikacja zastępuje ręczne procesy, zapewniając jeden, zawsze aktualny punkt dostępu do danych.
+pip install pyinstaller
 
-2. Główne Okno Aplikacji
-Interfejs aplikacji został zaprojektowany z myślą o maksymalnej przejrzystości i wydajności.
+pyinstaller --name TeamFlowApp --windowed main.py
 
-Górny Pasek Narzędzi: Tutaj znajdują się główne przyciski akcji:
+# TeamFlowApp.spec
 
-Ustawienia: Personalizacja wyglądu aplikacji (motyw, czcionki), konfiguracja ikon i domyślnych parametrów importu.
+# -*- mode: python ; coding: utf-8 -*-
 
-Odśwież dane: Wymusza ponowne załadowanie danych z bazy.
+a = Analysis(
+    ['main.py'],
+    pathex=[],
+    binaries=[],
+    datas=[],
+    # ZMIANA: Dodajemy "ukryte" importy, których PyInstaller może nie znaleźć sam
+    hiddenimports=['pyodbc', 'PySide6.QtSql', 'matplotlib.backends.backend_qtagg'],
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=[],
+    noarchive=False,
+)
+pyz = PYZ(a.pure)
 
-Historia Zmian: Otwiera okno ze szczegółowym rejestrem modyfikacji w grafiku.
+exe = EXE(
+    pyz,
+    a.scripts,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    [],
+    name='TeamFlowApp',
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=True,  # Kompresja pliku EXE (można ustawić na False)
+    upx_exclude=[],
+    runtime_tmpdir=None,
+    # ZMIANA: Ustawienie trybu jednego pliku oraz dodanie ikony
+    onefile=True,
+    windowed=True,
+    icon='ikona.ico', # Upewnij się, że plik ikony jest w tym samym katalogu
+    console=False,   # Zapewnia brak konsoli (alternatywa dla windowed=True)
+)
 
-Obsada: Uruchamia zaawansowane okno analityczne.
+pyinstaller TeamFlowApp.spec
 
-Zarządzaj Grafikiem: (Dla uprawnionych ról) Otwiera panel do zarządzania statusami, blokadami i publikacją grafiku.
+Stworzyliśmy zespół projektowy w departamencie. Celem jest usprawnienie istniejących procesów lub tworzenie ich na nowo. Projekt ten ma za zadanie usprawnianie i automatyzację procesów i przepływu pracy w departamencie.
 
-Panel Filtrów (lewa strona): Służy do dynamicznego filtrowania listy pracowników. Możesz filtrować m.in. po Grupie, Wydziale, Przełożonym, Lokalizacji Domyślnej i wielu innych kryteriach. Zmiany są widoczne w czasie rzeczywistym.
-
-Główny Widok Grafiku: Składa się z dwóch zsynchronizowanych tabel:
-
-Tabela Pracowników (lewa): Wyświetla dane personalne widocznych pracowników.
-
-Tabela Grafiku (prawa): Pokazuje grafik na poszczególne dni miesiąca.
-
-Panel Zdarzeń (dolna część): Po zaznaczeniu dowolnej komórki w grafiku, w tym panelu pojawią się przypisane do niej zdarzenia (spotkania, szkolenia, nadgodziny).
-
-3. Podstawowe Operacje
-Edycja Grafiku
-Aplikacja oferuje kilka metod szybkiej edycji, dostępnych dla uprawnionych użytkowników.
-
-Szybka Edycja z Klawiatury (najszybsza metoda):
-
-Zmiana Godziny Rozpoczęcia: Zaznacz komórkę/komórki i wciśnij cyfrę (7, 8, 9...) lub dwie (1, 2 -> 12). Godzina rozpoczęcia zostanie automatycznie wstawiona.
-
-Zmiana Liczby Godzin: Zaznacz komórkę/komórki i użyj klawiszy + / = (zwiększenie) lub - (zmniejszenie) liczby godzin pracy.
-
-Wstawienie Symbolu Specjalnego: Wpisz symbol z klawiatury (np. U, CO). Jeśli symbol oznacza nieobecność, aplikacja zapyta o automatyczne usunięcie powiązanych zdarzeń (spotkań, nadgodzin).
-
-Usunięcie Symbolu Specjalnego: Klawisz F12 usuwa tylko symbol specjalny (np. urlop), pozostawiając godziny pracy i lokalizację.
-
-Wyczyszczenie Komórki: Klawisz Delete lub Backspace całkowicie czyści zawartość komórki.
-
-Edycja za Pomocą Przycisków:
-
-Wstaw zmianę (F3): Otwiera okno dialogowe pozwalające na masową edycję lokalizacji, godziny rozpoczęcia i liczby godzin dla wszystkich zaznaczonych komórek.
-
-Wstaw nieobecność (F4): Otwiera okno z listą symboli specjalnych (urlopy, zwolnienia) do wstawienia.
-
-4. Funkcje Analityczne
-Analiza Zdarzeń: Zaznaczając komórki w grafiku, możesz natychmiast zobaczyć w dolnym panelu wszystkie zaplanowane dla nich zdarzenia i w razie potrzeby usunąć je jednym kliknięciem.
-
-Okno "Obsada": Potężne narzędzie analityczne, które pozwala na:
-
-Analizę obsady godzinowej i dziennej (z uwzględnieniem nadgodzin i spotkań).
-
-Porównanie planowanej prognozy z rzeczywistym wykonaniem.
-
-Szczegółową analizę absencji i nadgodzin w podziale na działy.
-
-Śledzenie Zmian: Przycisk "Historia Zmian" pozwala sprawdzić, kto, kiedy i jak modyfikował grafik dla zaznaczonych pracowników.
-
-5. Personalizacja
-Kliknij przycisk "Ustawienia", aby dostosować aplikację do swoich preferencji. Możesz zmienić motyw graficzny (jasny/ciemny), czcionkę i jej rozmiar, a także skonfigurować, które kolumny i ikony mają być widoczne w głównym widoku.
-
-🎤 Treść Wystąpienia przed Dyrekcją
-Tytuł: TeamFlowApp: Inwestycja w Efektywność i Automatyzację Działu
-
-Prowadzący: Zespół Projektowy CC FLOW
-
-Dzień dobry, Panie Dyrektorze, Szanowni Państwo.
-
-Nazywam się [Twoje Imię i Nazwisko] i wraz z zespołem projektowym CC FLOW chciałbym zaprezentować Państwu narzędzie, które jest odpowiedzią na jedno z kluczowych wyzwań operacyjnych w naszym departamencie: zarządzanie czasem pracy.
-
-Do tej pory proces ten opierał się na wielu plikach Excel, ręcznej wymianie informacji i czasochłonnych analizach. Generowało to błędy, opóźnienia i uniemożliwiało podejmowanie szybkich, trafnych decyzji.
-
-Dlatego stworzyliśmy TeamFlowApp.
-
-Czym jest TeamFlowApp?
-W jednym zdaniu: to zintegrowana platforma do dynamicznego zarządzania, analizy i automatyzacji grafików pracy w naszym departamencie. To przejście od statycznych arkuszy do żywego, inteligentnego ekosystemu.
-
-Co Daje Aplikacja? Jakie Problemy Rozwiązuje?
-TeamFlowApp to nie tylko "ładniejszy grafik". To narzędzie generujące realne korzyści:
-
-Centralizacja i Jeden Punkt Prawdy: Koniec z dziesiątkami wersji plików. Wszyscy pracują na jednej, zawsze aktualnej bazie danych. To eliminuje chaos informacyjny i zapewnia spójność danych.
-
-Automatyzacja i Oszczędność Czasu: Operacje, które do tej pory zajmowały naszym Liderom i Planistom godziny – takie jak wprowadzanie zmian, przeliczanie bilansów czy raportowanie – teraz można wykonać kilkoma kliknięciami. Mówimy tu o potencjalnej oszczędności setek godzin pracy w skali roku, które można przeznaczyć na zarządzanie zespołem, a nie na administrację.
-
-Decyzyjność Oparta na Danych: Po raz pierwszy zyskujemy potężne narzędzie analityczne. Aplikacja pozwala na bieżąco:
-
-Porównywać prognozę z rzeczywistą obsadą, co pozwala nam mierzyć i poprawiać trafność naszego planowania.
-
-Analizować przyczyny nadgodzin i podejmować działania prewencyjne.
-
-Monitorować wskaźniki absencji i elastyczności pracy (praca zdalna vs. stacjonarna).
-
-Elastyczność i Szybkość Reakcji: W naszym dynamicznym środowisku kluczowa jest zdolność do szybkiej adaptacji. Dzięki takim funkcjom jak edycja z klawiatury, Lider może w kilka sekund dostosować grafik w odpowiedzi na nieprzewidziane zdarzenia, a zmiany są natychmiast widoczne dla wszystkich.
-
-Jaki Jest Potencjał Rozwoju?
-TeamFlowApp to fundament pod dalszą cyfryzację. W przyszłości możemy go rozwinąć o:
-
-Integrację z systemami HR i płacowymi, aby w pełni zautomatyzować obieg informacji.
-
-Zaawansowane modele predykcyjne do jeszcze trafniejszego prognozowania obsady.
-
-Wdrożenie w innych departamentach, które borykają się z podobnymi wyzwaniami.
-
-Jak Wpłynie to na Pracę Innych?
-Dla Liderów i Planistów: To rewolucja. Otrzymują narzędzie, które uwalnia ich od żmudnej pracy administracyjnej i daje im czas oraz dane, by podejmować lepsze decyzje menedżerskie.
-
-Dla Dyrekcji i Zarządu: Otrzymujecie Państwo dostęp do przejrzystych, zagregowanych raportów i kluczowych wskaźników wydajności (KPI), co pozwala na lepszą kontrolę kosztów i strategiczne planowanie zasobów.
-
-TeamFlowApp to nie tylko nowy program. To inwestycja w efektywność operacyjną, kulturę opartą na danych i fundament pod dalszy rozwój naszego departamentu.
-
-Dziękuję za uwagę i jestem do Państwa dyspozycji.
+Jednym z zadań zespołu jest ta aplikacjia. Aplikację trzeba zapisać do pliku exe i dodać jej ikonę. Zaproponuj ikony dla aplikacji TeamFlowApp stworzonej przez zespół CC FLOW
