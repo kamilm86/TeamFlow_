@@ -1,34 +1,42 @@
-# schedule_model.py -> NOWA, POPRAWIONA WERSJA METODY
+# TeamFlowApp.spec
 
-    def update_data(self, processed_data, year, month):
+# -*- mode: python ; coding: utf-8 -*-
 
-# staffing_details_window.py
+a = Analysis(
+    ['main.py'],
+    pathex=[],
+    binaries=[],
+    datas=[],
+    # ZMIANA: Dodajemy "ukryte" importy, których PyInstaller może nie znaleźć sam
+    hiddenimports=['pyodbc', 'PySide6.QtSql', 'matplotlib.backends.backend_qtagg'],
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=[],
+    noarchive=False,
+)
+pyz = PYZ(a.pure)
 
-    def _calculate_matrix_from_forecast(self, filtered_data, column_name):
-
-# staffing_details_window.py
-
-    def load_and_display_data(self):
-
-# split_table_view.py
-
-    def adjust_employees_table_width(self):
-
-# main.py
-
-    def _apply_dynamic_sizes(self):
-
-# main.py -> wewnątrz klasy WorkScheduleWindow
-
-    def showEvent(self, event):
-
-# styles.py
-
-class AppStyles: all
-
-# schedule_model.py -> 
-        elif hour >= 22 or hour <= 4:
-            return QColor(30, 30, 30)
+exe = EXE(
+    pyz,
+    a.scripts,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    [],
+    name='TeamFlowApp',
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=True,  # Kompresja pliku EXE (można ustawić na False)
+    upx_exclude=[],
+    runtime_tmpdir=None,
+    # ZMIANA: Ustawienie trybu jednego pliku oraz dodanie ikony
+    onefile=False,
+    windowed=True,
+    icon=False, # Upewnij się, że plik ikony jest w tym samym katalogu
+    console=False,   # Zapewnia brak konsoli (alternatywa dla windowed=True)
+)
 
 @echo off
 echo Kopiowanie plikow aplikacji na dysk lokalny, prosze czekac...
