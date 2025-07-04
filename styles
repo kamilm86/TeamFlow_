@@ -175,101 +175,46 @@ class AppStyles:
                 }}
             """
 
-    @staticmethod
-    def get_table_style_shared( text_primary, gridline, selection_bg, selection_text, border_main,
-                               header_bg, header_text, header_border):
-        return f"""
-            QTableView, QTableWidget {{
-       
-                color: {text_primary};
-                gridline-color: {gridline};
-                selection-background-color: {selection_bg};
-                selection-color: {selection_text};
 
-                border: 1px solid {border_main};
-                outline: 0; /* Usunięcie domyślnego focus rect */
-            }}
-            QTableView::item, QTableWidget::item {{
-                padding: 3px 4px; /* Dostosowany padding */
-                border: none; /* Usuwamy indywidualne bordery komórek, gridline-color wystarczy */
-
-            }}
-            QTableView::item:selected, QTableWidget::item:selected {{
-                background-color: {selection_bg};
-                color: {selection_text};
-            }}
-            QTableView::item:focus, QTableWidget::item:focus {{
-                 /* Można dodać subtelne obramowanie dla fokusowanej komórki, jeśli potrzebne */
-                 /* border: 1px dotted {selection_bg}; */
-            }}
-            QHeaderView::section {{
-                background-color: {header_bg};
-                color: {header_text};
-                border-top: 0px solid {header_border};
-                border-bottom: 1px solid {header_border};
-                border-right: 1px solid {header_border};
-                border-left: 0px solid {header_border};
-                padding: 3px 5px; /* Zmniejszony padding dla nagłówków */
-                font-weight: 500; /* Lekko pogrubione, ale nie za mocno */
-            }}
-             QHeaderView::section:horizontal:first, QHeaderView::section:vertical:first {{
-                border-left: 1px solid {header_border};
-            }}
-        """
 
     @staticmethod
     def get_table_style(theme="dark"):
-        """Zwraca styl dla tabel"""
+        """Zwraca styl dla tabel, korzystając z kolorów motywu."""
         if theme == "dark":
-            return """
-                   QTableView {
-                       background-color: #333;
-                       color: #EEE;
-                       gridline-color: #666;
-                       selection-background-color: #2980b9;
-                       selection-color: #FFFFFF;
-                       alternate-background-color: #3A3A3A; 
-                       border: 1px solid #666;
-                   }
-                   QTableView::item:selected {
-                       background-color: #2980b9;
-                   }
-                   QTableView::item {
-                       padding: 2px;
-                       /* BRAK background-color tutaj */
-                   }
-                   QHeaderView::section {
-                       background-color: #2c2c2c;
-                       color: white;
-                       border: 1px solid #3a3a3a;
-                       padding: 4px; /* Pamiętaj o dostosowaniu wysokości nagłówka */
-                   }
-               """
+            bg = AppStyles.DARK_BACKGROUND_CONTROLS
+            alt_bg = AppStyles.DARK_BACKGROUND_MAIN
+            text = AppStyles.DARK_TEXT_PRIMARY
+            grid = AppStyles.DARK_BORDER_SECONDARY
+            selection_bg = AppStyles.SELECTION_BACKGROUND_DARK
+            header_bg = AppStyles.DARK_BACKGROUND_PRESSED
         else:  # Jasny motyw
-            return """
-                   QTableView {
-                       background-color: #FFF;
-                       color: #333;
-                       gridline-color: #DDD;
-                       selection-background-color: #3498db;
-                       selection-color: #FFFFFF;
-                       alternate-background-color: #F5F5F5; 
-                       border: 1px solid #DDD;
-                   }
-                   QTableView::item:selected {
-                       background-color: #3498db;
-                   }
-                   QTableView::item {
-                       padding: 2px;
-                       /* BRAK background-color tutaj */
-                   }
-                   QHeaderView::section {
-                       background-color: #e0e0e0;
-                       color: black;
-                       border: 1px solid #cccccc;
-                       padding: 4px; /* Pamiętaj o dostosowaniu wysokości nagłówka */
-                   }
-               """
+            bg = AppStyles.LIGHT_BACKGROUND_CONTROLS
+            alt_bg = AppStyles.LIGHT_BACKGROUND_HOVER
+            text = AppStyles.LIGHT_TEXT_PRIMARY
+            grid = AppStyles.LIGHT_BORDER_PRIMARY
+            selection_bg = AppStyles.SELECTION_BACKGROUND_LIGHT
+            header_bg = "#e0e0e0"  # Specjalny, lekko szary dla nagłówka
+
+        return f"""
+               QTableView {{
+                   background-color: {bg};
+                   color: {text};
+                   gridline-color: {grid};
+                   selection-background-color: {selection_bg};
+                   selection-color: white;
+                   alternate-background-color: {alt_bg};
+                   border: 1px solid {grid};
+               }}
+               QTableView::item:selected {{
+                   background-color: {selection_bg};
+               }}
+               QHeaderView::section {{
+                   background-color: {header_bg};
+                   color: {text};
+                   border: 1px solid {grid};
+                   padding: 4px;
+               }}
+           """
 
     @staticmethod
     def get_tablewidget_style(theme="dark"):  # Używamy tej samej logiki co dla QTableView
@@ -674,145 +619,78 @@ class AppStyles:
 
     @staticmethod
     def get_dialog_style(theme="dark"):
-        # Styl dialogu dziedziczy kolory z QWidget z get_main_window_style
-        # Można tu dodać specyficzne rzeczy dla QDialog jeśli potrzeba,
-        # ale obecna struktura powinna już nadać im bazowy wygląd.
-        # Poniżej przykład jak można by rozbudować, ale najpierw sprawdź efekt dziedziczenia.
-
+        """
+        Zunifikowana metoda do stylizacji okien dialogowych i ich komponentów.
+        """
         main_bg = AppStyles.DARK_BACKGROUND_MAIN if theme == "dark" else AppStyles.LIGHT_BACKGROUND_MAIN
         control_bg = AppStyles.DARK_BACKGROUND_CONTROLS if theme == "dark" else AppStyles.LIGHT_BACKGROUND_CONTROLS
         text_color = AppStyles.DARK_TEXT_PRIMARY if theme == "dark" else AppStyles.LIGHT_TEXT_PRIMARY
-        border_color_secondary = AppStyles.DARK_BORDER_SECONDARY if theme == "dark" else AppStyles.LIGHT_BORDER_PRIMARY
+        border_color = AppStyles.DARK_BORDER_SECONDARY if theme == "dark" else AppStyles.LIGHT_BORDER_PRIMARY
         accent_color = AppStyles.ACCENT_COLOR_DARK if theme == "dark" else AppStyles.ACCENT_COLOR_LIGHT
 
         return f"""
-            QDialog {{
-                background-color: {main_bg}; /* Główne tło dialogu */
-                color: {text_color};
-            }}
-            QGroupBox {{
-                background-color: {main_bg}; /* Tło groupboxa, może być nieco jaśniejsze/ciemniejsze */
-                color: {text_color};
-                border: 1px solid {border_color_secondary};
-                border-radius: {AppStyles.BORDER_RADIUS};
-                margin-top: 10px; /* Odstęp dla tytułu */
-                padding: 10px; /* Wewnętrzny padding */
-            }}
-            QGroupBox::title {{
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                left: 10px;
-                padding: 0px 5px 0px 5px; /* Padding tytułu */
-                color: {accent_color}; /* Kolor akcentu dla tytułu */
-                font-weight: bold;
-                background-color: {main_bg}; /* Tło tytułu takie samo jak dialogu */
-            }}
-            QLabel {{ /* Ogólne etykiety w dialogu */
-                color: {text_color};
-                background-color: transparent;
-                padding: {AppStyles.CONTROL_PADDING};
-            }}
-            /* Style dla QRadioButton, QFontComboBox, QSpinBox, QTextEdit, QScrollBar 
-               powinny być dziedziczone lub można je tu zdefiniować/nadpisać */
-        """
-
-    @staticmethod
-    def get_dialog_style(theme="dark"):
-        main_bg = AppStyles.DARK_BACKGROUND_MAIN if theme == "dark" else AppStyles.LIGHT_BACKGROUND_MAIN
-        text_color = AppStyles.DARK_TEXT_PRIMARY if theme == "dark" else AppStyles.LIGHT_TEXT_PRIMARY
-        border_color = AppStyles.DARK_BORDER_SECONDARY if theme == "dark" else AppStyles.LIGHT_BORDER_PRIMARY  # Użyjemy tego dla ramki
-
-        return f"""
-            /* Ogólny styl dla QDialog, jeśli nie ma bardziej specyficznego */
-            QDialog {{
-                background-color: {main_bg};
-                color: {text_color};
-            }}
-
-            /* Styl specyficzny dla DigitSelectionDialogInstance */
-            QDialog#DigitSelectionDialogInstance {{
-                background-color: {main_bg}; /* Użyj tego samego tła co inne dialogi */
-                color: {text_color};
-                border: 1px solid {border_color}; /* Standardowa, subtelna ramka */
-                border-radius: {AppStyles.BORDER_RADIUS};
-            }}
-
-            /* Poniższe style dla elementów WEWNĄTRZ DigitSelectionDialogInstance */
-            /* mogą być potrzebne, jeśli dziedziczenie nie wystarcza lub chcesz innego wyglądu */
-            /* Na razie zakładamy, że przyciski będą stylizowane indywidualnie w apply_dialog_theme dialogu */
-
-            /* Ogólne style dla QGroupBox i QLabel w dialogach, jeśli DigitSelectionDialog ich użyje */
-            /* lub jeśli chcesz je zdefiniować globalnie dla wszystkich QDialog */
-            QDialog QGroupBox {{ /* Jeśli DigitSelectionDialog miałby GroupBoxy */
-                background-color: {AppStyles.DARK_BACKGROUND_CONTROLS if theme == "dark" else AppStyles.LIGHT_BACKGROUND_CONTROLS};
-                color: {text_color};
-                border: 1px solid {border_color};
-                border-radius: {AppStyles.BORDER_RADIUS};
-                margin-top: 10px;
-                padding: 10px;
-            }}
-            QDialog QGroupBox::title {{
-                subcontrol-origin: margin;
-                subcontrol-position: top left;
-                left: 10px;
-                padding: 0px 5px 0px 5px;
-                color: {AppStyles.ACCENT_COLOR_DARK if theme == "dark" else AppStyles.ACCENT_COLOR_LIGHT};
-                background-color: {AppStyles.DARK_BACKGROUND_CONTROLS if theme == "dark" else AppStyles.LIGHT_BACKGROUND_CONTROLS};
-            }}
-            QDialog QLabel {{
-                color: {text_color};
-                background-color: transparent; 
-                padding: {AppStyles.CONTROL_PADDING};
-            }}
-        """
+                QDialog {{
+                    background-color: {main_bg};
+                    color: {text_color};
+                    border: 1px solid {border_color};
+                    border-radius: {AppStyles.BORDER_RADIUS};
+                }}
+                QDialog QGroupBox {{
+                    background-color: {main_bg};
+                    border: 1px solid {border_color};
+                    border-radius: {AppStyles.BORDER_RADIUS};
+                    margin-top: 10px;
+                    padding: 10px;
+                }}
+                QDialog QGroupBox::title {{
+                    subcontrol-origin: margin;
+                    subcontrol-position: top left;
+                    left: 10px;
+                    padding: 0px 5px 0px 5px;
+                    color: {accent_color};
+                    background-color: {main_bg};
+                }}
+                QDialog QLabel {{
+                    color: {text_color};
+                    background-color: transparent;
+                    border: none;
+                }}
+            """
 
     SMALL_BUTTON_PADDING = "2px 5px"  # Mniejszy padding
 
     @staticmethod
-    def get_small_button_style(theme="dark"):  # Nowa metoda
-        # Podobna do get_button_style, ale używa SMALL_BUTTON_PADDING
+    def get_small_button_style(theme="dark"):
+        """Poprawiona metoda dla małych przycisków."""
+        # Użyj tych samych, sprawdzonych kolorów co w get_button_style, ale z mniejszym paddingiem
         if theme == "dark":
-            return f"""
-            QPushButton {{
-                background-color: {AppStyles.BUTTON_BLUE_BACKGROUND};
-                color: {AppStyles.BUTTON_BLUE_TEXT_COLOR};
-                border: 1px solid {AppStyles.BUTTON_BLUE_BORDER};
-                padding: {AppStyles.SMALL_BUTTON_PADDING if hasattr(AppStyles, 'SMALL_BUTTON_PADDING') else '2px 5px'};
-                border-radius: {AppStyles.BORDER_RADIUS};
-            }}
-            QPushButton:hover {{
-                background-color: {AppStyles.BUTTON_BLUE_HOVER_BG};
-            }}
-            QPushButton:pressed {{
-                background-color: {AppStyles.BUTTON_BLUE_PRESSED_BG};
-            }}
-            QPushButton:disabled {{
-                background-color: #c0c0c0;
-                color: #808080;
-                border-color: #a0a0a0;
-            }}
-        """
+            bg_color = AppStyles.BUTTON_DARK_BG
+            text_color = AppStyles.BUTTON_DARK_TEXT
+            border_color = AppStyles.BUTTON_DARK_BORDER
+            hover_bg = AppStyles.BUTTON_DARK_HOVER_BG
+            pressed_bg = AppStyles.BUTTON_DARK_PRESSED_BG
         else:
-            return f"""
-            QPushButton {{
-                background-color: {AppStyles.BUTTON_BLUE_BACKGROUND};
-                color: {AppStyles.BUTTON_BLUE_TEXT_COLOR};
-                border: 1px solid {AppStyles.BUTTON_BLUE_BORDER};
-                padding: {AppStyles.SMALL_BUTTON_PADDING if hasattr(AppStyles, 'SMALL_BUTTON_PADDING') else '2px 5px'};
-                border-radius: {AppStyles.BORDER_RADIUS};
-            }}
-            QPushButton:hover {{
-                background-color: {AppStyles.BUTTON_BLUE_HOVER_BG};
-            }}
-            QPushButton:pressed {{
-                background-color: {AppStyles.BUTTON_BLUE_PRESSED_BG};
-            }}
-            QPushButton:disabled {{
-                background-color: #c0c0c0;
-                color: #808080;
-                border-color: #a0a0a0;
-            }}
-        """
+            bg_color = AppStyles.BUTTON_GRAY_BACKGROUND
+            text_color = AppStyles.BUTTON_GRAY_TEXT_COLOR
+            border_color = AppStyles.BUTTON_GRAY_BORDER
+            hover_bg = AppStyles.BUTTON_GRAY_HOVER_BG
+            pressed_bg = AppStyles.BUTTON_GRAY_PRESSED_BG
+
+        return f"""
+                QPushButton {{
+                    background-color: {bg_color};
+                    color: {text_color};
+                    border: 1px solid {border_color};
+                    padding: {AppStyles.SMALL_BUTTON_PADDING};
+                    border-radius: {AppStyles.BORDER_RADIUS};
+                }}
+                QPushButton:hover {{
+                    background-color: {hover_bg};
+                }}
+                QPushButton:pressed {{
+                    background-color: {pressed_bg};
+                }}
+            """
 
     @staticmethod
     def get_tab_widget_style(theme="dark"):
