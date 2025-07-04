@@ -685,51 +685,63 @@ class StaffingDetailsWindow(QDialog):
         self._filtered_schedule_data = self.parent_widget.filter_processed_data()
         all_events = self.data_provider.get_events_data(self._year, self._month, self._grupa, self._funkcja)
         raw_forecast_data = self.data_provider.get_forecast_data(self._year, self._month)
+        actual_staffing_matrices = self._calculate_actual_staffing_matrix()
 
         # Wypełnienie filtrów (w tym lokalizacji)
         self._populate_location_filter(self.hourly_location_combo)
         self._populate_location_filter(self.daily_location_combo)
-        self._populate_forecast_filters(raw_forecast_data,
-                                        self._calculate_actual_staffing_matrix())  # Przeniesiono tutaj
+        self._populate_forecast_filters(raw_forecast_data, actual_staffing_matrices)
 
         # --- KROK 2: POBRANIE WYBORU UŻYTKOWNIKA Z FILTRÓW ---
         hourly_option = self.hourly_staffing_options_combo.currentData()
         hourly_location = self.hourly_location_combo.currentText()
-
         daily_option = self.daily_staffing_options_combo.currentData()
         daily_location = self.daily_location_combo.currentText()
 
-        # --- Dodano komunikaty diagnostyczne ---
-        debug_print(f"--- Odświeżanie danych w oknie analiz ---")
-        debug_print(f"Obsada godzinowa: Opcja='{hourly_option}', Lokalizacja='{hourly_location}'")
-        debug_print(f"Obsada dzienna: Opcja='{daily_option}', Lokalizacja='{daily_location}'")
+        # NOWE: Pobranie filtrów dla zakładki prognozy
+        forecast_group = self.forecast_group_combo.currentText()
+        forecast_view_mode = self.forecast_view_mode_combo.currentData()
 
         # --- KROK 3: OBLICZENIA I AKTUALIZACJA ZAKŁADEK ---
+        # Zakładka: Obsada Godzinowa
         hourly_staffing_data = self._calculate_hourly_staffing(self._filtered_schedule_data, all_events, hourly_option,
                                                                hourly_location)
         self._hourly_staffing_model.update_data(hourly_staffing_data, self._year, self._month)
         self._hourly_staffing_model.set_view_option(hourly_option)
 
+        # Zakładka: Obsada Dzienna
         daily_staffing_data = self._calculate_daily_staffing(self._filtered_schedule_data, all_events, daily_option,
                                                              daily_location)
         self._daily_staffing_model.update_data(self._year, self._month, daily_staffing_data)
         self._update_daily_staffing_chart(daily_staffing_data)
 
+        # Zakładka: Nadgodziny
         overtime_data = self._calculate_overtime_summary_detailed(self._filtered_schedule_data, all_events)
         self._overtime_model.update_data(overtime_data)
         self._update_overtime_charts(overtime_data)
 
+        # Zakładka: Analiza Absencji
         absence_data = self._calculate_absence_analysis(self._filtered_schedule_data)
         self._update_absence_tab(absence_data)
 
+        # Zakładka: Elastyczność
         flexibility_data = self._calculate_flexibility_analysis(self._filtered_schedule_data)
         self._flexibility_model.update_data(flexibility_data['table_data'])
         self._update_flexibility_chart(flexibility_data['chart_data'])
 
+        # Zakładka: Symbole
         counts, rbh = self._calculate_special_symbols_summary(self._filtered_schedule_data)
         self._symbols_count_model.update_data(self._year, self._month, counts)
         self._symbols_rbh_model.update_data(self._year, self._month, rbh)
 
+        # --- NOWA, BRAKUJĄCA LOGIKA DLA ZAKŁADKI PROGNOZY ---
+        actual_matrix = actual_staffing_matrices.get(forecast_group, [])
+        filtered_forecast = self._filter_forecast_data(raw_forecast_data)
+        forecast_matrix = self._calculate_matrix_from_forecast(filtered_forecast, "Prognoza")
+        self._forecast_model.update_data(self._year, self._month, forecast_matrix, actual_matrix, forecast_view_mode)
+        # --- KONIEC NOWEJ LOGIKI ---
+
+        # Na koniec dostosuj kolumny we wszystkich tabelach
         self._adjust_columns()
 
     def _populate_location_filter(self, combo_box: QComboBox):
