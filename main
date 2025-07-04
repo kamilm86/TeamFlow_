@@ -3671,87 +3671,70 @@ class WorkScheduleWindow(QMainWindow):
 
     def _apply_loaded_data(self, data):
         """
-        NOWA METODA: Aplikuje załadowane dane do modeli i UI
+        Aplikuje nowo załadowane dane do modeli i UI, decydując, czy przywrócić
+        zapisany stan filtrów, czy załadować je od nowa.
         """
-        schedule_data = data['schedule_data']
-        events_data = data['events_data']
-        processed_data = data['processed_data']
-        year = data['year']
-        month = data['month']
+        debug_print("Otrzymano dane z async loading")
 
-        debug_print(f"Aplikuję dane: {len(schedule_data)} wierszy grafiku, "
-                    f"{len(events_data)} zdarzeń, {len(processed_data)} użytkowników")
+        try:
+            # Upewnij się, że dane zostały załadowane poprawnie
+            if data is None:
+                log_error("Błąd: _apply_loaded_data otrzymało puste dane (None).")
+                return
 
-        # Aktualizuj model grafiku
-        self.schedule_model.update_data(processed_data, year, month)
+            # Rozpakuj dane
+            schedule_data = data.get('schedule_data', [])
+            events_data = data.get('events_data', [])
+            processed_data = data.get('processed_data', {})
+            year = data.get('year')
+            month = data.get('month')
 
-        # Wyczyść model zdarzeń
-        debug_print("Model zdarzeń pozostaje pusty - oczekuje na zaznaczenie komórek")
-        if not hasattr(self, 'events_data'):
+            if not all([processed_data, year, month]):
+                log_error(f"Niekompletne dane przekazane do _apply_loaded_data: rok={year}, miesiac={month}")
+                return
+
+            debug_print(f"Aplikuję dane: {len(schedule_data)} wierszy grafiku, "
+                        f"{len(events_data)} zdarzeń, {len(processed_data)} użytkowników")
+
+            # Zaktualizuj atrybuty klasy nowymi danymi
+            self.raw_data = schedule_data
+            self.all_events_data = events_data
+            self.processed_data = processed_data
+
+            # Zaktualizuj model grafiku nowymi danymi
+            self.schedule_model.update_data(self.processed_data, year, month)
+
+            # Wyczyść tabelę zdarzeń (zostanie wypełniona po zaznaczeniu komórek)
             self.events_data = []
-        if hasattr(self, 'events_model'):
-            self.events_model.update_data([])  # Pusta tabela zdarzeń
+            if hasattr(self, 'events_model'):
+                self.events_model.update_data([])
 
-        # Zachowaj dane dla kompatybilności
-        self.raw_data = schedule_data
-        self.all_events_data = events_data
-        self.processed_data = processed_data
+            # Zaktualizuj liczniki zdarzeń, jeśli istnieją
+            if hasattr(self, 'update_event_counts'):
+                self.update_event_counts()
 
-        # Filtruj dane grafiku
-        debug_print("Filtruję dane grafiku...")
-        filtered_data = self.filter_processed_data()
-        self.schedule_model.update_filtered_data(filtered_data)
-
-        # Aktualizuj widoki
-        if hasattr(self, 'table') and self.table:
-            debug_print("Aktualizuję widok grafiku...")
-            self.table.set_model(self.schedule_model)
-
-        if hasattr(self, 'events_table') and self.events_table:
-            debug_print("Aktualizuję widok zdarzeń (pusty)...")
-            self.events_table.setModel(self.events_model)
-            self.setup_event_table_columns()
-
-        # Aktualizuj filtry
-        debug_print("Aktualizuję filtry...")
-        self.update_filters()
-
-        # Ustaw daty filtrowania BEZ emitowania sygnałów
-        if hasattr(self, 'date_from') and hasattr(self, 'date_to'):
-            # Oblicz pierwszy i ostatni dzień miesiąca
-            first_day = QDate(year, month, 1)
-
-            # Ostatni dzień miesiąca
-            if month == 12:
-                next_month = QDate(year + 1, 1, 1)
+            # KLUCZOWA LOGIKA: Sprawdź, czy odświeżamy i mamy zapisany stan filtrów
+            if hasattr(self, '_preserved_filter_state') and self._preserved_filter_state:
+                # Jeśli tak, przywróć stan filtrów i wyczyść zapisaną wartość
+                self.restore_filters_state(self._preserved_filter_state)
+                self._preserved_filter_state = None
             else:
-                next_month = QDate(year, month + 1, 1)
-            last_day = next_month.addDays(-1)
+                # W przeciwnym wypadku (pierwsze ładowanie), uruchom standardową procedurę
+                self.update_filters()
+                self.filter_data()  # Użyj głównej metody filtrującej
 
-            # Blokuj sygnały przed zmianą dat
-            self.date_from.blockSignals(True)
-            self.date_to.blockSignals(True)
+            # Zastosuj dynamiczne rozmiary (wysokość wierszy, nagłówków i szerokość splittera)
+            self._apply_dynamic_sizes()
+            debug_print("Pomyślnie zastosowano dane z async loading")
 
-            try:
-                self.date_from.setDate(first_day)
-                self.date_to.setDate(last_day)
-            finally:
-                # ZAWSZE odblokuj sygnały
-                self.date_from.blockSignals(False)
-                self.date_to.blockSignals(False)
-
-        # Odśwież widoki
-        if hasattr(self, 'table'):
-            if hasattr(self.table, 'employees_view'):
-                self.table.employees_view.viewport().update()
-            if hasattr(self.table, 'schedule_view'):
-                self.table.schedule_view.viewport().update()
-
-        if hasattr(self, 'events_table'):
-            self.events_table.viewport().update()
-
-        debug_print("Zakończono aplikowanie danych")
-        self._apply_dynamic_sizes()
+        except Exception as e:
+            log_error(f"Błąd podczas stosowania załadowanych danych: {e}", exception=e)
+        finally:
+            # Zawsze upewnij się, że UI jest ponownie włączone
+            if hasattr(self, 'loading_dialog') and self.loading_dialog.isVisible():
+                self.loading_dialog.accept()
+            if hasattr(self, 'set_filters_enabled'):
+                self.set_filters_enabled(True)
 
     def clear_events_cache(self, year, month):
         """
@@ -3934,8 +3917,9 @@ class WorkScheduleWindow(QMainWindow):
 
     def refresh_data(self):
         """
-        Pełne odświeżenie danych z async loading i aktualizacja daty ostatniej modyfikacji.
+        Wymusza odświeżenie danych z bazy poprzez wyczyszczenie cache i ponowne załadowanie.
         """
+        # Resetuje wygląd przycisku "Odśwież"
         button_style = AppStyles.get_button_style("dark" if self.is_dark_theme else "light")
         self.refresh_button.setText("Odśwież dane")
         self.refresh_button.setStyleSheet(button_style)
@@ -3945,13 +3929,18 @@ class WorkScheduleWindow(QMainWindow):
         if current_data:
             year, month = current_data
 
-            self.data_provider.refresh_data(year, month, self.import_grupa, self.import_funkcja)
+            # Krok 1: Zapisz aktualny stan filtrów do późniejszego użycia
+            self._preserved_filter_state = self.get_current_filters_state()
+
+            # Krok 2: Wyczyść cache
+            debug_print(f"Wymuszone odświeżenie: czyszczę cache dla {year}-{month}")
+            self.data_provider.clear_monthly_cache(year, month)
+
+            # Krok 3: Uruchom ładowanie danych. Zapisany stan zostanie użyty po załadowaniu.
             self.update_data(year, month, use_async=True)
 
-            # --- KLUCZOWA ZMIANA: Zaktualizuj bazową datę po odświeżeniu ---
-            # To sprawi, że kolejne sprawdzanie będzie się odnosić do nowej, aktualnej daty.
+            # Krok 4: Zaktualizuj datę ostatniej modyfikacji i zrestartuj timer
             self._update_modification_date()
-
             if hasattr(self, 'check_timer'):
                 self.check_timer.start(60000)
                 debug_print("Dane odświeżone przez użytkownika, wznowiono automatyczne sprawdzanie.")
@@ -4030,156 +4019,174 @@ class WorkScheduleWindow(QMainWindow):
 
     def update_cross_filters(self):
         """
-        NOWA METODA: Aktualizuje filtry wzajemnie na podstawie aktualnych wyborów
+        Aktualizuje filtry wzajemnie, ale zamiast przebudowywać listy,
+        jedynie ukrywa/pokazuje istniejące elementy, aby zachować pozycję przewijania.
         """
-        # Sprawdź czy cross-filtering jest włączone
         if not getattr(self, '_cross_filtering_enabled', True):
             return
 
         if not hasattr(self, 'processed_data') or not self.processed_data:
             return
 
-        # KLUCZOWA POPRAWKA: Sprawdź czy już jesteśmy w trakcie aktualizacji
         if getattr(self, '_updating_cross_filters', False):
             return
 
-        # Ustaw flagę blokującą
         self._updating_cross_filters = True
-
         try:
-            # Pobierz aktualne wybory
-            selected_wydzialy = self.wydzial_combo.get_selected_items() if hasattr(self, 'wydzial_combo') else []
-            selected_przelozeni = self.get_list_selected_items(self.przelozony_list) if hasattr(self,
-                                                                                                'przelozony_list') else []
-            selected_uzytkownicy = self.get_list_selected_items(self.uzytkownik_list) if hasattr(self,
-                                                                                                 'uzytkownik_list') else []
+            # Pobranie aktualnych wyborów (logika bez zmian)
+            selected_wydzialy = self.wydzial_combo.get_selected_items()
+            selected_przelozeni = self.get_list_selected_items(self.przelozony_list)
+            selected_uzytkownicy = self.get_list_selected_items(self.uzytkownik_list)
 
-            debug_print(
-                f"Cross-filter: Wydziały={len(selected_wydzialy)}, Przełożeni={len(selected_przelozeni)}, Użytkownicy={len(selected_uzytkownicy)}")
-
-            # === AKTUALIZACJA WYDZIAŁÓW na podstawie przełożonych/użytkowników ===
-            if hasattr(self, 'wydzial_combo'):
-                available_wydzialy = set()
-
-                # Jeśli wybrano przełożonych, pokaż tylko ich wydziały
-                if selected_przelozeni:
-                    for key in self.processed_data.keys():
-                        wydzial, przelozony, uzytkownik_dane, _ = key
-                        if przelozony in selected_przelozeni and wydzial:
-                            available_wydzialy.add(wydzial)
-
-                # Jeśli wybrano użytkowników, pokaż tylko ich wydziały
-                elif selected_uzytkownicy:
-                    for key in self.processed_data.keys():
-                        wydzial, przelozony, uzytkownik_dane, _ = key
-                        if str(uzytkownik_dane) in selected_uzytkownicy and wydzial:
-                            available_wydzialy.add(wydzial)
-
-                # Jeśli nic nie wybrano, pokaż wszystkie wydziały
-                else:
-                    for key in self.processed_data.keys():
-                        wydzial = key[0]
-                        if wydzial:
-                            available_wydzialy.add(wydzial)
-
-                # Zachowaj wybrane wydziały które są dostępne
-                valid_selected_wydzialy = [w for w in selected_wydzialy if w in available_wydzialy]
-
-                # Aktualizuj combo wydziałów
-                self.wydzial_combo.clear()
-                self.wydzial_combo.add_items(sorted(available_wydzialy))
-                self.wydzial_combo.select_items(valid_selected_wydzialy)
-
-            # === AKTUALIZACJA PRZEŁOŻONYCH na podstawie wydziałów/użytkowników ===
+            # === AKTUALIZACJA LISTY PRZEŁOŻONYCH ===
             if hasattr(self, 'przelozony_list'):
+                # Oblicz, którzy przełożeni powinni być widoczni (logika bez zmian)
                 available_przelozeni = set()
-
-                # Jeśli wybrano wydziały, pokaż tylko przełożonych z tych wydziałów
                 if selected_wydzialy:
                     for key in self.processed_data.keys():
-                        wydzial, przelozony, uzytkownik_dane, _ = key
-                        if wydzial in selected_wydzialy and przelozony:
-                            available_przelozeni.add(przelozony)
-
-                # Jeśli wybrano użytkowników, pokaż tylko ich przełożonych
-                elif selected_uzytkownicy:
-                    for key in self.processed_data.keys():
-                        wydzial, przelozony, uzytkownik_dane, _ = key
-                        if str(uzytkownik_dane) in selected_uzytkownicy and przelozony:
-                            available_przelozeni.add(przelozony)
-
-                # Jeśli nic nie wybrano, pokaż wszystkich przełożonych
+                        if key[0] in selected_wydzialy and key[1]:
+                            available_przelozeni.add(key[1])
                 else:
                     for key in self.processed_data.keys():
-                        przelozony = key[1]
-                        if przelozony:
-                            available_przelozeni.add(przelozony)
+                        if key[1]: available_przelozeni.add(key[1])
 
-                # Zachowaj wybranych przełożonych którzy są dostępni
-                valid_selected_przelozeni = [p for p in selected_przelozeni if p in available_przelozeni]
+                # NOWA LOGIKA: Pokaż/ukryj elementy zamiast przebudowywać listę
+                for i in range(self.przelozony_list.count()):
+                    item = self.przelozony_list.item(i)
+                    item.setHidden(item.text() not in available_przelozeni)
 
-                # Aktualizuj listę przełożonych BEZPIECZNIE
-                self.update_list_safely(self.przelozony_list, available_przelozeni, valid_selected_przelozeni)
-
-            # === AKTUALIZACJA UŻYTKOWNIKÓW na podstawie wydziałów/przełożonych ===
+            # === AKTUALIZACJA LISTY UŻYTKOWNIKÓW ===
             if hasattr(self, 'uzytkownik_list'):
+                # Oblicz, którzy użytkownicy powinni być widoczni (logika bez zmian)
                 available_uzytkownicy = set()
+                for key in self.processed_data.keys():
+                    wydzial, przelozony, uzytkownik_dane, _ = key
+                    if (not selected_wydzialy or wydzial in selected_wydzialy) and \
+                            (not selected_przelozeni or przelozony in selected_przelozeni):
+                        if uzytkownik_dane: available_uzytkownicy.add(str(uzytkownik_dane))
 
-                # Jeśli wybrano wydziały i/lub przełożonych
-                if selected_wydzialy or selected_przelozeni:
-                    for key in self.processed_data.keys():
-                        wydzial, przelozony, uzytkownik_dane, _ = key
-
-                        # Sprawdź czy pasuje do filtrów wydziału i przełożonego
-                        wydzial_match = not selected_wydzialy or wydzial in selected_wydzialy
-                        przelozony_match = not selected_przelozeni or przelozony in selected_przelozeni
-
-                        if wydzial_match and przelozony_match and uzytkownik_dane:
-                            available_uzytkownicy.add(str(uzytkownik_dane))
-
-                # Jeśli nic nie wybrano, pokaż wszystkich użytkowników
-                else:
-                    for key in self.processed_data.keys():
-                        uzytkownik_dane = key[2]
-                        if uzytkownik_dane:
-                            available_uzytkownicy.add(str(uzytkownik_dane))
-
-                # Zachowaj wybranych użytkowników którzy są dostępni
-                valid_selected_uzytkownicy = [u for u in selected_uzytkownicy if u in available_uzytkownicy]
-
-                # Aktualizuj listę użytkowników BEZPIECZNIE
-                self.update_list_safely(self.uzytkownik_list, available_uzytkownicy, valid_selected_uzytkownicy)
-
-            debug_print("Cross-filter zakończone")
+                # NOWA LOGIKA: Pokaż/ukryj elementy zamiast przebudowywać listę
+                for i in range(self.uzytkownik_list.count()):
+                    item = self.uzytkownik_list.item(i)
+                    item.setHidden(item.text() not in available_uzytkownicy)
 
         except Exception as e:
-            log_error(f"Błąd podczas cross-filtrowania: {e}")
-            import traceback
-            traceback.print_exc()
+            log_error(f"Błąd podczas cross-filtrowania: {e}", exception=e)
         finally:
-            # KLUCZOWA POPRAWKA: Zawsze odblokuj flagę
             self._updating_cross_filters = False
 
     def update_list_safely(self, list_widget, items, selected_items):
         """
-        NOWA METODA: Bezpiecznie aktualizuje listę bez wywołania sygnałów
+        Bezpiecznie aktualizuje QListWidget, blokując sygnały na czas modyfikacji.
         """
         if not list_widget:
             return
 
-        # Blokuj sygnały podczas aktualizacji
         list_widget.blockSignals(True)
-
         try:
+            # Zapamiętanie, co jest aktualnie widoczne z pola wyszukiwania
+            search_text = ""
+            if list_widget is self.przelozony_list:
+                search_text = self.przelozony_filter.text().lower()
+            elif list_widget is self.uzytkownik_list:
+                search_text = self.uzytkownik_filter.text().lower()
+
             list_widget.clear()
             for item_text in sorted(items):
                 item = QListWidgetItem(item_text)
                 list_widget.addItem(item)
                 if item_text in selected_items:
                     item.setSelected(True)
+
+                # Przywrócenie ukrycia na podstawie filtra wyszukiwania
+                if search_text and search_text not in item_text.lower():
+                    item.setHidden(True)
+
         finally:
-            # Zawsze odblokuj sygnały
             list_widget.blockSignals(False)
+
+    def get_current_filters_state(self):
+        """Zapisuje aktualnie wybrane wartości ze wszystkich ISTNIEJĄCYCH filtrów do słownika."""
+        state = {
+            'grupa': self.grupa_main_filter_combo.currentText(),
+            'wydzial': self.wydzial_combo.get_selected_items(),
+            'przelozony': self.get_list_selected_items(self.przelozony_list),
+            'uzytkownik': self.get_list_selected_items(self.uzytkownik_list),
+            'lokalizacja_domyslna': self.default_location_combo.get_selected_items(),
+            'system_czasu_pracy': self.system_czasu_pracy_combo.get_selected_items(),
+            'rola': self.rola_combo.get_selected_items(),
+            'jezyk': self.jezyk_combo.get_selected_items(),
+            'etat': self.etat_combo.get_selected_items(),
+            'dtn': self.dtn_combo.get_selected_items(),
+        }
+        debug_print(f"Zapisano stan filtrów: {state}")
+        return state
+
+    def restore_filters_state(self, state):
+        """
+        Przywraca zapisany stan filtrów po załadowaniu nowych danych.
+        """
+        debug_print("Rozpoczynam przywracanie stanu filtrów...")
+
+        self._cross_filtering_enabled = False
+
+        try:
+            self.update_filters()
+
+            self.grupa_main_filter_combo.blockSignals(True)
+            self.grupa_main_filter_combo.setCurrentText(state.get('grupa', '(Wszyscy)'))
+            self.grupa_main_filter_combo.blockSignals(False)
+
+            self.wydzial_combo.select_items(state.get('wydzial', []))
+            self.default_location_combo.select_items(state.get('lokalizacja_domyslna', []))
+            self.system_czasu_pracy_combo.select_items(state.get('system_czasu_pracy', []))
+            self.rola_combo.select_items(state.get('rola', []))
+            self.jezyk_combo.select_items(state.get('jezyk', []))
+            self.etat_combo.select_items(state.get('etat', []))
+            self.dtn_combo.select_items(state.get('dtn', []))
+
+            przelozeni_items = self._get_unique_values_for_filter('przelozony')
+            uzytkownicy_items = self._get_unique_values_for_filter('uzytkownik_dane')
+            self.update_list_safely(self.przelozony_list, przelozeni_items, state.get('przelozony', []))
+            self.update_list_safely(self.uzytkownik_list, uzytkownicy_items, state.get('uzytkownik', []))
+
+        finally:
+            self._cross_filtering_enabled = True
+            debug_print("Zakończono przywracanie stanu filtrów.")
+
+        debug_print("Uruchamiam filtrowanie po przywróceniu stanu.")
+        self.filter_data()
+
+    def _get_unique_values_for_filter(self, filter_key):
+        """
+        Pobiera unikalne wartości dla danego filtra z aktualnie załadowanych,
+        pełnych danych w self.processed_data.
+        """
+        if not hasattr(self, 'processed_data') or not self.processed_data:
+            return set()
+
+        unique_values = set()
+
+        key_map = {
+            'wydzial': 0,
+            'przelozony': 1,
+            'uzytkownik_dane': 2
+        }
+
+        if filter_key in key_map:
+            key_index = key_map[filter_key]
+            for key_tuple in self.processed_data.keys():
+                if len(key_tuple) > key_index and key_tuple[key_index]:
+                    unique_values.add(str(key_tuple[key_index]))
+        else:
+            for data_dict in self.processed_data.values():
+                value = data_dict.get(filter_key)
+                # --- POPRAWIONY WARUNEK ---
+                # Sprawdzamy, czy wartość nie jest None, co poprawnie uwzględni zero.
+                if value is not None and value != '':
+                    unique_values.add(str(value))
+
+        return unique_values
 
     def clear_filters(self):
         """Czyści wszystkie filtry i aktualizuje model."""
@@ -4333,8 +4340,7 @@ class WorkScheduleWindow(QMainWindow):
             self.etat_combo.select_items(selected_etaty)
 
             # Filtr "DTN"
-            dtn_values = sorted(
-                set(str(data.get('dtn', '')) for data in self.processed_data.values() if data.get('dtn', '')))
+            dtn_values = sorted(set(str(data['dtn']) for data in self.processed_data.values() if data.get('dtn') is not None), key=int)
             self.dtn_combo.add_items(dtn_values)
             self.dtn_combo.select_items(selected_dtn)
 
