@@ -2,28 +2,22 @@
 
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QTableView, QPushButton, QComboBox,
                                QHeaderView, QLabel, QHBoxLayout, QSplitter, QWidget, QTabWidget,
-                               QToolTip, QListWidget, QAbstractItemView, QFrame, QGridLayout)
-from PySide6.QtCore import Qt, QAbstractTableModel, QDate, Signal, QEvent
-from PySide6.QtGui import QBrush, QColor, QFont, QCursor
-
-# Importy dla Matplotlib
-import matplotlib
-matplotlib.use('QtAgg')
-from matplotlib.backends.backend_qtagg import FigureCanvasQTAgg as FigureCanvas
-from matplotlib.figure import Figure
-import numpy as np
-import matplotlib.pyplot as plt
+                               QListWidget, QAbstractItemView, QFrame, QGridLayout, QToolTip)
+from PySide6.QtCore import Qt, QAbstractTableModel, QDate, Signal
+from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QCursor
+from PySide6.QtCharts import QChart, QChartView, QBarSeries, QBarSet, QPieSeries, QLineSeries, QValueAxis, \
+    QBarCategoryAxis, QStackedBarSeries
 
 from collections import defaultdict
 import datetime as dt
 from debug_utils import log_error, debug_print
 from symbol_parser import parse_symbol
+from styles import AppStyles
 
 
 class HourlyStaffingTableModel(QAbstractTableModel):
     """
-    Ulepszony model danych dla tabeli z obsadą godzinową,
-    który dynamicznie zmienia kolory w zależności od wybranego widoku.
+    Model danych dla tabeli z obsadą godzinową.
     """
 
     def __init__(self, year, month, parent=None):
@@ -37,12 +31,9 @@ class HourlyStaffingTableModel(QAbstractTableModel):
             self._days_in_month = 31
         self._is_dark_theme = parent.is_dark_theme if hasattr(parent, 'is_dark_theme') else False
         self._daily_totals = [0.0] * self._days_in_month
-        # ZMIANA: Dodajemy atrybut przechowujący aktualny tryb widoku
         self._view_option = "all"
 
-    # NOWA METODA: Pozwala na ustawienie trybu widoku z zewnątrz
     def set_view_option(self, option: str):
-        """Ustawia tryb widoku (np. 'all', 'overtime_only') i odświeża tabelę."""
         self._view_option = option
         self.layoutChanged.emit()
 
@@ -103,25 +94,13 @@ class HourlyStaffingTableModel(QAbstractTableModel):
         if role == Qt.TextAlignmentRole: return Qt.AlignCenter
 
         if role == Qt.BackgroundRole and value > 0:
-            # --- ZMIANA: Logika wyboru palety kolorów ---
             factor = min((value / self._max_value) ** 0.5, 1.0)
-
-            # Jeśli widok to "Tylko Nadgodziny", użyj palety czerwonej
             if self._view_option == "overtime_only":
-                if self._is_dark_theme:
-                    start_color = QColor(60, 25, 25)  # Ciemna czerwień
-                    end_color = QColor(240, 120, 120)  # Jasna czerwień
-                else:
-                    start_color = QColor(255, 230, 230)  # Bardzo jasna czerwień
-                    end_color = QColor(180, 0, 0)  # Ciemna czerwień
-            # W przeciwnym razie, użyj standardowej palety zielonej
+                start_color = QColor(60, 25, 25) if self._is_dark_theme else QColor(255, 230, 230)
+                end_color = QColor(240, 120, 120) if self._is_dark_theme else QColor(180, 0, 0)
             else:
-                if self._is_dark_theme:
-                    start_color = QColor(25, 50, 25)
-                    end_color = QColor(120, 240, 120)
-                else:
-                    start_color = QColor(230, 255, 230)
-                    end_color = QColor(0, 100, 0)
+                start_color = QColor(25, 50, 25) if self._is_dark_theme else QColor(230, 255, 230)
+                end_color = QColor(120, 240, 120) if self._is_dark_theme else QColor(0, 100, 0)
 
             r = int(start_color.red() + (end_color.red() - start_color.red()) * factor)
             g = int(start_color.green() + (end_color.green() - start_color.green()) * factor)
@@ -133,7 +112,7 @@ class HourlyStaffingTableModel(QAbstractTableModel):
             if bg_brush:
                 bg_color = bg_brush.color()
                 luminance = 0.299 * bg_color.red() + 0.587 * bg_color.green() + 0.114 * bg_color.blue()
-                return QBrush(QColor(Qt.white if luminance < 128 else Qt.black))
+                return QBrush(QColor(Qt.GlobalColor.white if luminance < 128 else Qt.GlobalColor.black))
         return None
 
     def headerData(self, section, orientation, role):
@@ -160,13 +139,6 @@ class HourlyStaffingTableModel(QAbstractTableModel):
         return None
 
 
-class MplChartCanvas(FigureCanvas):
-    """Widget-kontener dla wykresu Matplotlib."""
-    def __init__(self, parent=None, width=5, height=4, dpi=100):
-        self.fig = Figure(figsize=(width, height), dpi=dpi)
-        self.axes = self.fig.add_subplot(111)
-        super().__init__(self.fig)
-
 class BaseMatrixTableModel(QAbstractTableModel):
     def __init__(self, year, month, row_header_title="Row", parent=None):
         super().__init__(parent)
@@ -177,12 +149,19 @@ class BaseMatrixTableModel(QAbstractTableModel):
         except (ValueError, TypeError):
             self._days_in_month = 31
         self._row_labels, self._matrix_data, self._daily_totals = [], {}, [0.0] * self._days_in_month
+
     def _get_days_in_month(self, year, month):
         return QDate(year, month, 1).daysInMonth()
+
     def set_theme(self, is_dark_theme):
         if self._is_dark_theme != is_dark_theme: self._is_dark_theme = is_dark_theme; self.layoutChanged.emit()
-    def rowCount(self, parent=None): return len(self._row_labels) + 1
-    def columnCount(self, parent=None): return max(self._days_in_month, 0) + 1
+
+    def rowCount(self, parent=None):
+        return len(self._row_labels) + 1
+
+    def columnCount(self, parent=None):
+        return max(self._days_in_month, 0) + 1
+
     def headerData(self, section, orientation, role):
         if orientation == Qt.Horizontal:
             if role == Qt.DisplayRole:
@@ -197,11 +176,14 @@ class BaseMatrixTableModel(QAbstractTableModel):
                     return QBrush(QColor(255, 220, 220) if not self._is_dark_theme else QColor(80, 50, 50))
             if role == Qt.TextAlignmentRole: return Qt.AlignCenter
         return None
+
     def _get_total_row_style(self, role):
         if role == Qt.FontRole: font = QFont(); font.setBold(True); return font
-        if role == Qt.BackgroundRole: return QBrush(QColor(225, 225, 235) if not self._is_dark_theme else QColor(55, 55, 65))
+        if role == Qt.BackgroundRole: return QBrush(
+            QColor(225, 225, 235) if not self._is_dark_theme else QColor(55, 55, 65))
         if role == Qt.TextAlignmentRole: return Qt.AlignCenter
         return None
+
     def update_data(self, year, month, new_data):
         self.beginResetModel()
         self._year, self._month, self._matrix_data = year, month, new_data
@@ -211,10 +193,12 @@ class BaseMatrixTableModel(QAbstractTableModel):
         for row_label in self._row_labels:
             if row_label in self._matrix_data:
                 for day_idx, value in enumerate(self._matrix_data[row_label]):
-                    val_to_sum = value if isinstance(value, (int, float)) else (value[0] if isinstance(value, tuple) else 0)
+                    val_to_sum = value if isinstance(value, (int, float)) else (
+                        value[0] if isinstance(value, tuple) else 0)
                     if val_to_sum and day_idx < len(self._daily_totals):
                         self._daily_totals[day_idx] += val_to_sum
         self.endResetModel()
+
 
 class DailyStaffingTableModel(BaseMatrixTableModel):
     def data(self, index, role):
@@ -223,14 +207,17 @@ class DailyStaffingTableModel(BaseMatrixTableModel):
         if is_total_row:
             if role == Qt.DisplayRole:
                 if col == 0: return "Suma"
-                total = self._daily_totals[col - 1]; return f"{total:.1f}" if total > 0 else ""
+                total = self._daily_totals[col - 1];
+                return f"{total:.1f}" if total > 0 else ""
             return self._get_total_row_style(role)
         row_label = self._row_labels[row]
         if role == Qt.DisplayRole:
             if col == 0: return row_label
-            count = self._matrix_data.get(row_label, [0.0] * self._days_in_month)[col - 1]; return f"{count:.1f}" if count > 0 else ""
+            count = self._matrix_data.get(row_label, [0.0] * self._days_in_month)[col - 1];
+            return f"{count:.1f}" if count > 0 else ""
         if role == Qt.TextAlignmentRole: return Qt.AlignCenter
         return None
+
 
 class SymbolMatrixTableModel(BaseMatrixTableModel):
     def data(self, index, role):
@@ -239,56 +226,91 @@ class SymbolMatrixTableModel(BaseMatrixTableModel):
         if is_total_row:
             if role == Qt.DisplayRole:
                 if col == 0: return "Suma"
-                total = self._daily_totals[col - 1]; return str(int(round(total))) if total > 0 else ""
+                total = self._daily_totals[col - 1];
+                return str(int(round(total))) if total > 0 else ""
             return self._get_total_row_style(role)
         row_label = self._row_labels[row]
         if role == Qt.DisplayRole:
             if col == 0: return row_label
             value = self._matrix_data.get(row_label, [0] * self._days_in_month)[col - 1]
             if isinstance(value, tuple):
-                count, hours = value; return f"{count} ({int(round(hours))}h)" if count > 0 else ""
-            else: return str(int(round(value))) if value > 0 else ""
+                count, hours = value;
+                return f"{count} ({int(round(hours))}h)" if count > 0 else ""
+            else:
+                return str(int(round(value))) if value > 0 else ""
         if role == Qt.TextAlignmentRole: return Qt.AlignCenter
         return None
 
+
 class OvertimeSummaryTableModel(QAbstractTableModel):
     def __init__(self, parent=None):
-        super().__init__(parent); self._data, self._headers = [], ["Wydział", "Pracownik", "Do wypłaty", "Do odbioru", "Odpracowanie", "Suma godzin"]
-    def rowCount(self, parent=None): return len(self._data)
-    def columnCount(self, parent=None): return len(self._headers)
+        super().__init__(parent);
+        self._data, self._headers = [], ["Wydział", "Pracownik", "Do wypłaty", "Do odbioru", "Odpracowanie",
+                                         "Suma godzin"]
+
+    def rowCount(self, parent=None):
+        return len(self._data)
+
+    def columnCount(self, parent=None):
+        return len(self._headers)
+
     def data(self, index, role=Qt.DisplayRole):
         if not index.isValid() or role != Qt.DisplayRole: return None
-        value = self._data[index.row()][index.column()]; return f"{value:.2f}" if isinstance(value, float) else value
+        value = self._data[index.row()][index.column()];
+        return f"{value:.2f}" if isinstance(value, float) else value
+
     def headerData(self, section, orientation, role=Qt.DisplayRole):
         if role == Qt.DisplayRole and orientation == Qt.Horizontal: return self._headers[section]
-    def update_data(self, new_data): self.beginResetModel(); self._data = new_data; self.endResetModel()
+
+    def update_data(self, new_data):
+        self.beginResetModel(); self._data = new_data; self.endResetModel()
 
 
 class AbsenceSummaryTableModel(QAbstractTableModel):
     def __init__(self, parent=None):
-        super().__init__(parent); self._data, self._headers = [], ["Typ absencji (Symbol)", "Suma godzin", "Liczba wystąpień"]
-    def rowCount(self, parent=None): return len(self._data)
-    def columnCount(self, parent=None): return len(self._headers)
+        super().__init__(parent);
+        self._data, self._headers = [], ["Typ absencji (Symbol)", "Suma godzin", "Liczba wystąpień"]
+
+    def rowCount(self, parent=None):
+        return len(self._data)
+
+    def columnCount(self, parent=None):
+        return len(self._headers)
+
     def data(self, index, role=Qt.DisplayRole):
         if not index.isValid() or role != Qt.DisplayRole: return None
-        value = self._data[index.row()][index.column()]; return f"{value:.1f}" if isinstance(value, float) else value
+        value = self._data[index.row()][index.column()];
+        return f"{value:.1f}" if isinstance(value, float) else value
+
     def headerData(self, section, orientation, role=Qt.DisplayRole):
         if role == Qt.DisplayRole and orientation == Qt.Horizontal: return self._headers[section]
-    def update_data(self, new_data): self.beginResetModel(); self._data = new_data; self.endResetModel()
+
+    def update_data(self, new_data):
+        self.beginResetModel(); self._data = new_data; self.endResetModel()
+
 
 class FlexibilitySummaryTableModel(QAbstractTableModel):
     def __init__(self, parent=None):
-        super().__init__(parent); self._data, self._headers = [], ["Lokalizacja", "Suma Godzin", "Udział Procentowy"]
-    def rowCount(self, parent=None): return len(self._data)
-    def columnCount(self, parent=None): return len(self._headers)
+        super().__init__(parent);
+        self._data, self._headers = [], ["Lokalizacja", "Suma Godzin", "Udział Procentowy"]
+
+    def rowCount(self, parent=None):
+        return len(self._data)
+
+    def columnCount(self, parent=None):
+        return len(self._headers)
+
     def data(self, index, role=Qt.DisplayRole):
         if not index.isValid() or role != Qt.DisplayRole: return None
         value = self._data[index.row()][index.column()]
         if isinstance(value, float): return f"{value:.1f}%" if index.column() == 2 else f"{value:.1f}"
         return value
+
     def headerData(self, section, orientation, role=Qt.DisplayRole):
         if role == Qt.DisplayRole and orientation == Qt.Horizontal: return self._headers[section]
-    def update_data(self, new_data): self.beginResetModel(); self._data = new_data; self.endResetModel()
+
+    def update_data(self, new_data):
+        self.beginResetModel(); self._data = new_data; self.endResetModel()
 
 
 class ForecastComparisonTableModel(BaseMatrixTableModel):
@@ -328,10 +350,8 @@ class ForecastComparisonTableModel(BaseMatrixTableModel):
                         val = actual_total - forecast_total
                     return str(int(round(val))) if val != 0 else ""
 
-            # Zwraca styl dla całego wiersza sumy
             return self._get_total_row_style(role)
 
-        # Standardowe wiersze danych
         forecast_val = self._forecast_data[row][col] if row < len(self._forecast_data) and col < len(
             self._forecast_data[row]) else 0
         actual_val = self._actual_data[row][col] if row < len(self._actual_data) and col < len(
@@ -366,10 +386,10 @@ class ForecastComparisonTableModel(BaseMatrixTableModel):
                 if diff != 0:
                     factor = min(abs(diff) / self._max_abs_diff, 1.0) if self._max_abs_diff > 0 else 0
                     start_color, end_color = (QColor(255, 230, 230), QColor(200, 0, 0)) if diff < 0 else (
-                    QColor(230, 255, 230), QColor(0, 128, 0))
+                        QColor(230, 255, 230), QColor(0, 128, 0))
                     if self._is_dark_theme: start_color, end_color = (
-                    QColor(80, 50, 50), QColor(180, 40, 40)) if diff < 0 else (
-                    QColor(40, 80, 40), QColor(100, 200, 100))
+                        QColor(80, 50, 50), QColor(180, 40, 40)) if diff < 0 else (
+                        QColor(40, 80, 40), QColor(100, 200, 100))
                     r, g, b = [int(s + (e - s) * factor) for s, e in zip(start_color.getRgb(), end_color.getRgb())][:3]
                     return QBrush(QColor(r, g, b))
             elif self._view_mode in ["forecast", "actual"]:
@@ -377,8 +397,8 @@ class ForecastComparisonTableModel(BaseMatrixTableModel):
                 if value > 0:
                     factor = min(value / self._max_value, 1.0) if self._max_value > 0 else 0
                     start_color, end_color = (
-                    QColor(235, 245, 255), QColor(60, 120, 180)) if not self._is_dark_theme else (
-                    QColor(40, 70, 90), QColor(90, 160, 230))
+                        QColor(235, 245, 255), QColor(60, 120, 180)) if not self._is_dark_theme else (
+                        QColor(40, 70, 90), QColor(90, 160, 230))
                     r, g, b = [int(s + (e - s) * factor) for s, e in zip(start_color.getRgb(), end_color.getRgb())][:3]
                     return QBrush(QColor(r, g, b))
 
@@ -386,19 +406,16 @@ class ForecastComparisonTableModel(BaseMatrixTableModel):
         return None
 
     def headerData(self, section, orientation, role):
-        # Nagłówek pionowy (Godziny)
         if orientation == Qt.Vertical:
             if role == Qt.DisplayRole:
                 if section == 24:
                     return "Suma"
                 return f"{section:02d}:00"
             if role == Qt.BackgroundRole:
-                # Ustawia domyślne tło dla nagłówka pionowego
                 return QBrush(QColor(230, 230, 230) if not self._is_dark_theme else QColor(53, 53, 53))
             if role == Qt.TextAlignmentRole:
                 return Qt.AlignCenter
 
-        # Nagłówek poziomy (Dni)
         if orientation == Qt.Horizontal:
             if role == Qt.DisplayRole:
                 day = section + 1
@@ -408,12 +425,10 @@ class ForecastComparisonTableModel(BaseMatrixTableModel):
                     return f"{day_names[date_obj.dayOfWeek() - 1]}\n{day}"
             if role == Qt.BackgroundRole:
                 day = section + 1
-                # Specjalny kolor dla weekendów
                 if self._year and self._month and QDate.isValid(self._year, self._month, day) and QDate(self._year,
                                                                                                         self._month,
                                                                                                         day).dayOfWeek() >= 6:
                     return QBrush(QColor(255, 220, 220) if not self._is_dark_theme else QColor(80, 50, 50))
-                # Domyślne tło dla dni roboczych
                 return QBrush(QColor(240, 240, 240) if not self._is_dark_theme else QColor(53, 53, 53))
             if role == Qt.TextAlignmentRole:
                 return Qt.AlignCenter
@@ -430,9 +445,12 @@ class ForecastComparisonTableModel(BaseMatrixTableModel):
         max_f = max((max(r, default=0) for r in self._forecast_data if r), default=0)
         max_a = max((max(r, default=0) for r in self._actual_data if r), default=0)
         self._max_value = max(max_f, max_a, 1.0)
-        max_diff = max((abs(self._actual_data[r][c] - self._forecast_data[r][c]) for r in range(24) for c in range(self._days_in_month) if r < len(self._actual_data) and c < len(self._actual_data[r])), default=1.0)
+        max_diff = max((abs(self._actual_data[r][c] - self._forecast_data[r][c]) for r in range(24) for c in
+                        range(self._days_in_month) if r < len(self._actual_data) and c < len(self._actual_data[r])),
+                       default=1.0)
         self._max_abs_diff = max_diff if max_diff > 0 else 1.0
         self.endResetModel()
+
 
 class AbsenceDetailTableModel(QAbstractTableModel):
     def __init__(self, parent=None):
@@ -496,16 +514,695 @@ class AbsenceDetailTableModel(QAbstractTableModel):
         return None
 
 class StaffingDetailsWindow(QDialog):
+    """
+    Okno dialogowe do wyświetlania szczegółów obsady i analiz.
+    Wersja przepisana na PySide6.QtCharts, bez zależności od Matplotlib i Numpy.
+    """
     def __init__(self, parent, data_provider, year, month, grupa, funkcja):
         super().__init__(parent)
-        self.parent_widget, self.data_provider, self._year, self._month, self._grupa, self._funkcja = parent, data_provider, year, month, grupa, funkcja
+        self.parent_widget = parent
+        self.data_provider = data_provider
+        self._year = year
+        self._month = month
+        self._grupa = grupa
+        self._funkcja = funkcja
         self._days_in_month = QDate(self._year, self._month, 1).daysInMonth()
         self.is_dark_theme = parent.is_dark_theme if hasattr(parent, 'is_dark_theme') else False
+        self._filtered_schedule_data = {}
+
         self.setWindowTitle(f"Szczegóły obsady i analizy dla {month:02}/{year}")
         self.setMinimumSize(1300, 800)
+
         self.setup_ui()
         self.apply_styles()
         self.load_and_display_data()
+        self._setup_table_interactivity()
+
+    def setup_ui(self):
+        main_layout = QVBoxLayout(self)
+        self.info_label = QLabel(f"Analiza obsady i zdarzeń dla miesiąca: {self._month:02}.{self._year}")
+        main_layout.addWidget(self.info_label)
+        self.tabs = QTabWidget()
+        main_layout.addWidget(self.tabs)
+
+        self._create_hourly_staffing_tab()
+        self._create_daily_staffing_tab()
+        self._create_forecast_tab()
+        self._create_overtime_tab()
+        self._create_symbols_tab()
+        self._create_absence_analysis_tab()
+        self._create_flexibility_analysis_tab()
+
+        buttons_layout = QHBoxLayout()
+        buttons_layout.addStretch()
+        self.refresh_button = QPushButton("Odśwież")
+        self.refresh_button.clicked.connect(self.load_and_display_data)
+        self.close_button = QPushButton("Zamknij")
+        self.close_button.clicked.connect(self.accept)
+        buttons_layout.addWidget(self.refresh_button)
+        buttons_layout.addWidget(self.close_button)
+        main_layout.addLayout(buttons_layout)
+
+    def apply_styles(self):
+        theme = "dark" if self.is_dark_theme else "light"
+        self.setStyleSheet(AppStyles.get_dialog_style(theme))
+        table_style = AppStyles.get_table_style(theme)
+
+        all_views = [
+            self.hourly_staffing_view, self.daily_staffing_view, self.symbols_count_view,
+            self.symbols_rbh_view, self.overtime_summary_view, self.absence_summary_view,
+            self.flexibility_table_view, self.forecast_table_view, self.absence_detail_view
+        ]
+        for view in all_views:
+            if hasattr(view, 'setStyleSheet'):
+                view.setStyleSheet(table_style)
+                if hasattr(view, 'horizontalHeader'):
+                    view.horizontalHeader().setFixedHeight(38)
+
+        button_style = AppStyles.get_button_style(theme)
+        self.refresh_button.setStyleSheet(button_style)
+        self.close_button.setStyleSheet(button_style)
+        self.tabs.setStyleSheet(AppStyles.get_tab_widget_style(theme))
+
+    def _get_theme_colors(self):
+        if self.is_dark_theme:
+            return QColor("#2c3136"), QColor("white")
+        else:
+            return QColor("#f8f9fa"), QColor("black")
+
+    def _create_hourly_staffing_tab(self):
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        options_layout = QHBoxLayout()
+        options_layout.addStretch()
+        options_layout.addWidget(QLabel("Pokaż dane dla:"))
+        self.hourly_staffing_options_combo = QComboBox()
+        self.hourly_staffing_options_combo.addItem("Grafik - Spotkania/Szkolenia", "schedule_minus_events")
+        self.hourly_staffing_options_combo.addItem("Grafik + Nadgodziny", "all")
+        self.hourly_staffing_options_combo.addItem("Tylko Grafik", "schedule_only")
+        self.hourly_staffing_options_combo.addItem("Tylko Nadgodziny", "overtime_only")
+        self.hourly_staffing_options_combo.addItem("Tylko Spotkania/Szkolenia", "events_only")
+        self.hourly_staffing_options_combo.currentIndexChanged.connect(self.load_and_display_data)
+        options_layout.addWidget(self.hourly_staffing_options_combo)
+        options_layout.addSpacing(15)
+        options_layout.addWidget(QLabel("Lokalizacja:"))
+        self.hourly_location_combo = QComboBox()
+        self.hourly_location_combo.setMinimumWidth(120)
+        self.hourly_location_combo.currentIndexChanged.connect(self.load_and_display_data)
+        options_layout.addWidget(self.hourly_location_combo)
+        layout.addLayout(options_layout)
+
+        self.hourly_staffing_view = QTableView()
+        self._hourly_staffing_model = HourlyStaffingTableModel(self._year, self._month, self)
+        self.hourly_staffing_view.setModel(self._hourly_staffing_model)
+        self.hourly_staffing_view.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
+        self.hourly_staffing_view.verticalHeader().setDefaultSectionSize(22)
+        self.hourly_staffing_view.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.hourly_staffing_view.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        layout.addWidget(self.hourly_staffing_view)
+        self.tabs.addTab(widget, "Obsada Godzinowa")
+
+    def _create_daily_staffing_tab(self):
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        options_layout = QHBoxLayout()
+        options_layout.addStretch()
+        options_layout.addWidget(QLabel("Pokaż dane dla:"))
+        self.daily_staffing_options_combo = QComboBox()
+        self.daily_staffing_options_combo.addItem("Grafik - Spotkania/Szkolenia", "schedule_minus_events")
+        self.daily_staffing_options_combo.addItem("Grafik i Nadgodziny", "all")
+        self.daily_staffing_options_combo.addItem("Tylko Grafik", "schedule_only")
+        self.daily_staffing_options_combo.addItem("Tylko Nadgodziny", "overtime_only")
+        self.daily_staffing_options_combo.addItem("Tylko Spotkania/Szkolenia", "events_only")
+        self.daily_staffing_options_combo.currentIndexChanged.connect(self.load_and_display_data)
+        options_layout.addWidget(self.daily_staffing_options_combo)
+        options_layout.addSpacing(15)
+        options_layout.addWidget(QLabel("Lokalizacja:"))
+        self.daily_location_combo = QComboBox()
+        self.daily_location_combo.setMinimumWidth(120)
+        self.daily_location_combo.currentIndexChanged.connect(self.load_and_display_data)
+        options_layout.addWidget(self.daily_location_combo)
+        layout.addLayout(options_layout)
+
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        self.daily_staffing_view = QTableView()
+        self._daily_staffing_model = DailyStaffingTableModel(self._year, self._month, "Wydział", self)
+        self.daily_staffing_view.setModel(self._daily_staffing_model)
+        splitter.addWidget(self.daily_staffing_view)
+
+        self.daily_staffing_chart = QChartView()
+        self.daily_staffing_chart.setRenderHint(QPainter.RenderHint.Antialiasing)
+        splitter.addWidget(self.daily_staffing_chart)
+
+        splitter.setSizes([200, 300])
+        layout.addWidget(splitter)
+        self.tabs.addTab(widget, "Obsada Dzienna (RBH)")
+
+    def _create_forecast_tab(self):
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        options_layout = QHBoxLayout()
+        options_layout.addWidget(QLabel("Grupa:"))
+        self.forecast_group_combo = QComboBox()
+        self.forecast_group_combo.setMinimumWidth(200)
+        options_layout.addWidget(self.forecast_group_combo)
+        options_layout.addSpacing(20)
+        options_layout.addWidget(QLabel("Widok:"))
+        self.forecast_view_mode_combo = QComboBox()
+        self.forecast_view_mode_combo.addItem("Pokaż: Prognozę", "forecast")
+        self.forecast_view_mode_combo.addItem("Pokaż: Obsadę rzeczywistą", "actual")
+        self.forecast_view_mode_combo.addItem("Pokaż: Różnicę (Obsada - Prog.)", "diff")
+        self.forecast_view_mode_combo.addItem("Pokaż: Pokrycie (%)", "coverage")
+        options_layout.addWidget(self.forecast_view_mode_combo)
+        options_layout.addStretch()
+        self.forecast_group_combo.currentIndexChanged.connect(self.load_and_display_data)
+        self.forecast_view_mode_combo.currentIndexChanged.connect(self.load_and_display_data)
+        layout.addLayout(options_layout)
+
+        self.forecast_table_view = QTableView()
+        self._forecast_model = ForecastComparisonTableModel(self._year, self._month, self)
+        self.forecast_table_view.setModel(self._forecast_model)
+        self.forecast_table_view.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
+        self.forecast_table_view.verticalHeader().setDefaultSectionSize(22)
+        self.forecast_table_view.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.forecast_table_view.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        layout.addWidget(self.forecast_table_view)
+        self.tabs.addTab(widget, "Prognoza vs. Rzeczywistość")
+
+    def _create_symbols_tab(self):
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        splitter = QSplitter(Qt.Orientation.Vertical)
+        count_widget = QWidget()
+        count_layout = QVBoxLayout(count_widget)
+        count_layout.addWidget(QLabel("Liczba symboli [szt.]"))
+        self.symbols_count_view = QTableView()
+        count_layout.addWidget(self.symbols_count_view)
+        rbh_widget = QWidget()
+        rbh_layout = QVBoxLayout(rbh_widget)
+        rbh_layout.addWidget(QLabel("Suma godzin dla symboli [RBH]"))
+        self.symbols_rbh_view = QTableView()
+        rbh_layout.addWidget(self.symbols_rbh_view)
+        splitter.addWidget(count_widget)
+        splitter.addWidget(rbh_widget)
+        layout.addWidget(splitter)
+        self._symbols_count_model = SymbolMatrixTableModel(self._year, self._month, "Symbol", self)
+        self._symbols_rbh_model = SymbolMatrixTableModel(self._year, self._month, "Symbol", self)
+        self.symbols_count_view.setModel(self._symbols_count_model)
+        self.symbols_rbh_view.setModel(self._symbols_rbh_model)
+        self.tabs.addTab(widget, "Symbole Specjalne")
+
+    def _create_overtime_tab(self):
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        splitter = QSplitter(Qt.Orientation.Horizontal)
+        self._overtime_model = OvertimeSummaryTableModel(self)
+        self.overtime_summary_view = QTableView()
+        self.overtime_summary_view.setModel(self._overtime_model)
+
+        charts_widget = QWidget()
+        charts_layout = QVBoxLayout(charts_widget)
+
+        self.overtime_chart = QChartView()
+        self.overtime_chart.setRenderHint(QPainter.RenderHint.Antialiasing)
+        charts_layout.addWidget(self.overtime_chart)
+
+        self.overtime_pie_chart = QChartView()
+        self.overtime_pie_chart.setRenderHint(QPainter.RenderHint.Antialiasing)
+        charts_layout.addWidget(self.overtime_pie_chart)
+
+        splitter.addWidget(self.overtime_summary_view)
+        splitter.addWidget(charts_widget)
+        splitter.setSizes([600, 400])
+        layout.addWidget(splitter)
+        self.tabs.addTab(widget, "Nadgodziny")
+
+    def _create_absence_analysis_tab(self):
+        widget = QWidget()
+        main_tab_layout = QVBoxLayout(widget)
+
+        kpi_layout = QHBoxLayout()
+        self.total_absence_hours_label = self._create_kpi_box("Całkowite godziny absencji")
+        self.absence_rate_label = self._create_kpi_box("Wskaźnik absencji (%)")
+        self.top_absent_dept_label = self._create_kpi_box("Wydział z najw. absencją")
+        self.top_absent_emp_label = self._create_kpi_box("Pracownik z najw. absencją")
+        kpi_layout.addWidget(self.total_absence_hours_label)
+        kpi_layout.addWidget(self.absence_rate_label)
+        kpi_layout.addWidget(self.top_absent_dept_label)
+        kpi_layout.addWidget(self.top_absent_emp_label)
+        main_tab_layout.addLayout(kpi_layout)
+
+        splitter = QSplitter(Qt.Orientation.Vertical)
+
+        top_splitter = QSplitter(Qt.Orientation.Horizontal)
+
+        summary_by_symbol_widget = QWidget()
+        summary_by_symbol_layout = QVBoxLayout(summary_by_symbol_widget)
+        summary_by_symbol_layout.addWidget(QLabel("Podsumowanie absencji wg typu:"))
+        self._absence_summary_model = AbsenceSummaryTableModel(self)
+        self.absence_summary_view = QTableView()
+        self.absence_summary_view.setModel(self._absence_summary_model)
+        summary_by_symbol_layout.addWidget(self.absence_summary_view)
+
+        filter_widget = QWidget()
+        filter_layout = QVBoxLayout(filter_widget)
+        filter_layout.addWidget(QLabel("Filtruj wykres dla symboli:"))
+        self.absence_symbols_list = QListWidget()
+        self.absence_symbols_list.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.absence_symbols_list.itemSelectionChanged.connect(self._update_absence_chart_from_filter)
+        filter_layout.addWidget(self.absence_symbols_list)
+
+        detail_widget = QWidget()
+        detail_layout = QVBoxLayout(detail_widget)
+        detail_layout.addWidget(QLabel("Szczegóły absencji:"))
+        self._absence_detail_model = AbsenceDetailTableModel(self)
+        self.absence_detail_view = QTableView()
+        self.absence_detail_view.setModel(self._absence_detail_model)
+        detail_layout.addWidget(self.absence_detail_view)
+
+        top_splitter.addWidget(summary_by_symbol_widget)
+        top_splitter.addWidget(filter_widget)
+        top_splitter.addWidget(detail_widget)
+        top_splitter.setSizes([350, 150, 350])
+
+        splitter.addWidget(top_splitter)
+
+        self.absence_chart = QChartView()
+        self.absence_chart.setRenderHint(QPainter.RenderHint.Antialiasing)
+        splitter.addWidget(self.absence_chart)
+
+        main_tab_layout.addWidget(splitter)
+        self.tabs.addTab(widget, "Analiza Absencji")
+
+    def _create_flexibility_analysis_tab(self):
+        widget = QWidget()
+        layout = QHBoxLayout(widget)
+        self._flexibility_model = FlexibilitySummaryTableModel(self)
+        self.flexibility_table_view = QTableView()
+        self.flexibility_table_view.setModel(self._flexibility_model)
+        self.flexibility_table_view.setFixedWidth(300)
+
+        self.flexibility_chart = QChartView()
+        self.flexibility_chart.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+        layout.addWidget(self.flexibility_table_view)
+        layout.addWidget(self.flexibility_chart)
+        self.tabs.addTab(widget, "Elastyczność Pracy")
+
+    def _create_kpi_box(self, title):
+        frame = QFrame()
+        frame.setFrameShape(QFrame.Shape.StyledPanel)
+        frame.setLineWidth(1)
+        layout = QVBoxLayout(frame)
+        title_label = QLabel(title)
+        title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        title_label.setStyleSheet("font-size: 10pt; color: gray;")
+        value_label = QLabel("0")
+        value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        value_label.setStyleSheet("font-size: 18pt; font-weight: bold;")
+        layout.addWidget(title_label)
+        layout.addWidget(value_label)
+        frame.value_label = value_label
+        return frame
+
+    def _setup_table_interactivity(self):
+        self.absence_detail_view.clicked.connect(self._on_absence_detail_table_clicked)
+
+    def _on_absence_detail_table_clicked(self, index):
+        if not index.isValid() or index.column() != 0:
+            return
+        if self._absence_detail_model.get_current_mode() == 'departments':
+            dept = self._absence_detail_model.get_department_at_row(index.row())
+            if dept:
+                self._absence_detail_model.display_employees(dept)
+        else:
+            self._absence_detail_model.display_departments()
+
+    def _update_absence_chart_from_filter(self):
+        if hasattr(self, '_last_absence_data'):
+            self._update_absence_chart(self._last_absence_data)
+
+    def load_and_display_data(self):
+        self._filtered_schedule_data = self.parent_widget.filter_processed_data()
+        all_events = self.data_provider.get_events_data(self._year, self._month, self._grupa, self._funkcja)
+        raw_forecast_data = self.data_provider.get_forecast_data(self._year, self._month)
+        actual_staffing_matrices = self._calculate_actual_staffing_matrix()
+
+        self._populate_location_filter(self.hourly_location_combo)
+        self._populate_location_filter(self.daily_location_combo)
+        self._populate_forecast_filters(raw_forecast_data, actual_staffing_matrices)
+
+        hourly_option = self.hourly_staffing_options_combo.currentData()
+        hourly_location = self.hourly_location_combo.currentText()
+        daily_option = self.daily_staffing_options_combo.currentData()
+        daily_location = self.daily_location_combo.currentText()
+        forecast_group = self.forecast_group_combo.currentText()
+        forecast_view_mode = self.forecast_view_mode_combo.currentData()
+
+        hourly_staffing_data = self._calculate_hourly_staffing(self._filtered_schedule_data, all_events, hourly_option,
+                                                               hourly_location)
+        self._hourly_staffing_model.update_data(hourly_staffing_data, self._year, self._month)
+        self._hourly_staffing_model.set_view_option(hourly_option)
+
+        daily_staffing_data = self._calculate_daily_staffing(self._filtered_schedule_data, all_events, daily_option,
+                                                             daily_location)
+        self._daily_staffing_model.update_data(self._year, self._month, daily_staffing_data)
+        self._update_daily_staffing_chart(daily_staffing_data)
+
+        overtime_data = self._calculate_overtime_summary_detailed(self._filtered_schedule_data, all_events)
+        self._overtime_model.update_data(overtime_data)
+        self._update_overtime_charts(overtime_data)
+
+        absence_data = self._calculate_absence_analysis(self._filtered_schedule_data)
+        self._last_absence_data = absence_data  # Store for filter updates
+        self._update_absence_tab(absence_data)
+
+        flexibility_data = self._calculate_flexibility_analysis(self._filtered_schedule_data)
+        self._flexibility_model.update_data(flexibility_data['table_data'])
+        self._update_flexibility_chart(flexibility_data['chart_data'])
+
+        counts, rbh = self._calculate_special_symbols_summary(self._filtered_schedule_data)
+        self._symbols_count_model.update_data(self._year, self._month, counts)
+        self._symbols_rbh_model.update_data(self._year, self._month, rbh)
+
+        actual_matrix = actual_staffing_matrices.get(forecast_group, [])
+        filtered_forecast = self._filter_forecast_data(raw_forecast_data)
+        forecast_matrix = self._calculate_matrix_from_forecast(filtered_forecast, "Prognoza")
+        self._forecast_model.update_data(self._year, self._month, forecast_matrix, actual_matrix, forecast_view_mode)
+
+        self._adjust_columns()
+
+    def _update_daily_staffing_chart(self, daily_staffing_data):
+        bg_color, text_color = self._get_theme_colors()
+        chart = QChart()
+        chart.setTitle("Dzienna suma roboczogodzin (RBH) wg wydziałów")
+
+        has_data = False
+        all_series = []
+        for dept, daily_data in daily_staffing_data.items():
+            if any(h > 0 for h in daily_data):
+                has_data = True
+                series = QLineSeries()
+                series.setName(dept)
+                for day, hours in enumerate(daily_data):
+                    # Poprawka: rysuj na współrzędnej (dzień + 1)
+                    series.append(day + 1, hours)
+
+                # Podłączanie dymków
+                series.hovered.connect(lambda point, state, s=series: self._handle_line_hover(point, state, s))
+                all_series.append(series)
+
+        if has_data:
+            for series in all_series:
+                chart.addSeries(series)
+
+            chart.createDefaultAxes()
+            axis_x = chart.axes(Qt.Orientation.Horizontal)[0]
+            axis_y = chart.axes(Qt.Orientation.Vertical)[0]
+
+            axis_x.setTitleText("Dzień miesiąca")
+            axis_y.setTitleText("Suma RBH")
+
+            # Konfiguracja osi X dla liczb całkowitych
+            axis_x.setLabelFormat("%d")
+            axis_x.setTickCount(min(self._days_in_month + 1, 16))
+
+            # Stylizacja
+            axis_x.setLabelsBrush(QColor(text_color))
+            axis_y.setLabelsBrush(QColor(text_color))
+            axis_x.setTitleBrush(QColor(text_color))
+            axis_y.setTitleBrush(QColor(text_color))
+
+        chart.setBackgroundBrush(QColor(bg_color))
+        chart.setTitleBrush(QColor(text_color))
+        chart.legend().setLabelColor(QColor(text_color))
+
+        self.daily_staffing_chart.setChart(chart)
+
+    def _update_absence_chart(self, absence_data):
+        selected_symbols = {item.text() for item in self.absence_symbols_list.selectedItems()}
+        daily_composition = absence_data.get('daily_composition', {})
+
+        series = QStackedBarSeries()
+        series.setLabelsVisible(True)
+        categories = [str(d) for d in range(1, self._days_in_month + 1)]
+
+        data_to_plot = defaultdict(list)
+        if selected_symbols:
+            for symbol in sorted(list(selected_symbols)):
+                for day_idx in range(self._days_in_month):
+                    hours = daily_composition.get(day_idx, {}).get(symbol, 0)
+                    data_to_plot[symbol].append(hours)
+
+        for symbol, hours_list in data_to_plot.items():
+            if any(h > 0 for h in hours_list):
+                bar_set = QBarSet(symbol)
+                bar_set.append(hours_list)
+                series.append(bar_set)
+
+        chart = QChart()
+        chart.addSeries(series)
+        chart.setTitle("Struktura absencji w każdym dniu miesiąca")
+
+        axis_x = QBarCategoryAxis()
+        axis_x.append(categories)
+        chart.addAxis(axis_x, Qt.AlignmentFlag.AlignBottom)
+        series.attachAxis(axis_x)
+
+        axis_y = QValueAxis()
+        axis_y.setTitleText("Suma godzin absencji")
+        chart.addAxis(axis_y, Qt.AlignmentFlag.AlignLeft)
+        series.attachAxis(axis_y)
+
+        # --- NOWA, POPRAWIONA LOGIKA STYLIZACJI ---
+        if self.is_dark_theme:
+            chart.setTheme(QChart.ChartTheme.ChartThemeDark)
+            chart.legend().setLabelColor(QColor("white"))
+            axis_x.setTitleBrush(QColor("white"))
+            axis_y.setTitleBrush(QColor("white"))
+        else:
+            chart.setTheme(QChart.ChartTheme.ChartThemeLight)
+            chart.legend().setLabelColor(QColor("black"))
+            axis_x.setTitleBrush(QColor("black"))
+            axis_y.setTitleBrush(QColor("black"))
+        # --- KONIEC NOWEJ LOGIKI ---
+
+        self.absence_chart.setChart(chart)
+
+    def _handle_bar_hover(self, status, index, bar_set):
+        """Obsługuje najechanie na słupek wykresu słupkowego."""
+        if status:
+            category = self.sender().series().attachedAxes()[0].categories()[index]
+            value = bar_set.at(index)
+            tooltip_text = f"Wydział: {category}\nSuma godzin: {value:.1f}"
+            QToolTip.showText(QCursor.pos(), tooltip_text, self)
+        else:
+            QToolTip.hideText()
+
+    def _handle_pie_hover(self, pie_slice, state):
+        """Obsługuje najechanie na wycinek wykresu kołowego."""
+        if state:
+            # Etykieta już zawiera wszystkie potrzebne informacje
+            tooltip_text = pie_slice.label()
+            QToolTip.showText(QCursor.pos(), tooltip_text, self)
+        else:
+            QToolTip.hideText()
+
+    def _handle_line_hover(self, point, state, series):
+        """
+        Obsługuje najechanie na wykres liniowy, znajdując najbliższy punkt danych
+        i wyświetlając jego precyzyjne wartości.
+        """
+        if state:
+            # Krok 1: Znajdź najbliższy rzeczywisty punkt danych w serii
+            closest_point = min(series.points(), key=lambda p: abs(p.x() - point.x()))
+
+            # Krok 2: Użyj danych z tego punktu do stworzenia podpowiedzi
+            day = int(closest_point.x())
+            value = closest_point.y()
+            series_name = series.name()
+            tooltip_text = f"Wydział: {series_name}\nDzień: {day}\nSuma: {value:.1f} RBH"
+
+            # Krok 3: Pokaż dymek
+            QToolTip.showText(QCursor.pos(), tooltip_text, self)
+        else:
+            QToolTip.hideText()
+
+    def _update_flexibility_chart(self, chart_data):
+        bg_color, text_color = self._get_theme_colors()
+        series = QPieSeries()
+
+        if chart_data:
+            for name, value in chart_data.items():
+                if value > 0:
+                    pie_slice = series.append(f"{name} ({value:.1f}h)", value)
+                    pie_slice.setLabelVisible(True)
+
+        chart = QChart()
+        chart.addSeries(series)
+        chart.setTitle("Podział godzin pracy wg lokalizacji")
+        chart.legend().setAlignment(Qt.AlignmentFlag.AlignRight)
+
+        chart.setBackgroundBrush(QColor(bg_color))
+        chart.setTitleBrush(QColor(text_color))
+        chart.legend().setLabelColor(QColor(text_color))
+
+        self.flexibility_chart.setChart(chart)
+
+    def _update_overtime_charts(self, overtime_data):
+        # --- SEKCJA 1: Wykres Słupkowy (Nadgodziny wg Wydziału) ---
+        dept_hours = defaultdict(float)
+        for row in overtime_data:
+            dept_hours[row[0]] += row[5]
+
+        bar_series = QBarSeries()
+        categories = []
+        if dept_hours:
+            bar_set = QBarSet("Suma godzin")
+            sorted_depts = sorted(dept_hours.keys())
+            for dept in sorted_depts:
+                bar_set.append(dept_hours[dept])
+                categories.append(dept)
+            bar_series.append(bar_set)
+            bar_set.hovered.connect(lambda status, index, s=bar_set: self._handle_bar_hover(status, index, s))
+            bar_series.setLabelsVisible(True)
+
+        bar_chart = QChart()
+        bar_chart.addSeries(bar_series)
+        bar_chart.setTitle("Nadgodziny wg wydziału")
+        bar_chart.legend().setVisible(False)
+
+        axis_x = QBarCategoryAxis()
+        if categories: axis_x.append(categories)
+        bar_chart.addAxis(axis_x, Qt.AlignmentFlag.AlignBottom)
+        bar_series.attachAxis(axis_x)
+
+        axis_y = QValueAxis()
+        bar_chart.addAxis(axis_y, Qt.AlignmentFlag.AlignLeft)
+        bar_series.attachAxis(axis_y)
+
+        # --- NOWA, POPRAWIONA LOGIKA STYLIZACJI ---
+        if self.is_dark_theme:
+            bar_chart.setTheme(QChart.ChartTheme.ChartThemeDark)
+            bar_chart.legend().setLabelColor(QColor("white"))
+        else:
+            bar_chart.setTheme(QChart.ChartTheme.ChartThemeLight)
+            bar_chart.legend().setLabelColor(QColor("black"))
+        # --- KONIEC NOWEJ LOGIKI ---
+
+        self.overtime_chart.setChart(bar_chart)
+
+        # --- SEKCJA 2: Wykres Kołowy (Podział nadgodzin wg typu) ---
+        type_hours = defaultdict(float)
+        for row in overtime_data:
+            type_hours["Do wypłaty"] += row[2]
+            type_hours["Do odbioru"] += row[3]
+            type_hours["Odpracowanie"] += row[4]
+
+        pie_series = QPieSeries()
+        total_overtime = sum(type_hours.values())
+        if total_overtime > 0:
+            for name, value in type_hours.items():
+                if value > 0:
+                    pie_slice = pie_series.append(f"{name} ({value:.1f}h)", value)
+                    pie_slice.setLabel(f"{name}\n{value / total_overtime:.1%}")
+                    pie_slice.setLabelVisible(True)
+
+        pie_chart = QChart()
+        pie_chart.addSeries(pie_series)
+        pie_chart.setTitle("Podział nadgodzin wg typu")
+        pie_chart.legend().setVisible(False)
+
+        # --- NOWA, POPRAWIONA LOGIKA STYLIZACJI ---
+        if self.is_dark_theme:
+            pie_chart.setTheme(QChart.ChartTheme.ChartThemeDark)
+            pie_chart.legend().setLabelColor(QColor("white"))
+        else:
+            pie_chart.setTheme(QChart.ChartTheme.ChartThemeLight)
+            pie_chart.legend().setLabelColor(QColor("black"))
+        # --- KONIEC NOWEJ LOGIKI ---
+
+        self.overtime_pie_chart.setChart(pie_chart)
+
+    def set_current_theme(self, is_dark_theme):
+        if self.is_dark_theme != is_dark_theme:
+            self.is_dark_theme = is_dark_theme
+            self.apply_styles()
+            models = ['_hourly_staffing_model', '_daily_staffing_model', '_symbols_count_model', '_symbols_rbh_model']
+            for model_attr in models:
+                if hasattr(self, model_attr): getattr(self, model_attr).set_theme(is_dark_theme)
+            self.load_and_display_data()
+
+    def update_for_new_month_or_filters(self, year, month):
+        self._year, self._month = year, month
+        self._days_in_month = QDate(year, month, 1).daysInMonth()
+        self.setWindowTitle(f"Szczegóły obsady i analizy dla {month:02}/{year}")
+        self.info_label.setText(f"Analiza obsady i zdarzeń dla miesiąca: {self._month:02}.{self._year}")
+        self.load_and_display_data()
+
+    def _calculate_hourly_staffing(self, schedule_data, all_events, option="all", location_filter=None):
+        days = self._days_in_month
+        schedule_matrix = [[0.0] * days for _ in range(24)]
+        overtime_matrix = [[0.0] * days for _ in range(24)]
+        events_matrix = [[0.0] * days for _ in range(24)]
+
+        events_map = self._get_events_duration_per_hour(all_events)
+        location_map = self._get_daily_location_map(schedule_data)
+
+        for user_key, user_schedule in schedule_data.items():
+            user_id = user_key[3]
+            korekta = float(user_schedule.get('korekta', 0.0) or 0.0)
+            for day, day_info in user_schedule.get('days', {}).items():
+                day_idx = day - 1
+                if location_filter and location_filter != "-Wszystkie-" and location_map.get(
+                        (user_id, day)) != location_filter:
+                    continue
+                parsed = parse_symbol(day_info.get('symbol', ''))
+                start, base_hours = parsed.get('start_hour'), parsed.get('work_hours')
+                if start is not None and base_hours is not None:
+                    final_hours = base_hours + korekta
+                    if final_hours > 0:
+                        for h in range(int(final_hours)):
+                            hour = (start + h) % 24
+                            schedule_matrix[hour][day_idx] += 1.0
+                            if events_map.get(user_id, {}).get(day, {}).get(hour, 0) > 30:
+                                events_matrix[hour][day_idx] += 1.0
+
+        user_ids_in_view = {k[3] for k in schedule_data.keys()}
+        for event in all_events:
+            if event.get('type') == 'Nadgodziny' and event.get('user_id') in user_ids_in_view:
+                try:
+                    user_id = event.get('user_id')
+                    day = int(event.get('date_key', '0-0-0').split('-')[2])
+                    if location_filter and location_filter != "-Wszystkie-" and location_map.get(
+                            (user_id, day)) != location_filter:
+                        continue
+                    day_idx = day - 1
+                    t_from = dt.datetime.strptime(event.get('time_from', '00:00'), '%H:%M')
+                    t_to = dt.datetime.strptime(event.get('time_to', '00:00'), '%H:%M')
+                    duration_s = (t_to - t_from).total_seconds()
+                    if duration_s < 0: duration_s += 86400
+                    current_time = t_from
+                    while duration_s > 1:
+                        hour, minutes_in_slot = current_time.hour, 60 - current_time.minute
+                        seconds_in_slot = min(minutes_in_slot * 60, duration_s)
+                        if 0 <= hour < 24 and 0 <= day_idx < days:
+                            overtime_matrix[hour][day_idx] += seconds_in_slot / 3600.0
+                        duration_s -= seconds_in_slot
+                        current_time += dt.timedelta(seconds=seconds_in_slot)
+                except (ValueError, IndexError):
+                    continue
+
+        if option == "schedule_only": return schedule_matrix
+        if option == "overtime_only": return overtime_matrix
+        if option == "all":
+            return [[s + o for s, o in zip(s_row, o_row)] for s_row, o_row in zip(schedule_matrix, overtime_matrix)]
+        if option == "events_only": return events_matrix
+        if option == "schedule_minus_events":
+            return [[s - e for s, e in zip(s_row, e_row)] for s_row, e_row in zip(schedule_matrix, events_matrix)]
+
+        return [[0.0] * days for _ in range(24)]
+
 
     def _on_chart_hover(self, event):
         ax = event.inaxes
@@ -564,14 +1261,6 @@ class StaffingDetailsWindow(QDialog):
         else:
             QToolTip.hideText()
 
-    def _setup_table_interactivity(self):
-        """Konfiguruje interaktywność tabel z wykresami."""
-        self.daily_staffing_view.clicked.connect(self._on_daily_staffing_table_clicked)
-        self.absence_summary_view.clicked.connect(self._on_absence_summary_table_clicked)
-        self.overtime_summary_view.clicked.connect(self._on_overtime_table_clicked)
-        self.flexibility_table_view.clicked.connect(self._on_flexibility_table_clicked)
-        self.absence_detail_view.clicked.connect(self._on_absence_detail_table_clicked)
-
     def _on_daily_staffing_table_clicked(self, index):
         """Obsługuje kliknięcie w tabelę Obsada Dzienna, podświetlając linię na wykresie."""
         if not index.isValid() or index.column() != 0 or index.row() >= self._daily_staffing_model.rowCount() - 1:
@@ -619,130 +1308,6 @@ class StaffingDetailsWindow(QDialog):
             label = wedge.get_label().split('\n')[0]
             wedge.set_alpha(1.0 if label == location else 0.6)
         self.flexibility_chart.draw()
-
-    def _on_absence_detail_table_clicked(self, index):
-        """Obsługuje kliknięcie w tabelę szczegółów absencji, przełączając między wydziałami a pracownikami."""
-        if not index.isValid() or index.column() != 0 or index.row() >= self._absence_detail_model.rowCount():
-            return
-        if self._absence_detail_model.get_current_mode() == 'departments':
-            dept = self._absence_detail_model.get_department_at_row(index.row())
-            if dept:
-                self._absence_detail_model.display_employees(dept)
-        else:
-            self._absence_detail_model.display_departments()
-
-    def setup_ui(self):
-        main_layout = QVBoxLayout(self)
-        self.info_label = QLabel(f"Analiza obsady i zdarzeń dla miesiąca: {self._month:02}.{self._year}")
-        main_layout.addWidget(self.info_label)
-        self.tabs = QTabWidget()
-        main_layout.addWidget(self.tabs)
-        self._create_hourly_staffing_tab()
-        self._create_daily_staffing_tab()
-        self._create_forecast_tab()
-        self._create_overtime_tab()
-        self._create_symbols_tab()
-        self._create_absence_analysis_tab()
-        self._create_flexibility_analysis_tab()
-        buttons_layout = QHBoxLayout()
-        buttons_layout.addStretch()
-        self.refresh_button = QPushButton("Odśwież"); self.refresh_button.clicked.connect(self.load_and_display_data)
-        self.close_button = QPushButton("Zamknij"); self.close_button.clicked.connect(self.accept)
-        buttons_layout.addWidget(self.refresh_button); buttons_layout.addWidget(self.close_button)
-        main_layout.addLayout(buttons_layout)
-        self.daily_staffing_chart.mpl_connect('motion_notify_event', self._on_chart_hover)
-        self.absence_chart.mpl_connect('motion_notify_event', self._on_chart_hover)
-        self.overtime_chart.mpl_connect('motion_notify_event', self._on_chart_hover)
-        self.overtime_pie_chart.mpl_connect('motion_notify_event', self._on_chart_hover)
-        self.flexibility_chart.mpl_connect('motion_notify_event', self._on_chart_hover)
-
-    def apply_styles(self):
-        from styles import AppStyles
-        theme = "dark" if self.is_dark_theme else "light"
-        self.setStyleSheet(AppStyles.get_dialog_style(theme))
-        table_style = AppStyles.get_table_style(theme)
-
-    def apply_styles(self):
-        from styles import AppStyles
-        theme = "dark" if self.is_dark_theme else "light"
-        self.setStyleSheet(AppStyles.get_dialog_style(theme))
-        table_style = AppStyles.get_table_style(theme)
-        # DODAJ self.forecast_table_view do listy
-        all_views = [self.hourly_staffing_view, self.daily_staffing_view, self.symbols_count_view,
-                     self.symbols_rbh_view, self.overtime_summary_view, self.absence_summary_view,
-                     self.flexibility_table_view, self.forecast_table_view]
-        for view in all_views:
-            if isinstance(view, QTableView):
-                view.setStyleSheet(table_style)
-                view.horizontalHeader().setFixedHeight(38)
-        button_style = AppStyles.get_button_style(theme)
-        self.refresh_button.setStyleSheet(button_style)
-        self.close_button.setStyleSheet(button_style)
-        self.tabs.setStyleSheet(AppStyles.get_tab_widget_style(theme))
-
-    def load_and_display_data(self):
-        # --- KROK 1: POBRANIE WSPÓLNYCH DANYCH BAZOWYCH ---
-        self._filtered_schedule_data = self.parent_widget.filter_processed_data()
-        all_events = self.data_provider.get_events_data(self._year, self._month, self._grupa, self._funkcja)
-        raw_forecast_data = self.data_provider.get_forecast_data(self._year, self._month)
-        actual_staffing_matrices = self._calculate_actual_staffing_matrix()
-
-        # Wypełnienie filtrów (w tym lokalizacji)
-        self._populate_location_filter(self.hourly_location_combo)
-        self._populate_location_filter(self.daily_location_combo)
-        self._populate_forecast_filters(raw_forecast_data, actual_staffing_matrices)
-
-        # --- KROK 2: POBRANIE WYBORU UŻYTKOWNIKA Z FILTRÓW ---
-        hourly_option = self.hourly_staffing_options_combo.currentData()
-        hourly_location = self.hourly_location_combo.currentText()
-        daily_option = self.daily_staffing_options_combo.currentData()
-        daily_location = self.daily_location_combo.currentText()
-
-        # NOWE: Pobranie filtrów dla zakładki prognozy
-        forecast_group = self.forecast_group_combo.currentText()
-        forecast_view_mode = self.forecast_view_mode_combo.currentData()
-
-        # --- KROK 3: OBLICZENIA I AKTUALIZACJA ZAKŁADEK ---
-        # Zakładka: Obsada Godzinowa
-        hourly_staffing_data = self._calculate_hourly_staffing(self._filtered_schedule_data, all_events, hourly_option,
-                                                               hourly_location)
-        self._hourly_staffing_model.update_data(hourly_staffing_data, self._year, self._month)
-        self._hourly_staffing_model.set_view_option(hourly_option)
-
-        # Zakładka: Obsada Dzienna
-        daily_staffing_data = self._calculate_daily_staffing(self._filtered_schedule_data, all_events, daily_option,
-                                                             daily_location)
-        self._daily_staffing_model.update_data(self._year, self._month, daily_staffing_data)
-        self._update_daily_staffing_chart(daily_staffing_data)
-
-        # Zakładka: Nadgodziny
-        overtime_data = self._calculate_overtime_summary_detailed(self._filtered_schedule_data, all_events)
-        self._overtime_model.update_data(overtime_data)
-        self._update_overtime_charts(overtime_data)
-
-        # Zakładka: Analiza Absencji
-        absence_data = self._calculate_absence_analysis(self._filtered_schedule_data)
-        self._update_absence_tab(absence_data)
-
-        # Zakładka: Elastyczność
-        flexibility_data = self._calculate_flexibility_analysis(self._filtered_schedule_data)
-        self._flexibility_model.update_data(flexibility_data['table_data'])
-        self._update_flexibility_chart(flexibility_data['chart_data'])
-
-        # Zakładka: Symbole
-        counts, rbh = self._calculate_special_symbols_summary(self._filtered_schedule_data)
-        self._symbols_count_model.update_data(self._year, self._month, counts)
-        self._symbols_rbh_model.update_data(self._year, self._month, rbh)
-
-        # --- NOWA, BRAKUJĄCA LOGIKA DLA ZAKŁADKI PROGNOZY ---
-        actual_matrix = actual_staffing_matrices.get(forecast_group, [])
-        filtered_forecast = self._filter_forecast_data(raw_forecast_data)
-        forecast_matrix = self._calculate_matrix_from_forecast(filtered_forecast, "Prognoza")
-        self._forecast_model.update_data(self._year, self._month, forecast_matrix, actual_matrix, forecast_view_mode)
-        # --- KONIEC NOWEJ LOGIKI ---
-
-        # Na koniec dostosuj kolumny we wszystkich tabelach
-        self._adjust_columns()
 
     def _populate_location_filter(self, combo_box: QComboBox):
         """Wypełnia podany ComboBox unikalnymi lokalizacjami z danych."""
@@ -966,225 +1531,6 @@ class StaffingDetailsWindow(QDialog):
         else:
             return '#f8f9fa', 'black', '#ced4da'
 
-    def _create_hourly_staffing_tab(self):
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        layout.setContentsMargins(5, 5, 5, 5)
-
-        options_layout = QHBoxLayout()
-        options_layout.addStretch()
-
-        # Filtr rodzaju danych (istniejący)
-        options_layout.addWidget(QLabel("Pokaż dane dla:"))
-        self.hourly_staffing_options_combo = QComboBox()
-        self.hourly_staffing_options_combo.addItem("Grafik - Spotkania/Szkolenia", "schedule_minus_events")
-        self.hourly_staffing_options_combo.addItem("Grafik + Nadgodziny", "all")
-        self.hourly_staffing_options_combo.addItem("Tylko Grafik", "schedule_only")
-        self.hourly_staffing_options_combo.addItem("Tylko Nadgodziny", "overtime_only")
-        self.hourly_staffing_options_combo.addItem("Tylko Spotkania/Szkolenia", "events_only")
-        self.hourly_staffing_options_combo.currentIndexChanged.connect(self.load_and_display_data)
-        options_layout.addWidget(self.hourly_staffing_options_combo)
-
-        options_layout.addSpacing(15)
-
-        # --- NOWA LOGIKA: Filtr lokalizacji ---
-        options_layout.addWidget(QLabel("Lokalizacja:"))
-        self.hourly_location_combo = QComboBox()
-        self.hourly_location_combo.setMinimumWidth(120)
-        self.hourly_location_combo.currentIndexChanged.connect(self.load_and_display_data)
-        options_layout.addWidget(self.hourly_location_combo)
-        # --- KONIEC NOWEJ LOGIKI ---
-
-        layout.addLayout(options_layout)
-
-        self.hourly_staffing_view = QTableView()
-        self._hourly_staffing_model = HourlyStaffingTableModel(self._year, self._month, self)
-        self.hourly_staffing_view.setModel(self._hourly_staffing_model)
-        self.hourly_staffing_view.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
-        self.hourly_staffing_view.verticalHeader().setDefaultSectionSize(22)
-        self.hourly_staffing_view.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.hourly_staffing_view.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        layout.addWidget(self.hourly_staffing_view)
-
-        self.tabs.addTab(widget, "Obsada Godzinowa")
-
-    def _create_daily_staffing_tab(self):
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        layout.setContentsMargins(0, 5, 0, 0)
-        options_layout = QHBoxLayout()
-        options_layout.addStretch()
-
-        # Filtr rodzaju danych (istniejący)
-        options_layout.addWidget(QLabel("Pokaż dane dla:"))
-        self.daily_staffing_options_combo = QComboBox()
-        self.daily_staffing_options_combo.addItem("Grafik - Spotkania/Szkolenia", "schedule_minus_events")
-        self.daily_staffing_options_combo.addItem("Grafik i Nadgodziny", "all")
-        self.daily_staffing_options_combo.addItem("Tylko Grafik", "schedule_only")
-        self.daily_staffing_options_combo.addItem("Tylko Nadgodziny", "overtime_only")
-        self.daily_staffing_options_combo.addItem("Tylko Spotkania/Szkolenia", "events_only")
-        self.daily_staffing_options_combo.currentIndexChanged.connect(self.load_and_display_data)
-        options_layout.addWidget(self.daily_staffing_options_combo)
-
-        options_layout.addSpacing(15)
-
-        # --- NOWA LOGIKA: Filtr lokalizacji ---
-        options_layout.addWidget(QLabel("Lokalizacja:"))
-        self.daily_location_combo = QComboBox()
-        self.daily_location_combo.setMinimumWidth(120)
-        self.daily_location_combo.currentIndexChanged.connect(self.load_and_display_data)
-        options_layout.addWidget(self.daily_location_combo)
-        # --- KONIEC NOWEJ LOGIKI ---
-
-        layout.addLayout(options_layout)
-        splitter = QSplitter(Qt.Vertical)
-        self.daily_staffing_view = QTableView()
-        self._daily_staffing_model = DailyStaffingTableModel(self._year, self._month, "Wydział", self)
-        self.daily_staffing_view.setModel(self._daily_staffing_model)
-        splitter.addWidget(self.daily_staffing_view)
-        self.daily_staffing_chart = MplChartCanvas(self)
-        splitter.addWidget(self.daily_staffing_chart)
-        splitter.setSizes([200, 300])
-        layout.addWidget(splitter)
-        self.tabs.addTab(widget, "Obsada Dzienna (RBH)")
-
-    def _create_forecast_tab(self):
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        layout.setContentsMargins(5, 5, 5, 5)
-
-        options_layout = QHBoxLayout()
-        options_layout.addWidget(QLabel("Grupa:"))
-        self.forecast_group_combo = QComboBox()
-        self.forecast_group_combo.setMinimumWidth(200)
-        options_layout.addWidget(self.forecast_group_combo)
-
-        options_layout.addSpacing(20)
-
-        options_layout.addWidget(QLabel("Widok:"))
-        self.forecast_view_mode_combo = QComboBox()
-        self.forecast_view_mode_combo.addItem("Pokaż: Prognozę", "forecast")
-        self.forecast_view_mode_combo.addItem("Pokaż: Obsadę rzeczywistą", "actual")
-        self.forecast_view_mode_combo.addItem("Pokaż: Różnicę (Obsada - Prog.)", "diff")
-        self.forecast_view_mode_combo.addItem("Pokaż: Pokrycie (%)", "coverage")
-        options_layout.addWidget(self.forecast_view_mode_combo)
-
-        options_layout.addStretch()
-
-        self.forecast_group_combo.currentIndexChanged.connect(self.load_and_display_data)
-        self.forecast_view_mode_combo.currentIndexChanged.connect(self.load_and_display_data)
-
-        layout.addLayout(options_layout)
-        self.forecast_table_view = QTableView()
-        self._forecast_model = ForecastComparisonTableModel(self._year, self._month, self)
-        self.forecast_table_view.setModel(self._forecast_model)
-        self.forecast_table_view.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
-        self.forecast_table_view.verticalHeader().setDefaultSectionSize(22)
-        self.forecast_table_view.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.forecast_table_view.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        layout.addWidget(self.forecast_table_view)
-        self.tabs.addTab(widget, "Prognoza vs. Rzeczywistość")
-
-    def _create_symbols_tab(self):
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        layout.setContentsMargins(0, 0, 0, 0)
-        splitter = QSplitter(Qt.Vertical)
-        count_widget = QWidget()
-        count_layout = QVBoxLayout(count_widget)
-        count_layout.addWidget(QLabel("Liczba symboli [szt.]"))
-        self.symbols_count_view = QTableView()
-        count_layout.addWidget(self.symbols_count_view)
-        rbh_widget = QWidget()
-        rbh_layout = QVBoxLayout(rbh_widget)
-        rbh_layout.addWidget(QLabel("Suma godzin dla symboli [RBH]"))
-        self.symbols_rbh_view = QTableView()
-        rbh_layout.addWidget(self.symbols_rbh_view)
-        splitter.addWidget(count_widget)
-        splitter.addWidget(rbh_widget)
-        layout.addWidget(splitter)
-        self._symbols_count_model = SymbolMatrixTableModel(self._year, self._month, "Symbol", self)
-        self._symbols_rbh_model = SymbolMatrixTableModel(self._year, self._month, "Symbol", self)
-        self.symbols_count_view.setModel(self._symbols_count_model)
-        self.symbols_rbh_view.setModel(self._symbols_rbh_model)
-        self.tabs.addTab(widget, "Symbole Specjalne")
-
-    def _create_overtime_tab(self):
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        layout.setContentsMargins(0, 0, 0, 0)
-        splitter = QSplitter(Qt.Horizontal)
-        self._overtime_model = OvertimeSummaryTableModel(self)
-        self.overtime_summary_view = QTableView()
-        self.overtime_summary_view.setModel(self._overtime_model)
-        charts_widget = QWidget()
-        charts_layout = QVBoxLayout(charts_widget)
-        self.overtime_chart = MplChartCanvas(self)
-        charts_layout.addWidget(self.overtime_chart)
-        self.overtime_pie_chart = MplChartCanvas(self)
-        charts_layout.addWidget(self.overtime_pie_chart)
-        splitter.addWidget(self.overtime_summary_view)
-        splitter.addWidget(charts_widget)
-        splitter.setSizes([600, 400])
-        layout.addWidget(splitter)
-        self.tabs.addTab(widget, "Nadgodziny")
-
-    def _create_absence_analysis_tab(self):
-        widget = QWidget(); main_tab_layout = QVBoxLayout(widget)
-        kpi_layout = QHBoxLayout()
-        self.total_absence_hours_label = self._create_kpi_box("Całkowite godziny absencji")
-        self.absence_rate_label = self._create_kpi_box("Wskaźnik absencji (%)")
-        self.top_absent_dept_label = self._create_kpi_box("Wydział z najw. absencją")
-        self.top_absent_emp_label = self._create_kpi_box("Pracownik z najw. absencją")
-        kpi_layout.addWidget(self.total_absence_hours_label); kpi_layout.addWidget(self.absence_rate_label)
-        kpi_layout.addWidget(self.top_absent_dept_label); kpi_layout.addWidget(self.top_absent_emp_label)
-        main_tab_layout.addLayout(kpi_layout)
-        top_panel_layout = QHBoxLayout()
-        summary_by_symbol_widget = QWidget(); summary_by_symbol_layout = QVBoxLayout(summary_by_symbol_widget)
-        summary_by_symbol_layout.addWidget(QLabel("Podsumowanie absencji wg typu:"))
-        self._absence_summary_model = AbsenceSummaryTableModel(self)
-        self.absence_summary_view = QTableView(); self.absence_summary_view.setModel(self._absence_summary_model)
-        summary_by_symbol_layout.addWidget(self.absence_summary_view)
-        filter_widget = QWidget(); filter_layout = QVBoxLayout(filter_widget)
-        filter_layout.addWidget(QLabel("Filtruj wykres dla symboli:"))
-        self.absence_symbols_list = QListWidget(); self.absence_symbols_list.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        self.absence_symbols_list.itemSelectionChanged.connect(lambda: self._update_absence_tab(self._calculate_absence_analysis(self._filtered_schedule_data)))
-        filter_layout.addWidget(self.absence_symbols_list)
-        top_panel_layout.addWidget(summary_by_symbol_widget, 3); top_panel_layout.addWidget(filter_widget, 1)
-        main_tab_layout.addLayout(top_panel_layout)
-        self.absence_chart = MplChartCanvas(self, height=5)
-        main_tab_layout.addWidget(self.absence_chart)
-        self.tabs.addTab(widget, "Analiza Absencji")
-
-    def _create_flexibility_analysis_tab(self):
-        widget = QWidget()
-        layout = QHBoxLayout(widget)
-        layout.setContentsMargins(5, 5, 5, 5)
-        self._flexibility_model = FlexibilitySummaryTableModel(self)
-        self.flexibility_table_view = QTableView()
-        self.flexibility_table_view.setModel(self._flexibility_model)
-        self.flexibility_table_view.setFixedWidth(300)
-        self.flexibility_chart = MplChartCanvas(self, width=6, height=4, dpi=100)
-        layout.addWidget(self.flexibility_table_view)
-        layout.addWidget(self.flexibility_chart)
-        self.tabs.addTab(widget, "Elastyczność Pracy")
-
-    def _create_kpi_box(self, title):
-        frame = QFrame()
-        frame.setFrameShape(QFrame.StyledPanel)
-        frame.setLineWidth(1)
-        layout = QVBoxLayout(frame)
-        title_label = QLabel(title)
-        title_label.setAlignment(Qt.AlignCenter)
-        title_label.setStyleSheet("font-size: 10pt; color: gray;")
-        value_label = QLabel("0")
-        value_label.setAlignment(Qt.AlignCenter)
-        value_label.setStyleSheet("font-size: 18pt; font-weight: bold;")
-        layout.addWidget(title_label)
-        layout.addWidget(value_label)
-        frame.value_label = value_label
-        return frame
-
     def _on_pick(self, event):
         artist = event.artist
         try:
@@ -1214,36 +1560,6 @@ class StaffingDetailsWindow(QDialog):
         for spine in ax.spines.values():
             spine.set_edgecolor(text_color)
         ax.margins(x=0.02, y=0.05)
-
-    def _update_daily_staffing_chart(self, daily_staffing_data):
-        ax = self.daily_staffing_chart.axes
-        ax.clear()
-        self.daily_staffing_chart.fig.patch.set_facecolor(self._get_mpl_theme_colors()[0])
-        has_data = False
-        self.daily_staffing_chart.mpl_connect('pick_event', self._on_pick)
-        colors = plt.cm.tab20(np.linspace(0, 1, len(daily_staffing_data)))
-        for idx, (dept, daily_data) in enumerate(daily_staffing_data.items()):
-            if any(daily_data):
-                has_data = True
-                line, = ax.plot(range(1, len(daily_data) + 1), daily_data, label=dept,
-                                marker='o', markersize=3, linestyle='-', picker=5,
-                                color=colors[idx % len(colors)], linewidth=1.0, alpha=0.6)
-        if not has_data:
-            ax.text(0.5, 0.5, "Brak danych", ha='center', va='center', color=self._get_mpl_theme_colors()[1])
-            ax.set_xticks([])
-            ax.set_yticks([])
-        else:
-            step = max(1, self._days_in_month // 10)
-            ticks = range(1, self._days_in_month + 1, step)
-            self._configure_axes(ax, "Dzienna suma roboczogodzin (RBH) wg wydziałów",
-                                "Dzień miesiąca", "Suma RBH", x_ticks=ticks)
-            ax.set_xlim(0.5, self._days_in_month + 0.5)
-            ax.set_ylim(bottom=0)
-            legend = ax.legend(labelcolor=self._get_mpl_theme_colors()[1], fontsize=8,
-                              loc='upper right', framealpha=0.9)
-            if legend:
-                legend.get_frame().set_facecolor(self._get_mpl_theme_colors()[0])
-        self.daily_staffing_chart.draw()
 
     def _update_absence_kpi(self, absence_data):
         self.total_absence_hours_label.value_label.setText(f"{absence_data['total_hours']:.1f}")
@@ -1332,275 +1648,6 @@ class StaffingDetailsWindow(QDialog):
             percent = (hours / total_hours * 100) if total_hours > 0 else 0
             table_data.append([loc, hours, percent])
         return {'table_data': sorted(table_data, key=lambda x: x[1], reverse=True), 'chart_data': summary}
-
-    def _update_absence_chart(self, absence_data):
-        ax = self.absence_chart.axes
-        ax.clear()
-        self.absence_chart.fig.patch.set_facecolor(self._get_mpl_theme_colors()[0])
-
-        # KROK 1: Pobierz listę zaznaczonych symboli z listy filtrów
-        selected_symbols = {item.text() for item in self.absence_symbols_list.selectedItems()}
-
-        daily_composition = absence_data.get('daily_composition', {})
-
-        # KROK 2: Przygotuj dane do wykresu tylko dla zaznaczonych symboli
-        filtered_composition = defaultdict(lambda: defaultdict(float))
-        if selected_symbols:
-            for day, symbols in daily_composition.items():
-                for symbol, hours in symbols.items():
-                    if symbol in selected_symbols:
-                        filtered_composition[day][symbol] = hours
-
-        if not filtered_composition:
-            ax.text(0.5, 0.5, "Brak danych absencji dla wybranych symboli",
-                    ha='center', va='center', color=self._get_mpl_theme_colors()[1])
-            ax.set_xticks([])
-            ax.set_yticks([])
-            self.absence_chart.draw()
-            return
-
-        days = np.arange(1, self._days_in_month + 1)
-
-        # KROK 3: Użyj tylko zaznaczonych symboli do rysowania
-        symbols_to_plot = sorted(list(selected_symbols))
-        colors = plt.cm.Set2(np.linspace(0, 1, len(symbols_to_plot)))
-        bottom = np.zeros(self._days_in_month)
-
-        for idx, symbol in enumerate(symbols_to_plot):
-            hours = [filtered_composition.get(day_idx, {}).get(symbol, 0) for day_idx in range(self._days_in_month)]
-            if not any(h > 0 for h in hours):  # Nie rysuj pustych serii danych
-                continue
-
-            bars = ax.bar(days, hours, bottom=bottom, label=symbol, color=colors[idx % len(colors)])
-
-            # Dodaj etykiety na słupkach (jeśli są wystarczająco wysokie)
-            total_heights = bottom + np.array(hours)
-            max_total_height = max(total_heights) if any(total_heights) else 1.0
-            labels_to_add = [f'{h:.0f}' if h > (max_total_height * 0.05) else '' for h in hours]
-            ax.bar_label(bars, labels=labels_to_add, label_type='center', color='white',
-                         fontsize=6, weight='bold')
-
-            bottom += np.array(hours)
-
-        step = max(1, self._days_in_month // 10)
-        ticks = range(1, self._days_in_month + 1, step)
-        self._configure_axes(ax, "Struktura absencji w każdym dniu miesiąca",
-                             "Dzień miesiąca", "Suma godzin absencji", x_ticks=ticks)
-        ax.set_xlim(0.5, self._days_in_month + 0.5)
-        ax.set_ylim(bottom=0)
-        legend = ax.legend(labelcolor=self._get_mpl_theme_colors()[1], fontsize=8,
-                           loc='upper right', framealpha=0.9)
-        if legend:
-            legend.get_frame().set_facecolor(self._get_mpl_theme_colors()[0])
-        self.absence_chart.draw()
-
-    def _update_flexibility_chart(self, chart_data):
-        ax = self.flexibility_chart.axes
-        ax.clear()
-        bg_color, text_color, _ = self._get_mpl_theme_colors()
-        self.flexibility_chart.fig.patch.set_facecolor(bg_color)
-        labels, values = [], []
-        if chart_data:
-            for name, value in chart_data.items():
-                if value > 0:
-                    labels.append(name)
-                    values.append(value)
-        if not values:
-            ax.text(0.5, 0.5, "Brak danych", ha='center', va='center', color=text_color)
-            ax.set_xticks([])
-            ax.set_yticks([])
-        else:
-            colors = plt.cm.Paired(np.linspace(0, 1, len(labels)))
-            wedges, texts, autotexts = ax.pie(values, autopct='%1.1f%%', startangle=90,
-                                              colors=colors,
-                                              textprops={'color': 'white' if self.is_dark_theme else 'black',
-                                                         'weight': 'bold'})
-            plt.setp(autotexts, size=8)
-            legend_labels = [f'{l}\n({v:.1f}h)' for l, v in zip(labels, values)]
-            for i, wedge in enumerate(wedges):
-                wedge.set_label(legend_labels[i])
-                wedge.set_alpha(0.6)
-            legend = ax.legend(wedges, legend_labels, title="Lokalizacje", loc="center left",
-                               bbox_to_anchor=(0.95, 0, 0.5, 1), facecolor=bg_color, edgecolor=text_color,
-                               labelcolor=text_color)
-            if legend:
-                plt.setp(legend.get_title(), color=text_color)
-        ax.set_title("Podział godzin pracy wg lokalizacji", color=text_color)
-        self.flexibility_chart.draw()
-
-    def _update_overtime_charts(self, overtime_data):
-        bg_color, text_color, grid_color = self._get_mpl_theme_colors()
-        ax1 = self.overtime_chart.axes
-        ax1.clear()
-        self.overtime_chart.fig.patch.set_facecolor(bg_color)
-        dept_hours = defaultdict(float)
-        for row in overtime_data:
-            dept_hours[row[0]] += row[5]
-        if dept_hours:
-            depts = sorted(dept_hours.keys())
-            hours = [dept_hours[d] for d in depts]
-            ax1.user_data = {'labels': depts}
-            colors = plt.cm.Paired(np.linspace(0, 1, len(depts)))
-            bars = ax1.bar(range(len(depts)), hours, color=colors)
-            ax1.bar_label(bars, fmt='%.1f', color=text_color, fontsize=8)
-            ax1.set_xticks(range(len(depts)))
-            ax1.set_xticklabels(depts, rotation=45, ha='right')
-            for bar in bars:
-                bar.set_alpha(0.6)
-            self._configure_axes(ax1, "Nadgodziny wg wydziału", "Wydział", "Suma godzin")
-        else:
-            ax1.text(0.5, 0.5, "Brak danych o nadgodzinach", ha='center', va='center', color=text_color)
-            ax1.set_xticks([])
-            ax1.set_yticks([])
-        self.overtime_chart.draw()
-
-        ax2 = self.overtime_pie_chart.axes
-        ax2.clear()
-        self.overtime_pie_chart.fig.patch.set_facecolor(bg_color)
-        type_hours = defaultdict(float)
-        for row in overtime_data:
-            type_hours["Do wypłaty"] += row[2]
-            type_hours["Do odbioru"] += row[3]
-            type_hours["Odpracowanie"] += row[4]
-        labels, values = [], []
-        for name, value in type_hours.items():
-            if value > 0:
-                labels.append(f"{name}\n({value:.1f}h)")
-                values.append(value)
-        if values:
-            colors = plt.cm.Paired(np.linspace(0, 1, len(labels)))
-            wedges, texts, autotexts = ax2.pie(values, autopct='%1.1f%%', startangle=90,
-                                               colors=colors,
-                                               textprops={'color': 'white' if self.is_dark_theme else 'black',
-                                                          'weight': 'bold'})
-            plt.setp(autotexts, size=8)
-            for i, wedge in enumerate(wedges):
-                wedge.set_label(labels[i])
-            legend = ax2.legend(wedges, labels, title="Typy nadgodzin", loc="center left",
-                                bbox_to_anchor=(0.95, 0, 0.5, 1), facecolor=bg_color, edgecolor=text_color,
-                                labelcolor=text_color)
-            if legend:
-                plt.setp(legend.get_title(), color=text_color)
-        else:
-            ax2.text(0.5, 0.5, "Brak danych", ha='center', va='center', color=text_color)
-            ax2.set_xticks([])
-            ax2.set_yticks([])
-        ax2.set_title("Podział nadgodzin wg typu", color=text_color)
-        self.overtime_pie_chart.draw()
-
-    def set_current_theme(self, is_dark_theme):
-        if self.is_dark_theme != is_dark_theme:
-            self.is_dark_theme = is_dark_theme
-            self.apply_styles()
-            models = ['_hourly_staffing_model', '_daily_staffing_model', '_symbols_count_model', '_symbols_rbh_model']
-            for model_attr in models:
-                if hasattr(self, model_attr): getattr(self, model_attr).set_theme(is_dark_theme)
-            self.load_and_display_data()
-
-    def update_for_new_month_or_filters(self, year, month):
-        self._year, self._month = year, month
-        self._days_in_month = QDate(year, month, 1).daysInMonth()
-        self.setWindowTitle(f"Szczegóły obsady i analizy dla {month:02}/{year}")
-        self.info_label.setText(f"Analiza obsady i zdarzeń dla miesiąca: {self._month:02}.{self._year}")
-        self.load_and_display_data()
-
-    def set_current_theme(self, is_dark_theme):
-        """Aktualizuje motyw okna i odświeża wszystkie jego komponenty."""
-        # Jeśli motyw się nie zmienił, nie rób nic
-        if self.is_dark_theme == is_dark_theme:
-            return
-
-        self.is_dark_theme = is_dark_theme
-
-        # 1. Zastosuj nowe arkusze stylów dla okna, przycisków i tabel
-        self.apply_styles()
-
-        # 2. Zaktualizuj motyw we wszystkich modelach tabel, które tego wymagają
-        models_to_update = [
-            self._hourly_staffing_model,
-            self._daily_staffing_model,
-            self._forecast_model,
-            self._symbols_count_model,
-            self._symbols_rbh_model
-        ]
-        for model in models_to_update:
-            if hasattr(model, 'set_theme'):
-                model.set_theme(is_dark_theme)
-
-        # 3. Wymuś ponowne załadowanie danych i przerysowanie wszystkich wykresów
-        #    Metody rysujące wykresy już używają `self.is_dark_theme` do wyboru kolorów.
-        self.load_and_display_data()
-
-    def _calculate_hourly_staffing(self, schedule_data, all_events, option="all", location_filter=None):
-        """Oblicza obsadę godzinową, uwzględniając wszystkie filtry."""
-        days = self._days_in_month
-        schedule_matrix = np.zeros((24, days))
-        overtime_matrix = np.zeros((24, days))
-        events_matrix = np.zeros((24, days))
-
-        events_map = self._get_events_duration_per_hour(all_events)
-        location_map = self._get_daily_location_map(schedule_data)
-
-        # 1. Przetwarzanie grafiku i zdarzeń (spotkania/szkolenia)
-        for user_key, user_schedule in schedule_data.items():
-            user_id = user_key[3]
-            korekta = float(user_schedule.get('korekta', 0.0) or 0.0)
-
-            for day, day_info in user_schedule.get('days', {}).items():
-                day_idx = day - 1
-                shift_location = location_map.get((user_id, day))
-
-                if location_filter and location_filter != "-Wszystkie-" and shift_location != location_filter:
-                    continue
-
-                parsed = parse_symbol(day_info.get('symbol', ''))
-                start, base_hours = parsed.get('start_hour'), parsed.get('work_hours')
-                final_hours = base_hours + korekta if base_hours is not None else 0
-
-                if start is not None and final_hours > 0:
-                    for h in range(max(0, int(final_hours))):
-                        hour = (start + h) % 24
-                        schedule_matrix[hour, day_idx] += 1.0
-                        if events_map.get(user_id, {}).get(day, {}).get(hour, 0) > 30:
-                            events_matrix[hour, day_idx] += 1.0
-
-        # 2. Przetwarzanie nadgodzin
-        user_ids_in_view = {k[3] for k in schedule_data.keys()}
-        for event in all_events:
-            if event.get('type') == 'Nadgodziny' and event.get('user_id') in user_ids_in_view:
-                try:
-                    user_id = event.get('user_id')
-                    day = int(event.get('date_key', '0-0-0').split('-')[2])
-
-                    event_location = location_map.get((user_id, day))
-                    if location_filter and location_filter != "-Wszystkie-" and event_location != location_filter:
-                        continue
-
-                    day_idx = day - 1
-                    t_from = dt.datetime.strptime(event.get('time_from', '00:00'), '%H:%M')
-                    t_to = dt.datetime.strptime(event.get('time_to', '00:00'), '%H:%M')
-                    duration_s = (t_to - t_from).total_seconds()
-                    if duration_s < 0: duration_s += 86400
-
-                    current_time = t_from
-                    while duration_s > 1:
-                        hour, minutes_in_slot = current_time.hour, 60 - current_time.minute
-                        seconds_in_slot = min(minutes_in_slot * 60, duration_s)
-                        if 0 <= hour < 24 and 0 <= day_idx < days:
-                            overtime_matrix[hour, day_idx] += seconds_in_slot / 3600.0
-                        duration_s -= seconds_in_slot
-                        current_time += dt.timedelta(seconds=seconds_in_slot)
-                except (ValueError, IndexError):
-                    continue
-
-        # 3. Zwróć wynik w zależności od wybranej opcji
-        if option == "schedule_only": return schedule_matrix.tolist()
-        if option == "overtime_only": return overtime_matrix.tolist()
-        if option == "all": return (schedule_matrix + overtime_matrix).tolist()
-        if option == "events_only": return events_matrix.tolist()
-        if option == "schedule_minus_events": return (schedule_matrix - events_matrix).tolist()
-
-        return np.zeros((24, days)).tolist()
 
     # Metoda do podmiany nr 2
     def _calculate_daily_staffing(self, schedule_data, all_events, option="all", location_filter=None):
@@ -1819,8 +1866,6 @@ class StaffingDetailsWindow(QDialog):
         counts_matrix = {s: [d.get(i, {}).get('count', 0) for i in range(days)] for s, d in summary.items()}
         rbh_matrix = {s: [int(round(d.get(i, {}).get('hours', 0))) for i in range(days)] for s, d in summary.items()}
         return counts_matrix, rbh_matrix
-
-
 
     def _calculate_matrix_from_forecast(self, filtered_data, column_name):
         """Tworzy macierz 24x(dni) sumując wartości z podanej kolumny."""
