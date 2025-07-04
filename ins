@@ -1,49 +1,47 @@
-pip install pyinstaller
+# schedule_model.py -> NOWA, POPRAWIONA WERSJA METODY
 
-pyinstaller --name TeamFlowApp --windowed main.py
+    def update_data(self, processed_data, year, month):
 
-# TeamFlowApp.spec
+# staffing_details_window.py
 
-# -*- mode: python ; coding: utf-8 -*-
+    def _calculate_matrix_from_forecast(self, filtered_data, column_name):
 
-a = Analysis(
-    ['main.py'],
-    pathex=[],
-    binaries=[],
-    datas=[],
-    # ZMIANA: Dodajemy "ukryte" importy, których PyInstaller może nie znaleźć sam
-    hiddenimports=['pyodbc', 'PySide6.QtSql', 'matplotlib.backends.backend_qtagg'],
-    hookspath=[],
-    hooksconfig={},
-    runtime_hooks=[],
-    excludes=[],
-    noarchive=False,
-)
-pyz = PYZ(a.pure)
+# staffing_details_window.py
 
-exe = EXE(
-    pyz,
-    a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    [],
-    name='TeamFlowApp',
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=True,  # Kompresja pliku EXE (można ustawić na False)
-    upx_exclude=[],
-    runtime_tmpdir=None,
-    # ZMIANA: Ustawienie trybu jednego pliku oraz dodanie ikony
-    onefile=True,
-    windowed=True,
-    icon='ikona.ico', # Upewnij się, że plik ikony jest w tym samym katalogu
-    console=False,   # Zapewnia brak konsoli (alternatywa dla windowed=True)
-)
+    def load_and_display_data(self):
 
-pyinstaller TeamFlowApp.spec
+# split_table_view.py
 
-Stworzyliśmy zespół projektowy w departamencie. Celem jest usprawnienie istniejących procesów lub tworzenie ich na nowo. Projekt ten ma za zadanie usprawnianie i automatyzację procesów i przepływu pracy w departamencie.
+    def adjust_employees_table_width(self):
 
-Jednym z zadań zespołu jest ta aplikacjia. Aplikację trzeba zapisać do pliku exe i dodać jej ikonę. Zaproponuj ikony dla aplikacji TeamFlowApp stworzonej przez zespół CC FLOW
+# main.py
+
+    def _apply_dynamic_sizes(self):
+
+# main.py -> wewnątrz klasy WorkScheduleWindow
+
+    def showEvent(self, event):
+
+# styles.py
+
+class AppStyles: all
+
+# schedule_model.py -> 
+        elif hour >= 22 or hour <= 4:
+            return QColor(30, 30, 30)
+
+@echo off
+echo Kopiowanie plikow aplikacji na dysk lokalny, prosze czekac...
+
+:: Ustawia sciezke do folderu tymczasowego uzytkownika
+set "LOCAL_APP_PATH=%TEMP%\TeamFlowApp"
+
+:: Kopiuje caly folder aplikacji z dysku sieciowego na dysk lokalny (tylko jesli sa zmiany)
+xcopy /s /e /d /y "%~dp0" "%LOCAL_APP_PATH%\"
+
+echo Uruchamianie aplikacji...
+
+:: Uruchamia aplikacje z lokalnej kopii
+start "" "%LOCAL_APP_PATH%\TeamFlowApp.exe"
+
+exit
