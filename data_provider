@@ -45,27 +45,41 @@ class DataProvider(QObject):
         self._current_year: Optional[int] = None
         self._current_month: Optional[int] = None
 
-
-    def get_schedule_audit_data(self, year: int, month: int) -> List[Dict]:
-        """Pobiera historię zmian grafiku dla danego miesiąca z cache lub bazy danych."""
+    def get_schedule_audit_data(self, year: int, month: int, limit: Optional[int] = None) -> List[Dict]:
+        """
+        Pobiera historię zmian grafiku, z opcjonalnym limitem TOP N.
+        Cache jest używany tylko wtedy, gdy pobierane są wszystkie dane (limit=None).
+        """
         cache_key = (year, month)
-        if cache_key in self.audit_cache:
+        # Użyj cache'a tylko, jeśli prosimy o pełny zestaw danych
+        if limit is None and cache_key in self.audit_cache:
             debug_print(f"DataProvider: Używam cache dla danych audytowych dla {year}-{month}")
             return self.audit_cache[cache_key]
 
         try:
             conn = self.db_connector.get_connection()
             cursor = conn.cursor()
-            query = "SELECT * FROM [dbo].[fn_GetScheduleAuditData](?, ?)"
-            cursor.execute(query, (year, month))
 
-            # Mapowanie na podstawie nazw kolumn zwróconych przez bazę
+            # Dynamiczne budowanie zapytania w zależności od limitu
+            if limit:
+                query = "SELECT TOP (?) * FROM [dbo].[fn_GetScheduleAuditData](?, ?) ORDER BY DataModyfikacji DESC"
+                params = (limit, year, month)
+            else:
+                # Zawsze sortuj, aby zachować spójność
+                query = "SELECT * FROM [dbo].[fn_GetScheduleAuditData](?, ?) ORDER BY DataModyfikacji DESC"
+                params = (year, month)
+
+            cursor.execute(query, params)
             columns = [column[0] for column in cursor.description]
             data = [dict(zip(columns, row)) for row in cursor.fetchall()]
-
             conn.close()
-            debug_print(f"Pobrano {len(data)} wierszy historii zmian dla {year}-{month}")
-            self.audit_cache[cache_key] = data
+
+            debug_print(f"Pobrano {len(data)} wierszy historii zmian dla {year}-{month} (limit: {limit})")
+
+            # Zapisz w cache'u tylko pełny wynik
+            if limit is None:
+                self.audit_cache[cache_key] = data
+
             return data
         except Exception as e:
             log_error(f"Błąd podczas pobierania danych audytowych: {e}", exception=e)
@@ -78,6 +92,18 @@ class DataProvider(QObject):
             del self.audit_cache[cache_key]
             debug_print(f"DataProvider: Usunięto cache danych audytowych dla {year}-{month}")
 
+    def clear_monthly_cache(self, year: int, month: int):
+        """Czyści główny cache danych miesięcznych dla danego miesiąca."""
+        # Klucz dla `monthly_cache` to teraz (rok, miesiąc)
+        cache_key = (year, month)
+        if cache_key in self.monthly_cache:
+            del self.monthly_cache[cache_key]
+            debug_print(f"DataProvider: Usunięto z monthly_cache dla {year}-{month}")
+
+        # Klucz dla cache ikon również jest (rok, miesiąc)
+        if cache_key in self._icons_cache_by_month:
+            del self._icons_cache_by_month[cache_key]
+            debug_print(f"DataProvider: Usunięto z _icons_cache_by_month dla {year}-{month}")
 
     def get_dynamic_icons_for_cell(self, user_id: int, date_str: str) -> Dict:
         """
