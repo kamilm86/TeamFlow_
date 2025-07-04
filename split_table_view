@@ -79,6 +79,10 @@ class SplitTableView(QWidget):
         # Dodawanie splittera do głównego layoutu
         self.main_layout.addWidget(self.splitter)
 
+        # # Ustawia, który panel ma się rozciągać, a który trzymać rozmiar
+        # self.splitter.setStretchFactor(0, 0)  # Lewy panel (index 0) nie rozciąga się
+        # self.splitter.setStretchFactor(1, 1)  # Prawy panel (index 1) wypełnia całą resztę
+
         # Flaga blokująca nieskończone pętle
         self._is_updating = False
 
@@ -334,7 +338,7 @@ class SplitTableView(QWidget):
             self._set_column_widths()
 
             # Dostosuj szerokość tabeli pracowników do zawartości
-            self.adjust_employees_table_width()
+            # self.adjust_employees_table_width()
 
             # Włącz sortowanie dla tabeli pracowników
             self.employees_view.setSortingEnabled(True)
@@ -346,21 +350,45 @@ class SplitTableView(QWidget):
             self._connect_signals()
 
     def adjust_employees_table_width(self):
-        """UPROSZCZONA: Dostosowuje szerokość tabeli pracowników"""
+        """
+        Finalna metoda, która oblicza wymaganą szerokość lewego panelu
+        i ustawia podział w splitterze, teraz z dodatkową diagnostyką.
+        """
+        debug_print("--- URUCHOMIONO: adjust_employees_table_width ---")
+
         if not self._model:
+            debug_print("BŁĄD: Model nie istnieje. Zatrzymuję.")
             return
 
-        # Oblicz całkowitą szerokość kolumn pracowników
-        total_width = 0
-        for col in range(len(self._model.get_visible_columns())):
-            total_width += self.employees_view.columnWidth(col)
+        # 1. Oblicz docelową szerokość lewego panelu
+        target_width = 0
+        visible_cols = self._model.get_visible_columns()
+        debug_print(f"Widoczne kolumny do zsumowania: {visible_cols}")
 
-        # Dodaj stały margines (uproszczone)
-        total_width += 20
+        for col_idx in range(len(visible_cols)):
+            if not self.employees_view.isColumnHidden(col_idx):
+                col_width = self.employees_view.columnWidth(col_idx)
+                target_width += col_width
+                debug_print(f"  - Kolumna {col_idx} (ID: {visible_cols[col_idx]}), szerokość: {col_width}px. Suma: {target_width}px")
 
-        # Ustaw dokładną szerokość tabeli pracowników
-        self.employees_view.setFixedWidth(total_width)
-        # self.employees_view.setMinimumWidth(total_width)
+        # 2. Dodaj stałą szerokość dla nagłówka pionowego
+        vertical_header_width = 40
+        target_width += vertical_header_width
+        debug_print(f"Szerokość po dodaniu nagłówka pionowego ({vertical_header_width}px): {target_width}px")
+
+        # 3. Pobierz aktualną, całkowitą szerokość splittera
+        total_splitter_width = self.splitter.width()
+        debug_print(f"Odczytana całkowita szerokość splittera: {total_splitter_width}px")
+
+        # 4. Oblicz szerokość dla prawego panelu
+        right_panel_width = total_splitter_width - target_width
+        debug_print(f"Obliczona szerokość prawego panelu (całość - lewy): {right_panel_width}px")
+
+        # 5. Ustaw ostateczne, początkowe rozmiary dla obu paneli
+        final_sizes = [target_width, right_panel_width]
+        debug_print(f"Wywołuję self.splitter.setSizes({final_sizes})")
+        self.splitter.setSizes(final_sizes)
+        debug_print("--- ZAKOŃCZONO: adjust_employees_table_width ---")
 
     def setRowCount(self, count):
         """Kompatybilność wsteczna z SplitTableWidget"""
@@ -575,4 +603,3 @@ class SplitTableView(QWidget):
 
         debug_print(
             "Skonfigurowano synchronizację poziomych pasków przewijania")  # split_table_view.py - POPRAWIONA WERSJA z lepszą synchronizacją
-
