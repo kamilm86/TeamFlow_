@@ -1,42 +1,3 @@
-# TeamFlowApp.spec
-
-# -*- mode: python ; coding: utf-8 -*-
-
-a = Analysis(
-    ['main.py'],
-    pathex=[],
-    binaries=[],
-    datas=[],
-    # ZMIANA: Dodajemy "ukryte" importy, których PyInstaller może nie znaleźć sam
-    hiddenimports=['pyodbc', 'PySide6.QtSql', 'matplotlib.backends.backend_qtagg'],
-    hookspath=[],
-    hooksconfig={},
-    runtime_hooks=[],
-    excludes=[],
-    noarchive=False,
-)
-pyz = PYZ(a.pure)
-
-exe = EXE(
-    pyz,
-    a.scripts,
-    a.binaries,
-    a.zipfiles,
-    a.datas,
-    [],
-    name='TeamFlowApp',
-    debug=False,
-    bootloader_ignore_signals=False,
-    strip=False,
-    upx=True,  # Kompresja pliku EXE (można ustawić na False)
-    upx_exclude=[],
-    runtime_tmpdir=None,
-    # ZMIANA: Ustawienie trybu jednego pliku oraz dodanie ikony
-    onefile=False,
-    windowed=True,
-    icon=False, # Upewnij się, że plik ikony jest w tym samym katalogu
-    console=False,   # Zapewnia brak konsoli (alternatywa dla windowed=True)
-)
 
 @echo off
 echo Kopiowanie plikow aplikacji na dysk lokalny, prosze czekac...
@@ -53,3 +14,123 @@ echo Uruchamianie aplikacji...
 start "" "%LOCAL_APP_PATH%\TeamFlowApp.exe"
 
 exit
+-------------------------------------------------------------------------------
+@echo off
+::
+:: Inteligentny skrypt startowy dla TeamFlowApp
+:: Kopiuje/aktualizuje aplikacje z sieci i uruchamia ja lokalnie.
+::
+
+:: 1. Ustawienie zmiennych
+:: Sciezka do folderu z aplikacja na dysku sieciowym (tam gdzie jest ten plik .bat)
+set "SOURCE_PATH=%~dp0"
+:: Sciezka docelowa na dysku lokalnym uzytkownika (bezpieczna i nie wymaga admina)
+set "LOCAL_PATH=%LOCALAPPDATA%\TeamFlowApp"
+
+:: Komunikat dla uzytkownika
+echo Sprawdzanie aktualizacji TeamFlowApp, prosze czekac...
+
+:: 2. Synchronizacja plikow za pomoca robocopy
+::    /E  - Kopiuje podfoldery (wazne dla folderu _internal)
+::    /XO - Exclude Older - Kopiuje tylko pliki, ktore sa nowsze w zrodle. To jest klucz do aktualizacji!
+::    /R:2 /W:5 - W razie problemu z siecia, sprobuj 2 razy co 5 sekund.
+::    Pozostale parametry wylaczaja zbedne komunikaty w konsoli.
+robocopy "%SOURCE_PATH%" "%LOCAL_PATH%" /E /XO /R:2 /W:5 /NFL /NDL /NJH /NJS /nc /ns /np
+
+:: 3. Uruchomienie aplikacji z lokalnej kopii
+echo Uruchamianie aplikacji...
+start "" "%LOCAL_PATH%\TeamFlowApp.exe"
+
+exit
+-------------------------------------------------------------------------------------------------
+# -*- mode: python ; coding: utf-8 -*-
+
+# =============================================================================
+#  Zoptymalizowany plik .spec dla TeamFlowApp (wersja z QtCharts)
+# =============================================================================
+
+# --- Sekcja optymalizacji: Definiujemy moduły i biblioteki do wykluczenia ---
+
+# Lista modułów Pythona, które są duże i niepotrzebne w finalnej aplikacji.
+# Wykluczenie ich znacząco zmniejsza rozmiar i przyspiesza start.
+excluded_modules = [
+    'tkinter',          # Nie używamy GUI opartego na tkinter
+    'unittest',         # Moduł do testów, zbędny w wersji produkcyjnej
+    'matplotlib',       # Już nieużywane, ale jawnie wykluczamy dla pewności
+    'numpy',            # Już nieużywane
+    'PySide6.QtDesigner', # Narzędzia dla deweloperów
+    'PySide6.QtXml',      # Obsługa XML, jeśli nie jest używana
+    'PySide6.QtTest',     # Moduł do testowania Qt
+    'PySide6.QtNetwork',  # Jeśli aplikacja nie korzysta z funkcji sieciowych Qt
+    'PySide6.QtOpenGL',   # Obsługa OpenGL, zbędna dla wykresów 2D
+    'PySide6.QtPrintSupport', # Obsługa drukowania
+    'sqlite3',          # Używamy pyodbc do połączenia z MSSQL
+]
+
+# Lista plików binarnych (.dll), które są niepotrzebne.
+# Głównie są to sterowniki do baz danych, których nie używamy.
+excluded_binaries = [
+    'qsqlpsql.dll',     # Sterownik dla PostgreSQL
+    'qsqloci.dll',      # Sterownik dla Oracle
+    'qsqlibase.dll',    # Sterownik dla InterBase
+    'qsqlmimer.dll',    # Specyficzny sterownik, rzadko używany
+]
+
+
+# --- Główna konfiguracja analizy PyInstallera ---
+
+a = Analysis(
+    ['main.py'],
+    pathex=[],
+    binaries=[],
+    datas=[],
+    # ZMIANA: Dodajemy PySide6.QtCharts, aby wykresy działały poprawnie
+    hiddenimports=['pyodbc', 'PySide6.QtSql', 'PySide6.QtCharts'],
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    # ZMIANA: Używamy naszej listy wykluczonych modułów
+    excludes=excluded_modules,
+    noarchive=False,
+    # Użycie `COLLECT` zamiast `EXE` do filtrowania binariów jest bardziej nowoczesne,
+    # ale to podejście jest również poprawne i czytelne.
+)
+pyz = PYZ(a.pure)
+
+exe = EXE(
+    pyz,
+    a.scripts,
+    [], # Przekazujemy pustą listę, bo binaria dodamy w sekcji COLLECT
+    a.zipfiles,
+    a.datas,
+    [],
+    name='TeamFlowApp',
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=True,  # Kompresja pliku .exe, można wyłączyć (upx=False) jeśli powoduje problemy z antywirusem
+    upx_exclude=[],
+    runtime_tmpdir=None,
+    # Zawsze używaj `onefile=False` (tryb folderu) dla najlepszej wydajności startu
+    onefile=False,
+    windowed=True,
+    icon=False, # Możesz tu podać ścieżkę do pliku .ico
+    console=False,
+)
+
+# --- Sekcja składania finalnej aplikacji ---
+
+# Filtrujemy listę binariów, usuwając te z naszej listy wykluczeń
+filtered_binaries = [b for b in a.binaries if b[0] not in excluded_binaries]
+
+# Składamy finalny folder aplikacji
+coll = COLLECT(
+    exe,
+    filtered_binaries, # Używamy przefiltrowanej listy bibliotek
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=True,
+    upx_exclude=[],
+    name='TeamFlowApp',
+)
