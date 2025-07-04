@@ -1997,7 +1997,7 @@ class WorkScheduleWindow(QMainWindow):
 
     def show_audit_log_window(self):
         """
-        Tworzy i pokazuje okno historii zmian, obsługując jego niezależne odświeżanie.
+        Tworzy i pokazuje okno historii zmian, z limitem do 50, jeśli nic nie zaznaczono.
         """
         current_data = self.date_combo.currentData()
         if not current_data:
@@ -2006,43 +2006,64 @@ class WorkScheduleWindow(QMainWindow):
 
         year, month = current_data
 
-        # Helper do pobierania i filtrowania danych, aby uniknąć powtarzania kodu
         def _get_filtered_audit_data():
+            # Krok 1: Pobierz wszystkie dane audytowe dla miesiąca (wykorzysta cache)
             full_data = self.data_provider.get_schedule_audit_data(year, month)
             selected_cells = self.table.get_data_for_selected_cells()
 
             if selected_cells:
+                # --- Logika dla zaznaczonych komórek ---
                 allowed_users_dates = set()
                 for cell in selected_cells:
                     if (user_id := cell.get('uzytkownik_id')) and (date_str := cell.get('date_str')):
                         date_obj = QDate.fromString(date_str, "yyyy-MM-dd").toPython()
                         allowed_users_dates.add((user_id, date_obj))
 
+                # Zwróć wszystkie zmiany dla zaznaczonych komórek
                 return [row for row in full_data if
                         row.get('Data') and (int(row.get('Uzytkownik')), row.get('Data').date()) in allowed_users_dates]
             else:
+                # --- Logika, gdy nie ma zaznaczenia ---
+                # 1. Filtruj dane tylko dla pracowników widocznych w głównym oknie
                 visible_user_ids = {key[3] for key in self.schedule_model._keys}
-                return [row for row in full_data if
-                        row.get('Uzytkownik') is not None and int(row.get('Uzytkownik')) in visible_user_ids]
+                filtered_by_visibility = [row for row in full_data if
+                                          row.get('Uzytkownik') is not None and int(
+                                              row.get('Uzytkownik')) in visible_user_ids]
 
-        # Pobierz dane początkowe
+                # 2. Sortuj dane od najnowszych do najstarszych
+                sorted_data = sorted(filtered_by_visibility, key=lambda x: x.get('DataModyfikacji'), reverse=True)
+
+                # 3. Zwróć tylko 50 ostatnich zmian
+                return sorted_data[:50]
+
+        # Sprawdź, czy widok jest ograniczony (czy nie ma zaznaczenia)
+        selected_cells = self.table.get_data_for_selected_cells()
+        is_limited = not selected_cells
+        limit_count = 50
+
+        # Pobierz dane początkowe z użyciem nowej logiki
         initial_filtered_data = _get_filtered_audit_data()
         if not initial_filtered_data:
             QMessageBox.information(self, "Informacja", "Brak historii zmian dla wybranych filtrów / zaznaczenia.")
             return
 
-        # Utwórz okno dialogowe
+        # Utwórz okno dialogowe, przekazując nowe parametry
         from audit_log_window import AuditLogWindow
-        dialog = AuditLogWindow(initial_filtered_data, self.is_dark_theme, self)
+        dialog = AuditLogWindow(
+            initial_filtered_data,
+            self.is_dark_theme,
+            self,
+            is_limited_view=is_limited,
+            year=year,
+            month=month,
+            limit=limit_count
+        )
 
         # Zdefiniuj slot do obsługi odświeżania
         def on_refresh_requested():
             debug_print("Otrzymano żądanie odświeżenia historii zmian.")
-            # Wyczyść cache, aby pobrać świeże dane z bazy
             self.data_provider.clear_audit_cache(year, month)
-            # Pobierz i przefiltruj dane na nowo
             fresh_filtered_data = _get_filtered_audit_data()
-            # Zaktualizuj widok w oknie dialogowym
             dialog.update_model_data(fresh_filtered_data)
             QMessageBox.information(dialog, "Odświeżono", "Historia zmian została zaktualizowana.")
 
