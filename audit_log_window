@@ -1,6 +1,6 @@
 # audit_log_window.py
 
-from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTableView,
+from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QTableView, QLabel,
                                QHeaderView, QPushButton, QSpacerItem, QSizePolicy)
 # ZMIANA: Dodano import dla QSortFilterProxyModel
 from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, Signal, QSortFilterProxyModel
@@ -75,12 +75,25 @@ class AuditLogWindow(QDialog):
 
     refresh_requested = Signal()
 
-    def __init__(self, audit_data, is_dark_theme, parent=None):
+    def __init__(self, audit_data, is_dark_theme, parent=None, is_limited_view=False, year=None, month=None, limit=50):
         super().__init__(parent)
         self.setWindowTitle("Historia Zmian Grafiku")
         self.setMinimumSize(800, 500)  # Zwiększono domyślny rozmiar dla lepszej czytelności
 
         main_layout = QVBoxLayout(self)
+        # Dodajemy etykietę informacyjną na górze okna
+        self.info_label = QLabel()
+        self.info_label.setStyleSheet("font-style: italic; color: gray; margin-bottom: 5px;")
+        main_layout.addWidget(self.info_label)
+
+        # Ustawiamy tekst i widoczność etykiety w zależności od trybu
+        if is_limited_view:
+            self.info_label.setText(
+                f"Wyświetlono ostatnich {limit} zmian dla {month:02}/{year}, ponieważ nie zaznaczono żadnych komórek.")
+            self.info_label.setVisible(True)
+        else:
+            self.info_label.setVisible(False)
+        # --- KONIEC NOWEGO KODU ---
         self.audit_table_view = QTableView()
         main_layout.addWidget(self.audit_table_view)
 
