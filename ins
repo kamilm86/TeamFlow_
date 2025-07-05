@@ -134,3 +134,10 @@ coll = COLLECT(
     upx_exclude=[],
     name='TeamFlowApp',
 )
+----------------------------------------------------------------------
+
+nuitka --standalone --windows-console-mode=disable --output-dir=compiled_app --enable-plugin=pyside6 --include-qt-plugins=sqldrivers,imageformats,styles --include-package=PySide6.QtCharts --include-package=PySide6.QtSql --include-package=PySide6.QtWebEngineWidgets --include-package=PySide6.QtNetwork main.py
+
+pip install nuitka
+
+pip install --upgrade nuitka setuptools wheel
