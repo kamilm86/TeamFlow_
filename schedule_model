@@ -19,12 +19,14 @@ class ScheduleTableModel(QAbstractTableModel):
     """
     Model danych z dynamicznymi ikonami i opcjonalną kolumną komentarza.
     """
-    # ROLE_DATA = ROLE_DATA
-    # ROLE_ID = ROLE_ID
-    # ROLE_TYPE = ROLE_TYPE
-    # ROLE_HAS_MEETING = ROLE_HAS_MEETING
-    # ROLE_HAS_OVERTIME = ROLE_HAS_OVERTIME
-    # ROLE_SPECIAL_SYMBOL = ROLE_SPECIAL_SYMBOL
+    ROLE_DATA = Qt.UserRole
+    ROLE_ID = Qt.UserRole + 1
+    ROLE_TYPE = Qt.UserRole + 2
+    ROLE_HAS_MEETING = Qt.UserRole + 3
+    ROLE_HAS_OVERTIME = Qt.UserRole + 4
+    ROLE_SPECIAL_SYMBOL = Qt.UserRole + 5
+    ROLE_LOCATION_SYMBOL = Qt.UserRole + 6
+    ROLE_ICON_COLOR = Qt.UserRole + 7
 
     def __init__(self, parent=None, user_role=None):
         super().__init__(parent)
