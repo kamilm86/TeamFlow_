@@ -435,7 +435,6 @@ class InsertSymbolDialog(QDialog):
         for idx, (symbol, desc) in enumerate(symbols):
             button = QPushButton(symbol)
             button.setFont(self.parent_font)
-            button.setFixedSize(60, 20)
             button.setToolTip(desc)
             button.setProperty("symbol", symbol)
             button.setFocusPolicy(Qt.NoFocus)  # Wyłącz fokus dla przycisku
@@ -534,7 +533,7 @@ class ScheduleChangeDialog(QDialog):
             self.determined_theme = "dark" if self.parent_widget.is_dark_theme else "light"
 
         self.setWindowTitle("Wstaw zmianę grafiku")
-        self.setMinimumWidth(800)
+        self.setMinimumWidth(900)
         self.setMinimumHeight(500)
 
         self.grouped_cells = grouped_cells
