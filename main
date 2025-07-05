@@ -1441,6 +1441,10 @@ class WorkScheduleWindow(QMainWindow):
         # Ustaw początkowe proporcje dla pionowego splittera (np. 60% grafik, 40% zdarzenia)
         right_splitter.setSizes([600, 400])
 
+        # # Ustawiamy, aby obie części (górna i dolna) rozciągały się wraz z oknem.
+        # right_splitter.setStretchFactor(0, 1)  # Górny panel (grafik) ma się rozciągać
+        # right_splitter.setStretchFactor(1, 1)  # Dolny panel (zdarzenia) również
+
         # Dodaj pionowy splitter do layoutu prawego panelu
         right_layout.addWidget(right_splitter)
 
@@ -1561,11 +1565,11 @@ class WorkScheduleWindow(QMainWindow):
 
     def setup_events_section(self):
         """
-        Tworzy sekcję zdarzeń używając QTableView zamiast QTableWidget
+        Tworzy sekcję zdarzeń używając QTableView i od razu konfiguruje jej kolumny.
         """
         events_frame = QFrame()
-        events_frame.setFrameShape(QFrame.StyledPanel)
-        events_frame.setFrameShadow(QFrame.Raised)
+        events_frame.setFrameShape(QFrame.Shape.StyledPanel)
+        events_frame.setFrameShadow(QFrame.Shadow.Raised)
         events_layout = QVBoxLayout(events_frame)
         events_layout.setContentsMargins(5, 5, 5, 5)
 
@@ -1575,10 +1579,13 @@ class WorkScheduleWindow(QMainWindow):
 
         # Tworzenie tabeli zdarzeń jako QTableView
         self.events_table = QTableView()
-        self.events_table.setSelectionMode(QAbstractItemView.ExtendedSelection)
-        self.events_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.events_table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.events_table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.events_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.events_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.events_table.setStyleSheet(AppStyles.get_table_style("dark" if self.is_dark_theme else "light"))
+
+        # --- NOWA LOGIKA: Konfiguracja kolumn od razu po utworzeniu tabeli ---
+        self.setup_events_table_columns()
 
         # Dodaj tabelę zdarzeń do panelu
         events_layout.addWidget(self.events_table)
@@ -1655,22 +1662,26 @@ class WorkScheduleWindow(QMainWindow):
 
     def setup_events_table_columns(self):
         """Konfiguruje kolumny dla tabeli zdarzeń"""
-        self.events_table.setColumnCount(10)
-        self.events_table.setHorizontalHeaderLabels([
-            "Id", "Typ", "Temat", "Nazwa", "Użytkownik", "Data", "Od", "Do", "Status", "Akcje"
-        ])
+        header = self.events_table.horizontalHeader()
 
-        # Ustaw szerokość kolumn
-        self.events_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Id
-        self.events_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Typ
-        self.events_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)  # Temat
-        self.events_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)  # Nazwa
-        self.events_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)  # Użytkownik
-        self.events_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents)  # Data
-        self.events_table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeToContents)  # Od
-        self.events_table.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeToContents)  # Do
-        self.events_table.horizontalHeader().setSectionResizeMode(8, QHeaderView.ResizeToContents)  # Status
-        self.events_table.horizontalHeader().setSectionResizeMode(9, QHeaderView.ResizeToContents)  # Akcje
+        # Ta jedna linia ustawia tryb rozciągania dla WSZYSTKICH kolumn.
+        header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        # self.events_table.setColumnCount(10)
+        # self.events_table.setHorizontalHeaderLabels([
+        #     "Id", "Typ", "Temat", "Nazwa", "Użytkownik", "Data", "Od", "Do", "Status", "Akcje"
+        # ])
+        #
+        # # Ustaw szerokość kolumn
+        # self.events_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Id
+        # self.events_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Typ
+        # self.events_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)  # Temat
+        # self.events_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)  # Nazwa
+        # self.events_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)  # Użytkownik
+        # self.events_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents)  # Data
+        # self.events_table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeToContents)  # Od
+        # self.events_table.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeToContents)  # Do
+        # self.events_table.horizontalHeader().setSectionResizeMode(8, QHeaderView.ResizeToContents)  # Status
+        # self.events_table.horizontalHeader().setSectionResizeMode(9, QHeaderView.ResizeToContents)  # Akcje
 
     def setup_table_properties(self):
         """Konfiguruje właściwości tabel i tworzy delegatów z ustawieniami."""
