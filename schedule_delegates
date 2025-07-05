@@ -29,14 +29,14 @@ class OvertimeItemDelegate(QStyledItemDelegate):
 
             # Rysowanie ikon geometrycznych
             if has_meeting:
-                marker_size = 5
+                marker_size = 7
                 rect = QRect(option.rect.left() + 2, option.rect.bottom() - marker_size - 1, marker_size, marker_size)
                 painter.setBrush(QBrush(QColor(255, 255, 255, 240)))
                 painter.setPen(QPen(QColor(0, 0, 0, 220), 1.0))
                 painter.drawEllipse(rect)
 
             if has_overtime:
-                marker_size = 6
+                marker_size = 7
                 x = option.rect.right() - marker_size - 1
                 y = option.rect.bottom() - marker_size - 1
                 triangle = QPolygon(
@@ -79,6 +79,7 @@ class OvertimeItemDelegate(QStyledItemDelegate):
         }
         main_font_size = option.font.pointSize()
         icon_font_size = font_size_map.get(main_font_size, 7)
+
         icon_font.setPointSize(icon_font_size)
 
         # Przywrócenie pogrubienia, które było w działającej wersji
@@ -86,10 +87,12 @@ class OvertimeItemDelegate(QStyledItemDelegate):
         painter.setFont(icon_font)
 
         metrics = painter.fontMetrics()
-        text_rect = metrics.boundingRect(text)
+
+        text_width = metrics.horizontalAdvance(text)
+        text_height = metrics.ascent() + metrics.descent()
 
         # --- PRZYWRÓCONA, DZIAŁAJĄCA LOGIKA TWORZENIA TŁA ---
-        bg_rect = QRect(text_rect)
+        bg_rect = QRect(0, 0, text_width, text_height)
 
         # Ręczne "ściskanie" tła w pionie, aby usunąć margines górny i dolny.
         vertical_squeeze = 1
@@ -98,7 +101,6 @@ class OvertimeItemDelegate(QStyledItemDelegate):
         # Dodanie minimalnego marginesu po bokach dla estetyki.
         horizontal_margin = 1
         bg_rect.adjust(-horizontal_margin, 0, horizontal_margin, 0)
-        # --- KONIEC PRZYWRÓCONEJ LOGIKI ---
 
         # Pozycjonowanie z odsunięciem, które było w działającej wersji
         if position == 'top_left':
@@ -109,7 +111,8 @@ class OvertimeItemDelegate(QStyledItemDelegate):
         # Rysowanie tła i tekstu
         painter.setBrush(QColor(Qt.white))
         painter.setPen(Qt.NoPen)
-        painter.drawRect(bg_rect)
+
+        painter.drawRoundedRect(bg_rect, 3, 3)
 
         painter.setPen(QColor(Qt.black))
         painter.drawText(bg_rect, Qt.AlignCenter, text)
