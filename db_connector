@@ -1,4 +1,3 @@
-import sqlite3
 import pyodbc
 from config import DATABASE_CONFIG, ENVIRONMENT
 from datetime import datetime, timedelta, time
@@ -18,9 +17,7 @@ class DatabaseConnector:
         db_config = DATABASE_CONFIG[ENVIRONMENT]
 
         if db_config['ENGINE'] == 'QSQLITE':
-            conn = sqlite3.connect(db_config['NAME'])
-            return conn
-
+            pass
         elif db_config['ENGINE'] == 'mssql':
             # Połączenie do MS SQL Server
             connection_string = (
