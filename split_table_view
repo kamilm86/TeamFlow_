@@ -79,9 +79,11 @@ class SplitTableView(QWidget):
         # Dodawanie splittera do głównego layoutu
         self.main_layout.addWidget(self.splitter)
 
-        # # Ustawia, który panel ma się rozciągać, a który trzymać rozmiar
-        # self.splitter.setStretchFactor(0, 0)  # Lewy panel (index 0) nie rozciąga się
-        # self.splitter.setStretchFactor(1, 1)  # Prawy panel (index 1) wypełnia całą resztę
+        # Ustawia, który panel ma się rozciągać, a który ma trzymać rozmiar.
+        # Wartość '0' oznacza brak rozciągania, '1' oznacza rozciąganie.
+        self.splitter.setStretchFactor(0, 0)  # Lewy panel (index 0) nie rozciąga się
+        self.splitter.setStretchFactor(1, 1)  # Prawy panel (index 1) wypełnia resztę
+        # --- KONIEC NOWEGO KODU ---
 
         # Flaga blokująca nieskończone pętle
         self._is_updating = False
