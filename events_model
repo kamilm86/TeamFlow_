@@ -253,6 +253,47 @@ class EventsTableModel(QAbstractTableModel):
         print(
             f"Model zdarzeń zaktualizowany (tylko filtrowane dane): {len(self._data)} zdarzeń w modelu, {len(self._filtered_data)} widocznych")
 
+    def sort(self, column, order):
+        """
+        Sortuje dane modelu według wskazanej kolumny.
+        """
+        self.layoutAboutToBeChanged.emit()  # Sygnalizuj początek zmiany układu
+
+        # Upewnij się, że sortujemy przefiltrowane dane, a nie oryginalne _data
+        # Ponieważ filter_data aktualizuje _filtered_data, to na niej bazujemy.
+
+        # Klucze do sortowania, które odpowiadają indeksom kolumn w widoku
+        # Pamiętaj, że kolumna "Akcje" (indeks 9) nie powinna być sortowalna
+        if column == 0:  # Id
+            sort_key = lambda x: x.get('id', 0)
+        elif column == 1:  # Typ
+            sort_key = lambda x: x.get('type', '')
+        elif column == 2:  # Temat
+            sort_key = lambda x: x.get('topic', '')
+        elif column == 3:  # Nazwa
+            sort_key = lambda x: x.get('name', '')
+        elif column == 4:  # Użytkownik
+            sort_key = lambda x: x.get('user_name', '')
+        elif column == 5:  # Data
+            sort_key = lambda x: x.get('date_key', '')  # Użyj date_key dla sortowania dat
+        elif column == 6:  # Od
+            sort_key = lambda x: x.get('time_from', '')
+        elif column == 7:  # Do
+            sort_key = lambda x: x.get('time_to', '')
+        elif column == 8:  # Status
+            sort_key = lambda x: x.get('status', '')
+        elif column == 9:  # Akcje - NIE sortujemy po tej kolumnie
+            return
+        else:
+            return  # Nieznana kolumna
+
+        self._filtered_data.sort(key=sort_key, reverse=(order == Qt.DescendingOrder))
+
+        self.layoutChanged.emit()  # Sygnalizuj koniec zmiany układu
+        debug_print(
+            f"EventsTableModel: Posortowano kolumnę {column}, kolejność: {'rosnąco' if order == Qt.AscendingOrder else 'malejąco'}")
+
+
     def filter_data(self, **filter_params):
         """
         Filtruje dane modelu na podstawie podanych parametrów.
