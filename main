@@ -1094,7 +1094,7 @@ class WorkScheduleWindow(QMainWindow):
         self.setCentralWidget(central_widget)
 
         # Dodatkowe konfiguracje
-        self.setup_table_properties()
+        # self.setup_table_properties()
 
         # ZMIANA: Podłącz sygnał selection_changed dopiero po utworzeniu wszystkich komponentów
         if hasattr(self, 'table'):
@@ -1585,7 +1585,7 @@ class WorkScheduleWindow(QMainWindow):
         self.events_table.setStyleSheet(AppStyles.get_table_style("dark" if self.is_dark_theme else "light"))
 
         # --- NOWA LOGIKA: Konfiguracja kolumn od razu po utworzeniu tabeli ---
-        self.setup_events_table_columns()
+        # self.setup_events_table_columns()
 
         # Dodaj tabelę zdarzeń do panelu
         events_layout.addWidget(self.events_table)
@@ -1661,27 +1661,51 @@ class WorkScheduleWindow(QMainWindow):
         return events_filter_frame
 
     def setup_events_table_columns(self):
-        """Konfiguruje kolumny dla tabeli zdarzeń"""
+        """
+        Konfiguruje kolumny dla tabeli zdarzeń:
+        - Kolumna 'Akcje' ma stałą szerokość 50px.
+        - Pozostałe kolumny rozciągają się, a 'Nazwa' wchłania większość wolnego miejsca.
+        - Włączone sortowanie i klikalność nagłówków.
+        """
         header = self.events_table.horizontalHeader()
 
-        # Ta jedna linia ustawia tryb rozciągania dla WSZYSTKICH kolumn.
-        header.setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        # self.events_table.setColumnCount(10)
-        # self.events_table.setHorizontalHeaderLabels([
-        #     "Id", "Typ", "Temat", "Nazwa", "Użytkownik", "Data", "Od", "Do", "Status", "Akcje"
-        # ])
-        #
-        # # Ustaw szerokość kolumn
-        # self.events_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Id
-        # self.events_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Typ
-        # self.events_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)  # Temat
-        # self.events_table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)  # Nazwa
-        # self.events_table.horizontalHeader().setSectionResizeMode(4, QHeaderView.ResizeToContents)  # Użytkownik
-        # self.events_table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents)  # Data
-        # self.events_table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeToContents)  # Od
-        # self.events_table.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeToContents)  # Do
-        # self.events_table.horizontalHeader().setSectionResizeMode(8, QHeaderView.ResizeToContents)  # Status
-        # self.events_table.horizontalHeader().setSectionResizeMode(9, QHeaderView.ResizeToContents)  # Akcje
+        # Upewnij się, że nagłówki kolumn są klikalne (do sortowania)
+        header.setSectionsClickable(True)
+
+        # Włącz sortowanie dla całej tabeli
+        self.events_table.setSortingEnabled(True)
+
+        # KROK 1: Ustaw wszystkie kolumny na tryb Interactive lub ResizeToContents jako bazowy.
+        # To pozwala na ręczną zmianę rozmiaru, ale nie rozciąga domyślnie.
+        # Dla wszystkich kolumn (0 do 9), domyślnie ustawiamy ResizeToContents.
+        for i in range(self.events_table.model().columnCount()):
+            header.setSectionResizeMode(i, QHeaderView.ResizeToContents)
+
+        # KROK 2: Jawnie ustaw stałą szerokość dla kolumny "Akcje" (indeks 9).
+        # To nadpisuje ResizeToContents dla tej konkretnej kolumny.
+        header.setSectionResizeMode(9, QHeaderView.Fixed)  # Ustawia stały rozmiar
+        self.events_table.setColumnWidth(9, 50)  # Ustaw konkretną szerokość na 50 pikseli
+
+        # KROK 3: Jawnie ustaw kolumnę, która ma wchłonąć całą pozostałą przestrzeń.
+        # Zwykle jest to ostatnia kolumna o trybie Stretch.
+        # W Twoim przypadku to 'Nazwa' (indeks 3), która ma się rozciągać.
+        # Upewnij się, że indeks odpowiada 'Nazwie'.
+        # Sprawdź kolejność: "Id", "Typ", "Temat", "Nazwa", "Użytkownik", "Data", "Od", "Do", "Status", "Akcje"
+        # Indeksy:    0       1       2         3         4            5       6     7     8          9
+        header.setSectionResizeMode(3, QHeaderView.Stretch)  # Kolumna 'Nazwa' rozciąga się.
+
+        # KROK 4: Opcjonalnie, jeśli chcesz, aby również "Temat" rozciągał się razem z "Nazwą",
+        # podziel przestrzeń między nie, możesz ustawić też go na Stretch.
+        # Jeśli tak, to te dwie kolumny równo podzielą pozostałą przestrzeń po tym,
+        # jak pozostałe (w tym Akcje) zajmą swój stały/dopasowany rozmiar.
+        header.setSectionResizeMode(2, QHeaderView.Stretch)  # Kolumna 'Temat' również rozciąga się.
+
+        # WAŻNE: W tym scenariuszu, NIE używamy setStretchLastSection(True).
+        # To jest opcja, która często powoduje problemy, gdy chcemy precyzyjnie kontrolować rozciąganie.
+        # setStretchLastSection(True) zmusza OSTATNIĄ fizycznie kolumnę do rozciągania.
+        # Ponieważ chcemy, aby to 'Nazwa' lub 'Temat' się rozciągały, a nie 'Akcje',
+        # to usunięcie tej linii jest kluczowe.
+        # self.events_table.horizontalHeader().setStretchLastSection(True) # <- ZAKOMENTUJ LUB USUŃ TĘ LINIĘ
 
     def setup_table_properties(self):
         """Konfiguruje właściwości tabel i tworzy delegatów z ustawieniami."""
@@ -1700,6 +1724,7 @@ class WorkScheduleWindow(QMainWindow):
 
         if hasattr(self.events_table, 'horizontalHeader'):
             self.events_table.horizontalHeader().sortIndicatorChanged.connect(self.on_events_sort_changed)
+            self.setup_events_table_columns()
 
         view_settings = {
             'show_special_symbol': self.user_settings.get('show_special_symbol', True),
@@ -1713,9 +1738,7 @@ class WorkScheduleWindow(QMainWindow):
 
         button_delegate = ButtonDelegate(parent=self, button_text="Usuń", is_dark_theme=self.is_dark_theme)
 
-        # --- KLUCZOWA POPRAWKA: Połączenie sygnału z akcją usuwania ---
         button_delegate.button_clicked.connect(self.delete_event_from_row)
-        # --- KONIEC POPRAWKI ---
 
         self.events_table.setItemDelegateForColumn(9, button_delegate)
 
@@ -2233,20 +2256,15 @@ class WorkScheduleWindow(QMainWindow):
 
     def _group_cells_for_symbol_changes(self, schedule_cells):
         """
-        Grupuje komórki według użytkownika i daty dla komunikatu potwierdzenia
-
-        Args:
-            schedule_cells (list): Lista komórek do modyfikacji
-
-        Returns:
-            dict: Pogrupowane zmiany
+        Grupuje komórki według użytkownika i daty dla komunikatu potwierdzenia,
+        filtrując tylko te, które faktycznie mają symbol do modyfikacji/wstawienia.
         """
         grouped_changes = {}
         for cell_data in schedule_cells:
             user_id = cell_data.get('uzytkownik_id')
             user_name = cell_data.get('uzytkownik_dane', '')
             date_str = cell_data.get('date_str')
-            current_symbol = cell_data.get('symbol', '')
+            current_symbol = cell_data.get('symbol', '').strip() # Strip dla pewności
 
             # Formatuj datę
             try:
@@ -2262,6 +2280,8 @@ class WorkScheduleWindow(QMainWindow):
             if formatted_date not in grouped_changes[user_key]:
                 grouped_changes[user_key][formatted_date] = []
 
+            # Dodaj komórkę do grupowanych zmian, niezależnie czy była pusta czy nie,
+            # bo cells_to_modify już to przefiltrowało zgodnie z SYMBOLS_TO_CREATE_NEW_ENTRY.
             grouped_changes[user_key][formatted_date].append({
                 'current_symbol': current_symbol,
                 'cell_data': cell_data
@@ -2308,37 +2328,93 @@ class WorkScheduleWindow(QMainWindow):
 
         return changes_info
 
-    def _predict_new_symbol(self, current_symbol, special_symbol, cell_data):
+    def _predict_new_symbol(self, current_symbol: str, special_symbol: str, cell_data: dict) -> str:
         """
-        Przewiduje jak będzie wyglądał nowy symbol po modyfikacji
+        Przewiduje jak będzie wyglądał nowy symbol po modyfikacji,
+        z uwzględnieniem zasad przekazywania lokalizacji i zachowania godzin.
 
         Args:
-            current_symbol (str): Obecny symbol (nigdy pusty - puste są filtrowane)
-            special_symbol (str): Nowy symbol specjalny
-            cell_data (dict): Dane komórki
+            current_symbol (str): Aktualny symbol w komórce (np. "h;8;8;", "8;8;", "CO", "").
+            special_symbol (str): Nowy symbol specjalny do wstawienia (np. "NN", "DYS").
+            cell_data (dict): Słownik zawierający dane o komórce, w tym 'etat' i 'lokalizacja_domyslna'.
 
         Returns:
-            str: Przewidywany nowy symbol
+            str: Przewidywany nowy symbol w formacie tekstowym.
         """
         from symbol_parser import parse_symbol, build_symbol
 
-        # Sprawdź czy symbol istnieje (zabezpieczenie dodatkowe)
-        if not current_symbol or current_symbol.strip() == '':
-            debug_print("Ostrzeżenie: _predict_new_symbol otrzymał pusty symbol")
-            return special_symbol
+        # Symbole specjalne, które mają zachować lokalizację (jeśli istniała lub domyślna).
+        SYMBOLS_PRESERVING_LOCATION = {"DYS", "T", "BC", "S", "P", "PR", "PD", "HO", "DK", "DZ", "BK", "BO", "CW", "MW"}
 
-        # Parsuj obecny symbol
-        parsed = parse_symbol(current_symbol)
+        # Parsuj oryginalny symbol z komórki.
+        parsed_current = parse_symbol(current_symbol)
 
-        # Zachowaj lokalizację i godziny, zmień tylko symbol specjalny
+        # 1. Określ FINALNĄ LOKALIZACJĘ.
+        final_location = None  # Domyślnie brak lokalizacji dla nowego symbolu specjalnego.
+
+        # Logika dla zachowania lub usunięcia lokalizacji na podstawie nowego symbolu specjalnego.
+        if special_symbol in SYMBOLS_PRESERVING_LOCATION:
+            # Jeśli nowy symbol jest z listy zachowującej lokalizację,
+            # użyj lokalizacji z oryginalnego symbolu lub domyślnej z cell_data.
+            final_location = parsed_current.get('location') or cell_data.get('lokalizacja_domyslna', 'h')
+        elif special_symbol is None:
+            # Jeśli usuwamy symbol specjalny (special_symbol is None),
+            # zawsze zachowujemy lokalizację, która była w oryginalnym symbolu lub domyślną.
+            final_location = parsed_current.get('location') or cell_data.get('lokalizacja_domyslna', 'h')
+        # W przeciwnym razie (special_symbol to np. "NN", "CO", "U"), final_location pozostaje None.
+
+        # 2. Określ FINALNĄ GODZINĘ ROZPOCZĘCIA I LICZBĘ GODZIN.
+        # ZAWSZE próbujemy zachować godziny z oryginalnego symbolu.
+        final_start_hour = parsed_current.get('start_hour')
+        final_work_hours = parsed_current.get('work_hours')
+
+        # Jeśli oryginalny symbol nie miał godzin (lub był pusty, co już jest odfiltrowane w apply_symbol_from_keyboard,
+        # ale parsed_current może mieć None jeśli np. current_symbol to samo "U" bez parametrów),
+        # i chcemy wstawić symbol, który może mieć godziny (czyli nie jest to tylko zmiana symbolu na "czysty" urlop).
+        # WAŻNE: Tutaj decydujemy, czy UZUPEŁNIĆ brakujące godziny.
+        # Twoje wymaganie: "Ma zmieniać się symbol specjalny w komórce ... a nie NN"
+        # Oznacza, że jeśli jest 8;8;, to ma być 8;8;NN.
+        # Jeśli było np. "U" (bez godzin), a wstawiamy "NN", to ma być "NN" (bo oryginalnie nie było godzin).
+        # To wymaga, byśmy *nie* uzupełniali godzin, jeśli oryginalny symbol był "czysty".
+
+        # Tylko jeśli oryginalny symbol miał godziny, zachowujemy je.
+        # W przeciwnym razie (parsed_current.get('start_hour') is None),
+        # to nie uzupełniamy ich domyślnymi wartościami dla symboli specjalnych.
+        # To sprawi, że 'U' -> 'NN' (bo U nie ma godzin)
+        # 'h;8;8;' -> 'h;8;8;NN' (bo h;8;8; ma godziny)
+
+        # Finalna logika wyboru godzin:
+        # Jeśli oryginalny symbol miał godziny pracy, to je zachowaj.
+        if parsed_current.get('start_hour') is not None and parsed_current.get('work_hours') is not None:
+            pass  # final_start_hour i final_work_hours są już ustawione z parsed_current.
+        else:
+            # Jeśli oryginalny symbol NIE miał godzin pracy (np. było to samo "U", "DYS" bez godzin),
+            # to dla nowego symbolu specjalnego nie dodajemy domyślnych godzin.
+            # Zostają None, a build_symbol zdecyduje, czy renderować sam special_symbol.
+            final_start_hour = None
+            final_work_hours = None
+
+            # WYJĄTEK: Jeśli special_symbol jest usuwany (None), a oryginalnie nie było godzin,
+            # ale komórka ogólnie powinna mieć godziny (np. pusta komórka, która jest filtrowana),
+            # to możemy chcieć wstawić "h;8;8;". Ale ta funkcja jest dla symboli specjalnych.
+            # Ta funkcja jest wywoływana TYLKO DLA NIEPUSTYCH KOMÓREK.
+            # A jeśli niepusta komórka nie ma godzin (np. "U"), to po prostu nie dodajemy godzin.
+
+        # 3. Zbuduj nowy symbol.
         new_symbol = build_symbol(
-            location=parsed.get('location'),
-            start_hour=parsed.get('start_hour'),
-            work_hours=parsed.get('work_hours'),
-            special_symbol=special_symbol
+            location=final_location,
+            start_hour=final_start_hour,
+            work_hours=final_work_hours,
+            special_symbol=special_symbol  # Zawsze przekazujemy nowy symbol specjalny
         )
 
-        return new_symbol if new_symbol else special_symbol
+        # Zabezpieczenie: jeśli build_symbol zwróci pusty string, ale special_symbol był podany,
+        # zwróć sam special_symbol (np. "NN" zamiast "" dla "U" -> "NN").
+        if not new_symbol.strip() and special_symbol and special_symbol.strip():
+            return special_symbol.strip()
+
+        # Zwróć zbudowany symbol (np. "h;8;8;NN", "8;8;NN", "NN")
+        return new_symbol.strip() if new_symbol else ""
 
     def _find_events_to_cancel(self, user_date_pairs):
         """
@@ -2480,8 +2556,13 @@ class WorkScheduleWindow(QMainWindow):
             QMessageBox.warning(self, "Brak zaznaczenia", "Nie zaznaczono komórek do modyfikacji.")
             return
 
-        cells_to_modify = [cell for cell in selected_cells_data if
-                           cell.get('symbol') and parse_symbol(cell.get('symbol')).get('special_symbol')]
+        cells_to_modify = []
+        for cell in selected_cells_data:
+            current_symbol = cell.get('symbol', '')
+            parsed_current = parse_symbol(current_symbol)
+            if parsed_current.get('special_symbol'):  # Sprawdzamy czy w ogóle jest jakiś symbol specjalny do usunięcia
+                cells_to_modify.append(cell)
+
         if not cells_to_modify:
             QMessageBox.information(self, "Brak zmian",
                                     "W zaznaczonych komórkach nie ma symboli specjalnych do usunięcia.")
@@ -2496,9 +2577,26 @@ class WorkScheduleWindow(QMainWindow):
         error_messages = []
         for cell_data in cells_to_modify:
             parsed = parse_symbol(cell_data.get('symbol', ''))
+
+            # KLUCZOWA ZMIANA: Aby usunąć symbol specjalny, ustaw go na None
+            # Należy zachować lokalizację, godziny pracy i godzinę rozpoczęcia.
+            # Jeśli lokalizacja nie była w symbolu, to należy użyć domyślnej.
             final_location = parsed.get('location') or cell_data.get('lokalizacja_domyslna', 'h')
-            new_symbol = build_symbol(location=final_location, start_hour=parsed.get('start_hour'),
-                                      work_hours=parsed.get('work_hours'), special_symbol=None)
+            final_start_hour = parsed.get('start_hour')
+            final_work_hours = parsed.get('work_hours')
+
+            # Jeśli po usunięciu symbolu specjalnego nie ma już godzin pracy, to znaczy,
+            # że był to "czysty" symbol specjalny (np. "U") i powinien zostać pusty.
+            if final_start_hour is None and final_work_hours is None:
+                new_symbol = ""  # Ustaw pusty symbol
+            else:
+                new_symbol = build_symbol(location=final_location, start_hour=final_start_hour,
+                                          work_hours=final_work_hours,
+                                          special_symbol=None)  # Ustaw symbol specjalny na None
+
+            # W przypadku, gdy symbol po usunięciu symbolu specjalnego stałby się "h;8;8;",
+            # a godziny są 0, to powinien być "h;;;".
+            # Ale funkcja build_symbol już to obsługuje, jeśli jej podamy None.
 
             try:
                 user_id, date_str, nr_kadrowy = cell_data.get('uzytkownik_id'), cell_data.get(
@@ -2511,10 +2609,10 @@ class WorkScheduleWindow(QMainWindow):
                     updated_info.append((user_id, date_str, result.get('returned_symbol')))
                 else:
                     error_messages.append(
-                        f"👤 {cell_data.get('uzytkownik_dane')}: {result.get('message', 'Błąd zapisu.')}")
+                        f"Kamil: {cell_data.get('uzytkownik_dane')}: {result.get('message', 'Błąd zapisu.')}")
             except Exception as e:
                 log_error(f"Błąd w clear_special_symbol_from_selected_cells: {e}")
-                error_messages.append(f"👤 {cell_data.get('uzytkownik_dane')}: Błąd aplikacji: {e}")
+                error_messages.append(f"Kamil: {cell_data.get('uzytkownik_dane')}: Błąd aplikacji: {e}")
 
         if updated_info:
             self._update_cells_with_new_symbols(updated_info)
@@ -2529,40 +2627,11 @@ class WorkScheduleWindow(QMainWindow):
         """
         POPRAWIONA WERSJA: Buduje nowy symbol z absencją, poprawnie obsługując
         zarówno puste, jak i wypełnione komórki.
+        Ta metoda powinna wykorzystywać logikę _predict_new_symbol.
         """
-        from symbol_parser import parse_symbol, build_symbol
+        # Deleguj logikę do _predict_new_symbol, która już ma wszystkie zasady.
+        return self._predict_new_symbol(current_symbol, special_symbol, cell_data)
 
-        # Inicjalizacja zmiennych
-        location = None
-        start_hour = None
-        work_hours = None
-
-        if current_symbol and current_symbol.strip():
-            # Komórka NIE JEST pusta: parsujemy istniejący symbol
-            debug_print(f"Komórka niepusta. Parsowanie symbolu: '{current_symbol}'")
-            parsed = parse_symbol(current_symbol)
-            location = parsed.get('location')
-            start_hour = parsed.get('start_hour')
-            work_hours = parsed.get('work_hours')
-        else:
-            # --- NOWA, POPRAWNA LOGIKA DLA PUSTEJ KOMÓRKI ---
-            debug_print("Komórka pusta. Używam danych domyślnych.")
-            # Pobierz domyślną lokalizację i godziny z etatu
-            location = cell_data.get('lokalizacja_domyslna')
-            work_hours = cell_data.get('etat')
-            # Dla absencji w dzień wolny, domyślna godzina rozpoczęcia to 8
-            start_hour = 8
-
-        # Budujemy nowy symbol z nowym symbolem specjalnym, ale zachowując godziny/lokalizację
-        new_symbol = build_symbol(
-            location=location,
-            start_hour=start_hour,
-            work_hours=work_hours,
-            special_symbol=special_symbol
-        )
-
-        debug_print(f"Zbudowano nowy symbol: '{new_symbol}'")
-        return new_symbol
 
     def _call_import_changes_procedure(self, nr_kadrowy, rok, miesiac, data, symbol):
         """
@@ -6520,23 +6589,70 @@ class WorkScheduleWindow(QMainWindow):
         return {symbol for symbol, desc in symbol_lists}
 
     def apply_symbol_from_keyboard(self, special_symbol: str):
-        """Aplikuje symbol z klawiatury, z obsługą błędów i usuwania zdarzeń."""
+        """
+        Aplikuje symbol z klawiatury, z obsługą błędów, usuwania zdarzeń
+        oraz POMIJANIEM PUSTYCH KOMÓREK DLA KAŻDEGO SYMBOLU SPECJALNEGO.
+        """
         selected_cells_data = self.table.get_data_for_selected_cells()
-        if not selected_cells_data: return
+        if not selected_cells_data:
+            self.statusBar().showMessage("Nie zaznaczono żadnych komórek do edycji.", 3000)
+            return
 
-        ABSENCE_SYMBOLS = {'U', 'UZ', 'UOP', 'CO', 'CR', 'UB', 'UM', 'UO', 'UOD', 'US', 'UT', 'UW', 'CRW', 'CSR', 'ZO',
-                           'ZS', 'NN', 'NU', 'NW', 'O', 'OS', 'USW', 'Z'}
+        # Filtracja komórek: tylko te, które już mają jakiś symbol
+        cells_to_modify = []
+        for cell_data in selected_cells_data:
+            current_symbol = cell_data.get('symbol', '').strip()
 
-        if special_symbol.upper() in ABSENCE_SYMBOLS:
-            if self._find_events_to_cancel({(c.get('uzytkownik_id'), c.get('date_str')) for c in selected_cells_data if
-                                            c.get('uzytkownik_id') and c.get('date_str')}):
-                if not self.delete_events_for_cells(selected_cells_data):
-                    return
+            # Jeśli komórka jest pusta, pomijamy ją dla KAŻDEGO symbolu specjalnego.
+            if not current_symbol:
+                continue
+            else:
+                # Jeśli komórka nie jest pusta, zawsze ją modyfikujemy.
+                cells_to_modify.append(cell_data)
+
+        if not cells_to_modify:
+            self.statusBar().showMessage("Zaznaczone komórki są puste lub nie zawierają symboli do modyfikacji.", 3000)
+            return
+
+        ABSENCE_SYMBOLS_WITHOUT_LOCATION = {'U', 'UZ', 'UOP', 'CO', 'CR', 'UB', 'UM', 'UO', 'UOD', 'US', 'UT', 'UW',
+                                            'CRW', 'CSR', 'ZO', 'ZS', 'NN', 'NU', 'NW', 'O', 'OS', 'USW', 'Z'}
+
+        # Sprawdzenie i potwierdzenie odwołania zdarzeń (jeśli symbol to absencja)
+        if special_symbol.upper() in ABSENCE_SYMBOLS_WITHOUT_LOCATION:
+            # Zbieramy user_date_pairs tylko dla tych komórek, które FAKTYCZNIE będą modyfikowane
+            user_date_pairs_for_events = {(c.get('uzytkownik_id'), c.get('date_str')) for c in cells_to_modify if
+                                          c.get('uzytkownik_id') and c.get('date_str')}
+
+            if self._find_events_to_cancel(user_date_pairs_for_events):
+                # Jeśli są zdarzenia do odwołania, poproś o potwierdzenie.
+                # delete_events_for_cells już zawiera QMessageBox.
+                if not self.delete_events_for_cells(cells_to_modify):  # Przekazujemy cells_to_modify
+                    return  # Użytkownik anulował, przerywamy operację
 
         updated_info = []
         error_messages = []
-        for cell_data in selected_cells_data:
+
+        # Przygotuj komunikat potwierdzenia przed pętlą dla wszystkich komórek
+        # To jest opcjonalne, ale dobra praktyka, jeśli chcesz podsumowanie dla użytkownika
+        grouped_changes = self._group_cells_for_symbol_changes(cells_to_modify)
+        changes_info = self._prepare_symbol_changes_description(grouped_changes, special_symbol)
+
+        reply = QMessageBox.question(
+            self,
+            "Potwierdzenie wstawienia symbolu",
+            f"Czy na pewno chcesz wprowadzić następujące zmiany?\n\n{changes_info}",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes
+        )
+
+        if reply != QMessageBox.Yes:
+            self.statusBar().showMessage("Operacja anulowana przez użytkownika.", 3000)
+            return
+
+        for cell_data in cells_to_modify:  # Pętla tylko po przefiltrowanych komórkach
+            # Ta funkcja została już zmodyfikowana, aby poprawnie określać nowy symbol
             new_symbol = self._predict_new_symbol(cell_data.get('symbol', ''), special_symbol, cell_data)
+
             try:
                 user_id, date_str, nr_kadrowy = cell_data.get('uzytkownik_id'), cell_data.get(
                     'date_str'), cell_data.get('nr_kadrowy')
@@ -6548,10 +6664,10 @@ class WorkScheduleWindow(QMainWindow):
                     updated_info.append((user_id, date_str, result.get('returned_symbol')))
                 else:
                     error_messages.append(
-                        f"👤 {cell_data.get('uzytkownik_dane')}: {result.get('message', 'Błąd zapisu.')}")
+                        f"Błąd: {cell_data.get('uzytkownik_dane')}: {result.get('message', 'Błąd zapisu.')}")
             except Exception as e:
                 log_error(f"Błąd w apply_symbol_from_keyboard: {e}")
-                error_messages.append(f"👤 {cell_data.get('uzytkownik_dane')}: Błąd aplikacji: {e}")
+                error_messages.append(f"Błąd: {cell_data.get('uzytkownik_dane')}: Błąd aplikacji: {e}")
 
         if updated_info:
             self._update_cells_with_new_symbols(updated_info)
