@@ -23,8 +23,8 @@ class SettingsDatabase:
     def save_settings(self, theme, font_family, font_size, load_all_events=True, visible_columns=None,
                       show_schedule_comment=False, login_windows=None, import_grupa=3, import_funkcja=1,
                       show_special_symbol=True, show_location_symbol=True,
-                      special_symbol_position='top_left', location_symbol_position='bottom_left'):
-        """Zapisuje ustawienia użytkownika, w tym parametry importu i wyglądu ikon."""
+                      special_symbol_position='top_left', location_symbol_position='bottom_left',
+                      log_to_file=False, log_to_console=False):
         if login_windows is None:
             login_windows = self.get_current_login_windows()
 
@@ -34,20 +34,51 @@ class SettingsDatabase:
             columns_str = ','.join(visible_columns) if visible_columns else None
 
             params_to_save = (
-                login_windows, theme, font_family, font_size, load_all_events, columns_str,
-                show_schedule_comment, import_grupa, import_funkcja,
-                show_special_symbol, show_location_symbol,
-                special_symbol_position, location_symbol_position
+                login_windows,
+                theme,
+                font_family,
+                font_size,
+                load_all_events,
+                columns_str,
+                show_schedule_comment,
+                import_grupa,
+                import_funkcja,
+                show_special_symbol,
+                show_location_symbol,
+                special_symbol_position,
+                location_symbol_position,
+                log_to_file,
+                log_to_console
             )
 
-            cursor.execute("""
-                EXEC SaveUserSettings 
-                    @login_windows=?, @theme=?, @font_family=?, @font_size=?, 
-                    @load_all_events=?, @visible_columns=?, @show_schedule_comment=?,
-                    @import_grupa=?, @import_funkcja=?,
-                    @show_special_symbol=?, @show_location_symbol=?,
-                    @special_symbol_position=?, @location_symbol_position=?
-            """, params_to_save)
+            sql_query = """
+                EXEC SaveUserSettings
+                    @login_windows=?, @theme=?, @font_family=?, @font_size=?,
+                    @load_all_events=?, @visible_columns=?, @show_schedule_comment=?,\
+                    @import_grupa=?, @import_funkcja=?,\
+                    @show_special_symbol=?, @show_location_symbol=?,\
+                    @special_symbol_position=?, @location_symbol_position=?, \
+                    @log_to_file=?, @log_to_console=?
+            """
+
+            # --- DODANE LOGOWANIE DLA DIAGNOSTYKI ---
+            # Zastąp placeholdery '?' rzeczywistymi wartościami dla celów debugowania.
+            # UWAGA: To jest TYLKO do debugowania! Nigdy nie buduj zapytań SQL przez konkatenację stringów
+            # w produkcyjnym kodzie z uwagi na bezpieczeństwo (SQL Injection).
+            # pyodbc obsługuje parametryzację poprawnie i bezpiecznie.
+            debug_log_query = sql_query.replace("\\", "")  # Usuń backslashe, jeśli są w stringu
+
+            # Tworzymy stringa z parametrami do wyświetlenia w logu
+            # Bezpieczniej jest przedstawić parametry jako listę, a nie wbudowywać je w query.
+            # Zbudowanie pełnego stringa z zapytaniem jest trudne z pyodbc,
+            # bo parametry są wysyłane oddzielnie.
+            # Zamiast tego, zalogujemy zapytanie i listę parametrów.
+
+            debug_print(f"SQL do wykonania: {debug_log_query.strip()}")
+            debug_print(f"Parametry do SQL: {params_to_save}")
+            # --- KONIEC DODANEGO LOGOWANIA ---
+
+            cursor.execute(sql_query, params_to_save)
 
             conn.commit()
             conn.close()
