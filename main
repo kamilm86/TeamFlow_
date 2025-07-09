@@ -878,6 +878,7 @@ class WorkScheduleWindow(QMainWindow):
     def clear_selected_cells(self):
         """
         Czyści symbole z zaznaczonych komórek (Delete/Backspace) z ulepszonym potwierdzeniem.
+        WERSJA POPRAWIONA: Automatycznie odwołuje powiązane zdarzenia.
         """
         try:
             if hasattr(self, 'keyboard_filter') and hasattr(self.keyboard_filter, '_buffer_timer'):
@@ -906,24 +907,41 @@ class WorkScheduleWindow(QMainWindow):
                         schedule_cells.append(cell_data)
 
             if not schedule_cells:
-                debug_print("Brak komórek z symbolami do wyczyszczenia")
                 self.statusBar().showMessage("Zaznaczone komórki są puste lub nie zawierają symboli do usunięcia.",
                                              3000)
                 return
 
+            # --- NOWA LOGIKA: Wyszukiwanie zdarzeń do odwołania ---
+            user_date_pairs = {(cell.get('uzytkownik_id'), cell.get('date_str')) for cell in schedule_cells}
+            events_to_cancel = self._find_events_to_cancel(user_date_pairs)
+            # --- KONIEC NOWEJ LOGIKI ---
+
             # Przygotuj szczegółowy komunikat potwierdzenia
             confirmation_message = self._prepare_deletion_summary_message(schedule_cells)
 
-            # Pokaż potwierdzenie, ustawiając "Tak" jako domyślny przycisk (reagujący na Enter)
+            # --- NOWA LOGIKA: Dodanie informacji o zdarzeniach do komunikatu ---
+            if events_to_cancel:
+                grouped_events = self._group_events_by_user_date(events_to_cancel)
+                delegations_info = self._prepare_delegations_description(grouped_events)
+                confirmation_message += f"\n\n{delegations_info}"
+            # --- KONIEC NOWEJ LOGIKI ---
+
+            # Pokaż potwierdzenie
             reply = QMessageBox.question(
                 self,
-                "Potwierdzenie usunięcia symboli",
+                "Potwierdzenie usunięcia",  # Zmieniono tytuł
                 confirmation_message,
                 QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.Yes  # Ustawia "Tak" jako domyślny przycisk
+                QMessageBox.Yes
             )
 
             if reply == QMessageBox.Yes:
+                # --- NOWA LOGIKA: Najpierw odwołaj zdarzenia ---
+                if events_to_cancel:
+                    self._cancel_delegations(events_to_cancel)
+                # --- KONIEC NOWEJ LOGIKI ---
+
+                # Następnie wyczyść symbole
                 self._clear_cells_symbols(schedule_cells)
 
         except Exception as e:
@@ -5994,6 +6012,71 @@ class WorkScheduleWindow(QMainWindow):
         # Pokaż dialog
         dialog.exec()
 
+    def _update_multiple_overtime_locations(self, location_changes):
+        """
+        Aktualizuje lokalizację dla wielu wpisów nadgodzin, każdy z inną wartością.
+        WERSJA POPRAWIONA: Aktualizuje również nazwę zdarzenia w interfejsie.
+        """
+        if not location_changes:
+            return True  # Brak zmian do wykonania to nie błąd
+
+        location_map = {'h': 1, 's': 3, 'p': 2}
+
+        try:
+            conn = DatabaseConnector.get_connection()
+            cursor = conn.cursor()
+
+            for event_id, new_location_code in location_changes:
+                location_value = location_map.get(new_location_code)
+                if location_value is None:
+                    log_warning(
+                        f"Pominięto aktualizację nadgodzin dla ID {event_id} z powodu nieznanego kodu lokalizacji: {new_location_code}")
+                    continue
+
+                query = "UPDATE dbo.p_t_zz_Nadgodziny SET Lokalizacja = ? WHERE Id = ?"
+                params = (location_value, event_id)
+                debug_print(f"Aktualizuję lokalizację nadgodzin: ID={event_id}, nowa lokalizacja={location_value}")
+                cursor.execute(query, params)
+
+            conn.commit()
+            conn.close()
+
+            # --- NOWA LOGIKA: Aktualizacja nazwy w modelu danych po pomyślnym zapisie w bazie ---
+
+            # Mapa kodów na pełne nazwy do wyświetlenia
+            location_display_map = {'h': 'Home Office', 's': 'Stacjonarnie', 'p': 'mPrzystanek'}
+
+            # Stwórz słownik zmian dla szybszego wyszukiwania
+            changes_map = dict(location_changes)
+
+            # Zaktualizuj główną listę wszystkich zdarzeń
+            for event in self.all_events_data:
+                if event.get('id') in changes_map and event.get('type') == 'Nadgodziny':
+                    new_loc_code = changes_map[event['id']]
+                    new_loc_name = location_display_map.get(new_loc_code, 'N/A')
+                    event['name'] = f"Nadgodziny {new_loc_name}"
+
+            # Zaktualizuj listę zdarzeń aktualnie widoczną w tabeli
+            for event in self.events_data:
+                if event.get('id') in changes_map and event.get('type') == 'Nadgodziny':
+                    new_loc_code = changes_map[event['id']]
+                    new_loc_name = location_display_map.get(new_loc_code, 'N/A')
+                    event['name'] = f"Nadgodziny {new_loc_name}"
+
+            # Odśwież model tabeli zdarzeń, aby UI pokazał zmiany
+            if hasattr(self, 'events_model'):
+                self.events_model.update_data(self.events_data)
+
+            debug_print(f"Zaktualizowano {len(location_changes)} wpisów nadgodzin w interfejsie.")
+            # --- KONIEC NOWEJ LOGIKI ---
+
+            return True
+
+        except Exception as e:
+            log_error(f"Błąd podczas aktualizacji wielu lokalizacji nadgodzin: {e}", exception=e)
+            QMessageBox.critical(self, "Błąd Bazy Danych", f"Nie udało się zaktualizować lokalizacji nadgodzin:\n{e}")
+            return False
+
     def _update_overtime_icon_single(self, user_id, date_str, year, month):
         """
         NOWA METODA: Aktualizuje ikonę nadgodzin bez wpływania na cache innych danych.
@@ -6454,7 +6537,6 @@ class WorkScheduleWindow(QMainWindow):
             return False
 
     def show_settings_dialog(self):
-        """Otwiera nowe, kompleksowe okno ustawień."""
         dialog = AppSettingsDialog(self, settings=self.user_settings)
 
         # Podłączamy sygnał "na żywo" z dialogu do metody aplikującej motyw w głównym oknie.
@@ -6472,6 +6554,7 @@ class WorkScheduleWindow(QMainWindow):
             self.current_font_size = self.user_settings.get('font_size')
             self.import_grupa = self.user_settings.get('import_grupa')
             self.import_funkcja = self.user_settings.get('import_funkcja')
+            self.show_comment_column = self.user_settings.get('show_schedule_comment', False) # Upewnij się, że to jest aktualizowane
 
             # Zastosuj motyw i czcionkę dla całej aplikacji
             self.apply_theme_settings(
@@ -6480,16 +6563,11 @@ class WorkScheduleWindow(QMainWindow):
                 self.current_font_size
             )
 
-            # --- OSTATECZNA, NAJBARDZIEJ NIEZAWODNA LOGIKA ODŚWIEŻANIA ---
-
-            # 1. Stwórz delegata NA NOWO z aktualnymi ustawieniami
+            # Stwórz delegata NA NOWO z aktualnymi ustawieniami
             self.setup_table_properties()
 
-            # 2. Wymuś pełne przerysowanie całego widoku tabeli.
-            #    To zmusi QTableView do ponownego użycia nowego delegata dla każdej komórki.
+            # Wymuś pełne przerysowanie całego widoku tabeli.
             self.table.schedule_view.viewport().update()
-
-            # --- KONIEC OSTATECZNEJ LOGIKI ---
 
             # Zapisz ustawienia do bazy, jeśli użytkownik sobie tego życzy
             if self.user_settings.get('save_to_db'):
@@ -6497,7 +6575,7 @@ class WorkScheduleWindow(QMainWindow):
                     theme=self.user_settings.get('theme'),
                     font_family=self.user_settings.get('font_family'),
                     font_size=self.user_settings.get('font_size'),
-                    visible_columns=self.visible_columns,
+                    visible_columns=self.visible_columns, # To jest pobierane z main.py, a nie z dialogu
                     show_schedule_comment=self.user_settings.get('show_schedule_comment', False),
                     import_grupa=self.user_settings.get('import_grupa'),
                     import_funkcja=self.user_settings.get('import_funkcja'),
@@ -6506,8 +6584,13 @@ class WorkScheduleWindow(QMainWindow):
                     special_symbol_position=self.user_settings.get('special_symbol_position'),
                     location_symbol_position=self.user_settings.get('location_symbol_position')
                 )
+                debug_print(
+                    f"Zapisano ustawienia: import_grupa={self.user_settings.get('import_grupa')}, import_funkcja={self.user_settings.get('import_funkcja')}")
+            else:
+                debug_print("Opcja 'Zapamiętaj ustawienia' nie zaznaczona, pominięto zapis do bazy.")
 
             # Odśwież dane, jeśli zmieniły się parametry importu
+            # To jest ważne, aby załadować dane z nowymi filtrami importu
             self.refresh_data()
 
     def update_cell_data(self, user_id, date_str, event_type=None, action="update"):
