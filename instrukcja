@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Instrukcja Obsługi Aplikacji TeamFlow</title>
+    <style>
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+            line-height: 1.6;
+            margin: 0;
+            padding: 0;
+            background-color: #f8f9fa;
+            color: #212529;
+            display: flex;
+        }
+        nav {
+            width: 250px;
+            position: fixed;
+            height: 100%;
+            background-color: #e9ecef;
+            padding: 20px;
+            border-right: 1px solid #dee2e6;
+            overflow-y: auto;
+        }
+        nav h3 {
+            margin-top: 0;
+            color: #007bff;
+        }
+        nav ul {
+            list-style: none;
+            padding: 0;
+        }
+        nav ul li a {
+            display: block;
+            padding: 8px 12px;
+            text-decoration: none;
+            color: #495057;
+            border-radius: 4px;
+            transition: background-color 0.2s ease;
+        }
+        nav ul li a:hover, nav ul li a.active {
+            background-color: #007bff;
+            color: #fff;
+        }
+        main {
+            margin-left: 290px;
+            padding: 20px 40px;
+            max-width: 900px;
+        }
+        header {
+            border-bottom: 2px solid #007bff;
+            padding-bottom: 10px;
+            margin-bottom: 30px;
+        }
+        header h1 {
+            color: #343a40;
+            margin: 0;
+        }
+        section {
+            margin-bottom: 40px;
+            padding-top: 20px;
+        }
+        h2 {
+            border-bottom: 1px solid #ced4da;
+            padding-bottom: 8px;
+            color: #495057;
+        }
+        h3 {
+            color: #007bff;
+        }
+        kbd {
+            display: inline-block;
+            padding: 3px 5px;
+            font-family: monospace;
+            font-size: 0.9em;
+            line-height: 1;
+            color: #212529;
+            background-color: #e9ecef;
+            border: 1px solid #adb5bd;
+            border-radius: 3px;
+            box-shadow: 1px 1px 1px #ccc;
+        }
+        pre {
+            background-color: #e9ecef;
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+            padding: 15px;
+            white-space: pre;
+            overflow-x: auto;
+            font-family: "Courier New", Courier, monospace;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+        th, td {
+            border: 1px solid #dee2e6;
+            padding: 10px;
+            text-align: left;
+        }
+        th {
+            background-color: #f1f3f5;
+        }
+        .note {
+            background-color: #fff3cd;
+            border-left: 5px solid #ffeeba;
+            padding: 15px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+        footer {
+            text-align: center;
+            margin-top: 50px;
+            padding: 20px;
+            font-size: 0.9em;
+            color: #6c757d;
+            border-top: 1px solid #dee2e6;
+        }
+    </style>
+</head>
+<body>
+
+<nav>
+    <h3>Nawigacja</h3>
+    <ul>
+        <li><a href="#wprowadzenie">Wprowadzenie</a></li>
+        <li><a href="#interfejs">Główne Okno</a></li>
+        <li><a href="#operacje">Podstawowe Operacje</a></li>
+        <li><a href="#edycja">Edycja Grafiku</a></li>
+        <li><a href="#narzedzia">Narzędzia i Analizy</a></li>
+        <li><a href="#ustawienia">Ustawienia</a></li>
+        <li><a href="#skroty">Skróty Klawiszowe</a></li>
+    </ul>
+</nav>
+
+<main>
+    <header>
+        <h1>Instrukcja Obsługi Aplikacji TeamFlow</h1>
+    </header>
+
+    <section id="wprowadzenie">
+        <h2>Wprowadzenie</h2>
+        <p>
+            Witaj w instrukcji obsługi aplikacji <strong>TeamFlow</strong>! Ten przewodnik pomoże Ci zrozumieć, jak efektywnie korzystać z programu do zarządzania grafikiem pracy, analizowania danych i wprowadzania zmian. Aplikacja została zaprojektowana, aby maksymalnie uprościć i zautomatyzować proces planowania pracy.
+        </p>
+    </section>
+
+    <section id="interfejs">
+        <h2>Główne Okno Aplikacji</h2>
+        <p>Główne okno aplikacji jest centrum dowodzenia. Poniżej znajduje się schematyczny podział interfejsu, który pomoże Ci zlokalizować kluczowe elementy.</p>
+        <pre>
++-------------------------------------------------------------------------------------------------+
+| [ 1. Pasek Górny: Nawigacja i Główne Akcje ]                                                     |
++-------------------------------------------------------------------------------------------------+
+|                   |                                                                             |
+| [ 2. Panel       ] | [ 3. GŁÓWNY OBSZAR ROBOCZY ]                                                |
+|      Filtrowania ] |                                                                             |
+|      (F1)        ] | +--------------------------------+--------------------------------------+ |
+|                   | | [ 4. Tabela Pracowników ]        | [ 5. Tabela Grafiku ]                | |
+|                   | |                                  |                                      | |
+|                   | +--------------------------------+--------------------------------------+ |
+|                   |                                                                             |
+|                   |-----------------------------------------------------------------------------|
+|                   | [ 6. Panel Zdarzeń (F2) ]                                                   |
+|                   |                                                                             |
+|                   |                                                                             |
++-------------------+-----------------------------------------------------------------------------+
+        </pre>
+        <h3>Legenda do schematu:</h3>
+        <dl>
+            <dt><strong>1. Pasek Górny</strong></dt>
+            <dd>Zawiera najważniejsze przyciski: wybór miesiąca, odświeżanie danych, historię zmian, szczegóły obsady, zarządzanie grafikiem i ustawienia.</dd>
+            <dt><strong>2. Panel Filtrowania (<kbd>F1</kbd>)</strong></dt>
+            <dd>Pasek boczny po lewej stronie, który pozwala na szczegółowe filtrowanie listy pracowników.</dd>
+            <dt><strong>3. Główny Obszar Roboczy</strong></dt>
+            <dd>Centralna część okna, gdzie wyświetlany jest grafik.</dd>
+            <dt><strong>4. Tabela Pracowników</strong></dt>
+            <dd>Lista pracowników oraz kolumny z ich danymi (Wydział, Etat, etc.).</dd>
+            <dt><strong>5. Tabela Grafiku</strong></dt>
+            <dd>Siatka grafiku na poszczególne dni miesiąca. To tutaj dokonujesz edycji.</dd>
+            <dt><strong>6. Panel Zdarzeń (<kbd>F2</kbd>)</strong></dt>
+            <dd>Dolna sekcja, która pokazuje listę zdarzeń (spotkania, szkolenia) dla aktualnie zaznaczonych komórek w grafiku.</dd>
+        </dl>
+        </section>
+
+    <section id="operacje">
+        <h2>Podstawowe Operacje</h2>
+        <h3>Filtrowanie i Widok</h3>
+        <ul>
+            <li><strong>Filtrowanie pracowników:</strong> Użyj kontrolek w Panelu Filtrowania. Większość filtrów pozwala na wielokrotny wybór.</li>
+            <li><strong>Zarządzanie kolumnami:</strong> Kliknij przycisk <strong>"Zarządzaj kolumnami"</strong>, aby wybrać, które kolumny z danymi pracowników mają być widoczne.</li>
+            <li><strong>Ukrywanie paneli:</strong> Użyj klawiszy <kbd>F1</kbd> i <kbd>F2</kbd>, aby zmaksymalizować obszar roboczy.</li>
+        </ul>
+    </section>
+
+    <section id="edycja">
+        <h2>Edycja Grafiku ✏️</h2>
+        <p>Edycja jest możliwa dla uprawnionych ról (Pracownik WPR, Lider OUT). Możesz to robić na kilka sposobów:</p>
+        
+        <h3>A. Szybka Edycja Klawiaturą (zalecana)</h3>
+        <div class="note">
+            <strong>Wskazówka:</strong> Zaznacz jedną lub więcej komórek w Tabeli Grafiku i użyj poniższych klawiszy.
+        </div>
+        <ul>
+            <li><strong>Cyfry (<kbd>0</kbd>-<kbd>9</kbd>):</strong> Rozpoczyna edycję godziny rozpoczęcia pracy. Aplikacja poczeka chwilę na drugą cyfrę.</li>
+            <li><strong>Plus (<kbd>+</kbd>) i Minus (<kbd>-</kbd>):</strong> Zwiększa lub zmniejsza liczbę godzin pracy o 1.</li>
+            <li><strong><kbd>Delete</kbd> / <kbd>Backspace</kbd>:</strong> Całkowicie czyści zaznaczone komórki (usuwa symbol i godziny).</li>
+            <li><strong>Litery (<kbd>A</kbd>-<kbd>Z</kbd>):</strong> Wprowadza symbol specjalny (np. "U", "CO").</li>
+            <li><strong><kbd>F12</kbd>:</strong> Usuwa <strong>tylko symbol specjalny</strong> z komórki, pozostawiając godziny pracy.</li>
+        </ul>
+
+        <h3>B. Edycja za Pomocą Dialogów</h3>
+        <ul>
+            <li><strong>Wstaw Zmianę (<kbd>F3</kbd>):</strong> Otwiera okno, w którym możesz precyzyjnie edytować lokalizację, godzinę i liczbę godzin dla wielu pozycji.</li>
+            <li><strong>Wstaw Nieobecność (<kbd>F4</kbd>):</strong> Otwiera okno z symbolami absencji (urlopy, zwolnienia) do wyboru.</li>
+            <li><strong>Dodaj Nadgodziny (<kbd>Insert</kbd>):</strong> Otwiera dialog dedykowany do wprowadzania nadgodzin (dla jednej komórki).</li>
+            <li><strong>Odwołaj Delegacje (<kbd>F5</kbd>):</strong> Anuluje wszystkie zdarzenia w zaznaczonych komórkach.</li>
+        </ul>
+        </section>
+    
+    <section id="narzedzia">
+        <h2>Narzędzia i Analizy 📊</h2>
+        <p>Aplikacja oferuje potężne narzędzia do analizy danych, dostępne z Paska Górnego.</p>
+        
+        <h3>Historia Zmian</h3>
+        <p>Kliknij przycisk <strong>"Historia Zmian"</strong>, aby zobaczyć, kto, kiedy i co zmienił w grafiku. To narzędzie zapewnia pełną transparentność.</p>
+        
+        <h3>Szczegóły Obsady</h3>
+        <p>Zaawansowany moduł analityczny (dla uprawnionych ról) z wieloma zakładkami, m.in.:</p>
+        <ul>
+            <li>Analiza obsady godzinowej i dziennej.</li>
+            <li>Porównanie prognozy z rzeczywistą obsadą.</li>
+            <li>Szczegółowe podsumowanie nadgodzin i absencji.</li>
+        </ul>
+        <h3>Zarządzanie Grafikiem (dla WPR/Lider OUT)</h3>
+        <p>Przycisk widoczny tylko dla przyszłego miesiąca. Pozwala na blokowanie i publikację grafiku oraz importowanie sugestii i planów urlopowych.</p>
+    </section>
+
+    <section id="ustawienia">
+        <h2>Ustawienia Aplikacji ⚙️</h2>
+        <p>Kliknij przycisk <strong>"Ustawienia"</strong>, aby dostosować aplikację do swoich preferencji.</p>
+        <ul>
+            <li><strong>Wygląd i motyw:</strong> Zmień motyw na jasny/ciemny oraz wybierz czcionkę i jej rozmiar.</li>
+            <li><strong>Ustawienia Importu Grafiku:</strong> Skonfiguruj domyślne parametry pobierania danych z bazy.</li>
+            <li><strong>Wygląd ikon:</strong> Zdecyduj, czy i gdzie mają być wyświetlane ikony symboli.</li>
+            <li><strong>Zapamiętaj ustawienia:</strong> Zaznacz tę opcję, aby zapisać Twoje preferencje w bazie danych.</li>
+        </ul>
+        </section>
+
+    <section id="skroty">
+        <h2>Skróty Klawiszowe</h2>
+        <p>Używaj skrótów klawiszowych, aby pracować jeszcze szybciej.</p>
+        <table>
+            <thead>
+                <tr>
+                    <th>Klawisz</th>
+                    <th>Akcja</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><kbd>F1</kbd></td>
+                    <td>Pokaż / Ukryj panel filtrów</td>
+                </tr>
+                <tr>
+                    <td><kbd>F2</kbd></td>
+                    <td>Pokaż / Ukryj panel zdarzeń</td>
+                </tr>
+                <tr>
+                    <td><kbd>F3</kbd></td>
+                    <td>Otwórz okno "Wstaw Zmianę"</td>
+                </tr>
+                <tr>
+                    <td><kbd>F4</kbd></td>
+                    <td>Otwórz okno "Wstaw Nieobecność"</td>
+                </tr>
+                <tr>
+                    <td><kbd>F5</kbd></td>
+                    <td>Odwołaj delegacje</td>
+                </tr>
+                <tr>
+                    <td><kbd>F12</kbd></td>
+                    <td>Usuń tylko symbol specjalny z komórki</td>
+                </tr>
+                <tr>
+                    <td><kbd>Insert</kbd></td>
+                    <td>Dodaj nadgodziny (dla 1 komórki)</td>
+                </tr>
+                <tr>
+                    <td><kbd>Delete</kbd> / <kbd>Backspace</kbd></td>
+                    <td>Wyczyść zawartość komórek</td>
+                </tr>
+            </tbody>
+        </table>
+    </section>
+
+    <footer>
+        <p>Instrukcja wygenerowana dla aplikacji TeamFlow. Wersja z dnia 8 lipca 2025.</p>
+    </footer>
+
+</main>
+
+</body>
+</html>
