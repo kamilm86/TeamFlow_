@@ -832,7 +832,6 @@ class ScheduleChangeDialog(QDialog):
 
         # 2. Reszta logiki pozostaje w bloku try...except
         try:
-            # ... (walidacja i pobieranie danych bez zmian) ...
             start_hour = int(float(time_button.text()))
             work_hours = int(float(hours_button.text()))
             location = location_combo.currentData()
@@ -841,11 +840,30 @@ class ScheduleChangeDialog(QDialog):
             nr_kadrowy = cell.get('nr_kadrowy')
             user_name = cell.get('uzytkownik_dane', 'Nieznany')
 
-            if not all([user_id, date_str, nr_kadrowy]):
-                raise ValueError("Niekompletne dane komórki do przetworzenia.")
-
+            original_symbol_text = cell.get('symbol', '')
             from symbol_parser import parse_symbol, build_symbol
-            original_parsed_symbol = parse_symbol(cell.get('symbol', ''))
+            original_parsed_symbol = parse_symbol(original_symbol_text)
+            original_location = original_parsed_symbol.get('location') or cell.get('lokalizacja_domyslna', 'h')
+
+            # --- NOWA LOGIKA: Sprawdzanie nadgodzin przy zmianie lokalizacji ---
+            if original_location != location:
+                all_events = self.parent_widget.data_provider.get_events_for_user_date(user_id, date_str)
+                overtime_events = [e for e in all_events if e.get('type') == 'Nadgodziny']
+
+                if overtime_events:
+                    # Wywołanie nowego, przebudowanego dialogu
+                    ot_dialog = OvertimeLocationDialog(self, overtime_events, location, self.determined_theme)
+                    if ot_dialog.exec() == QDialog.Accepted:
+                        # Pobranie listy zmian (event_id, nowa_lokalizacja)
+                        location_changes = ot_dialog.get_selected_locations()
+                        if location_changes:
+                            # Wywołanie nowej metody w main.py
+                            self.parent_widget._update_multiple_overtime_locations(location_changes)
+                    else:
+                        self._reset_button_state(button)
+                        return  # Przerwij całą operację, jeśli użytkownik anulował
+            # --- KONIEC NOWEJ LOGIKI ---
+
             new_symbol = build_symbol(
                 location=location, start_hour=start_hour, work_hours=work_hours,
                 special_symbol=original_parsed_symbol.get('special_symbol')
@@ -985,3 +1003,98 @@ class DigitSelectionDialog(QDialog):
     def get_selected_value(self):
         """Zwraca wybraną wartość"""
         return self.selected_value
+
+
+class OvertimeLocationDialog(QDialog):
+    """Dialog do indywidualnej edycji lokalizacji dla wykrytych nadgodzin."""
+
+    def __init__(self, parent, overtime_events, current_shift_location, current_theme="dark"):
+        super().__init__(parent)
+        self.setWindowTitle("Zmiana lokalizacji a nadgodziny")
+        self.setMinimumWidth(450)
+        self.theme = current_theme
+        self.events = overtime_events
+        self.location_combos = []
+
+        self.setup_ui(current_shift_location)
+        self.apply_styles()
+
+    def _get_location_info_from_name(self, event_name):
+        """Pobiera kod i pełną nazwę lokalizacji z pola 'Nazwa' zdarzenia nadgodzin."""
+        name_lower = event_name.lower()
+        if 'home office' in name_lower:
+            return 'h', 'Home Office'
+        if 'stacjonarnie' in name_lower:
+            return 's', 'Stacjonarnie'
+        if 'mprzystanek' in name_lower:
+            return 'p', 'mPrzystanek'
+        return 'b/d', 'Brak danych'  # Fallback
+
+    def setup_ui(self, current_shift_location):
+        layout = QVBoxLayout(self)
+
+        info_text = (f"Wykryto {len(self.events)} wpis(y) nadgodzin w tym dniu. "
+                     f"Lokalizacja w grafiku została zmieniona na <b>'{current_shift_location.upper()}'</b>.<br><br>"
+                     "Dla każdego wpisu nadgodzin możesz ustawić inną lokalizację.")
+        layout.addWidget(QLabel(info_text))
+
+        grid_layout = QGridLayout()
+        grid_layout.setSpacing(10)
+
+        grid_layout.addWidget(QLabel("<b>Godziny nadliczbowe</b>"), 0, 0)
+        grid_layout.addWidget(QLabel("<b>Obecna lokalizacja</b>"), 0, 1)
+        grid_layout.addWidget(QLabel("<b>Nowa lokalizacja</b>"), 0, 2)
+
+        for i, event in enumerate(self.events):
+            row = i + 1
+            event_label = QLabel(f"{event.get('time_from', '?')} - {event.get('time_to', '?')}")
+
+            # --- NOWA, POPRAWIONA LOGIKA ODCZYTU LOKALIZACJI ---
+            event_name = event.get('name', '')
+            _, current_ot_location_display = self._get_location_info_from_name(event_name)
+            current_ot_location_label = QLabel(current_ot_location_display)
+            # --- KONIEC NOWEJ LOGIKI ---
+
+            location_combo = QComboBox()
+            location_combo.addItem("Bez zmian", "skip")
+            location_combo.addItem(f"Jak w grafiku ({current_shift_location.upper()})", current_shift_location)
+            location_combo.addItem("Home Office (h)", "h")
+            location_combo.addItem("Stacjonarnie (s)", "s")
+            location_combo.addItem("mPrzystanek (p)", "p")
+
+            location_combo.setCurrentIndex(0)
+
+            self.location_combos.append(location_combo)
+
+            grid_layout.addWidget(event_label, row, 0)
+            grid_layout.addWidget(current_ot_location_label, row, 1)
+            grid_layout.addWidget(location_combo, row, 2)
+
+        layout.addLayout(grid_layout)
+
+        button_box = QHBoxLayout()
+        self.ok_button = QPushButton("Zatwierdź zmiany")
+        self.cancel_button = QPushButton("Anuluj")
+        self.ok_button.clicked.connect(self.accept)
+        self.cancel_button.clicked.connect(self.reject)
+        button_box.addStretch()
+        button_box.addWidget(self.cancel_button)
+        button_box.addWidget(self.ok_button)
+        layout.addLayout(button_box)
+
+    def apply_styles(self):
+        self.setStyleSheet(AppStyles.get_dialog_style(self.theme))
+        for button in self.findChildren(QPushButton):
+            button.setStyleSheet(AppStyles.get_button_style(self.theme))
+        for combo in self.findChildren(QComboBox):
+            combo.setStyleSheet(AppStyles.get_combobox_style(self.theme))
+
+    def get_selected_locations(self):
+        """Zwraca listę zmian w formacie [(event_id, nowa_lokalizacja), ...]."""
+        changes = []
+        for i, combo in enumerate(self.location_combos):
+            selected_loc = combo.currentData()
+            if selected_loc != "skip":
+                event_id = self.events[i]['id']
+                changes.append((event_id, selected_loc))
+        return changes
