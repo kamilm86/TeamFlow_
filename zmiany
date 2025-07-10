@@ -1,77 +1,114 @@
-Przepraszam za wcześniejsze nieporozumienia. Skupiłem się na niewłaściwej metodzie. Dziękuję za precyzyjne wskazanie, że zmiany należy wprowadzić w show_add_overtime_dialog.
-Przeanalizowałem kod i przygotowałem poprawioną wersję tej konkretnej metody, która prawidłowo oblicza czas rozpoczęcia i zakończenia nadgodzin, zgodnie z Twoimi wytycznymi.
-Poprawiona metoda show_add_overtime_dialog
-W pliku main.py, w klasie WorkScheduleWindow, proszę zastąpić istniejącą metodę show_add_overtime_dialog poniższym, poprawionym kodem.
-# W pliku main.py w klasie WorkScheduleWindow
+Jasne, to kluczowa zmiana, aby zapewnić, że analizy obsady odzwierciedlają rzeczywisty stan zespołu dostępnego do pracy. Wprowadzimy globalną modyfikację we wszystkich miejscach, gdzie obliczana jest obsada, aby wykluczyć osoby mające flagę DTN (długotrwała nieobecność) ustawioną na 1.
+Zmiany zostaną wprowadzone w pliku staffing_details_window.py, który jest odpowiedzialny za całe okno "Szczegóły Obsady".
+Kluczowa zmiana logiczna
+W każdej funkcji obliczeniowej dodamy na początku pętli warunek, który sprawdza flagę DTN pracownika. Jeśli flaga jest ustawiona na 1, pracownik ten zostanie całkowicie pominięty w dalszych obliczeniach dla danej analizy.
+Zakładam, że klucz słownika schedule_data (czyli user_key) ma następującą strukturę, gdzie DTN znajduje się na 5. pozycji (indeks 4):
+(Wydzial, Grupa, Przelozony, Uzytkownik_ID, **DTN**, ...)
+Zmodyfikowane funkcje w staffing_details_window.py
+Poniżej znajdują się wszystkie niezbędne, poprawione funkcje.
+1. Obsada godzinowa
+# W pliku staffing_details_window.py
+def _calculate_hourly_staffing(self, schedule_data, all_events):
+    """Oblicza obsadę godzina po godzinie dla każdego dnia."""
+    # ... (inicjalizacja zmiennych bez zmian) ...
+    hourly_staffing = defaultdict(lambda: [0] * 24)
+    events_map = self._get_events_duration_per_hour(all_events)
 
-def show_add_overtime_dialog(self):
-    """
-    Otwiera dialog do dodawania nadgodzin i zapisuje je w bazie,
-    poprawnie formatując daty time_from i time_to jako smalldatetime.
-    """
-    selected = self.table.selectionModel().selectedIndexes()
-    if not selected:
-        self.statusBar().showMessage("Proszę zaznaczyć komórkę pracownika i dnia.", 3000)
-        return
+    for user_key, user_schedule in schedule_data.items():
+        # --- KLUCZOWA ZMIANA: Wykluczenie osób z DTN=1 ---
+        dtn_flag = user_key[4]
+        if dtn_flag == 1:
+            continue
+        # --- KONIEC KLUCZOWEJ ZMIANY ---
+        
+        user_id = user_key[3]
+        korekta = float(user_schedule.get('korekta', 0.0) or 0.0)
 
-    # Pobieramy dane tylko z pierwszej zaznaczonej komórki
-    cell_data = self.table.get_data_for_selected_cells()[0]
-    user_id = cell_data.get('uzytkownik_id')
-    date_str = cell_data.get('date_str') # Np. '2025-07-10'
+        for day, day_info in user_schedule.get('days', {}).items():
+            parsed = parse_symbol(day_info.get('symbol', ''))
+            # ... (reszta logiki bez zmian) ...
+            
+    return hourly_staffing
 
-    if not user_id or not date_str:
-        self.statusBar().showMessage("Nie można dodać zdarzenia dla tej komórki.", 3000)
-        return
+2. Obsada dzienna
+# W pliku staffing_details_window.py
+def _calculate_daily_staffing(self, schedule_data, all_events, option="all", location_filter=None):
+    """Oblicza obsadę dzienną, ignoruje godziny z symbolami specjalnymi."""
+    # ... (inicjalizacja zmiennych bez zmian) ...
+    summary_schedule = defaultdict(lambda: defaultdict(float))
+    summary_overtime = defaultdict(lambda: defaultdict(float))
+    summary_events = defaultdict(lambda: defaultdict(float))
 
-    # Używamy uniwersalnego dialogu w trybie dodawania nadgodzin
-    dialog = AddOrEditEventDialog(self, event=None, date_str=date_str, user_id=user_id, event_type='Nadgodziny', theme=self.current_theme)
-    
-    if dialog.exec() == QDialog.Accepted:
-        details = dialog.get_event_details()
-
-        # --- KLUCZOWA ZMIANA: Prawidłowe tworzenie obiektów datetime ---
-        try:
-            # 1. Pobieramy dane z dialogu
-            time_part = details['time_from']  # Czas w formacie "HH:MM"
-            duration_hours_str = details.get('duration', '0').replace(',', '.')
-            duration_hours = float(duration_hours_str)
-
-            # 2. Tworzymy `time_from` jako obiekt datetime
-            # Łączymy datę z komórki (np. "2025-07-10") z czasem rozpoczęcia (np. "16:00")
-            time_from_dt = datetime.datetime.strptime(f"{date_str} {time_part}", "%Y-%m-%d %H:%M")
-
-            # 3. Obliczamy `time_to` przez dodanie czasu trwania
-            time_to_dt = time_from_dt + datetime.timedelta(hours=duration_hours)
-
-        except (ValueError, TypeError) as e:
-            log_error(f"Błąd podczas parsowania danych dla nadgodzin w show_add_overtime_dialog: {e}", exception=e)
-            QMessageBox.critical(self, "Błąd Danych", "Wprowadzono nieprawidłowy format czasu lub czasu trwania nadgodzin.")
-            return
+    for user_key, user_schedule in schedule_data.items():
+        # --- KLUCZOWA ZMIANA: Wykluczenie osób z DTN=1 ---
+        dtn_flag = user_key[4]
+        if dtn_flag == 1:
+            continue
         # --- KONIEC KLUCZOWEJ ZMIANY ---
 
-        # Przygotowanie reszty danych do zapisu
-        location_code = details['location']
-        description = details['description']
+        user_id, wydzial = user_key[3], user_key[0] or "Brak"
+        korekta = float(user_schedule.get('korekta', 0.0) or 0.0)
         
-        location_display_map = {'h': 'Home Office', 's': 'Stacjonarnie', 'p': 'mPrzystanek'}
-        location_db_map = {'h': 1, 's': 3, 'p': 2}
+        for day, day_info in user_schedule.get('days', {}).items():
+            # ... (reszta logiki bez zmian) ...
+
+    # Druga pętla dla nadgodzin również musi zostać poprawiona
+    user_to_dept = {k[3]: k[0] or "Brak" for k in schedule_data.keys() if k[4] != 1} # Wykluczamy tutaj również
+    for event in all_events:
+        # ... (reszta logiki bez zmian) ...
+
+    return final_summary
+
+3. Prognoza vs. Rzeczywistość
+# W pliku staffing_details_window.py
+def _calculate_actual_staffing_matrix(self, schedule_data, all_events, location_filter):
+    """Oblicza macierz rzeczywistej obsady godzina po godzinie."""
+    # ... (inicjalizacja zmiennych bez zmian) ...
+    actual_staffing = defaultdict(lambda: [0] * 24 * self._days_in_month)
+    location_map = self._get_daily_location_map(schedule_data)
+
+    for user_key, user_schedule in schedule_data.items():
+        # --- KLUCZOWA ZMIANA: Wykluczenie osób z DTN=1 ---
+        dtn_flag = user_key[4]
+        if dtn_flag == 1:
+            continue
+        # --- KONIEC KLUCZOWEJ ZMIANY ---
         
-        event_name = f"Nadgodziny {location_display_map.get(location_code, 'N/A')}"
-        location_db_value = location_db_map.get(location_code)
+        user_id, wydzial = user_key[3], user_key[0] or "Brak"
+        korekta = float(user_schedule.get('korekta', 0.0) or 0.0)
 
-        # Wywołanie procedury zapisu z poprawnie przygotowanymi obiektami datetime
-        success, message = self.data_provider.save_overtime_event(
-            user_id=user_id,
-            time_from=time_from_dt,
-            time_to=time_to_dt,
-            location_id=location_db_value,
-            name=event_name,
-            description=description
-        )
+        for day, day_info in user_schedule.get('days', {}).items():
+            # ... (reszta logiki bez zmian) ...
 
-        if success:
-            self.statusBar().showMessage("Pomyślnie dodano wpis o nadgodzinach.", 4000)
-            self.refresh_data() # Odświeżamy dane, aby zobaczyć nowy wpis
-        else:
-            QMessageBox.warning(self, "Błąd Zapisu", f"Nie udało się zapisać nadgodzin:\n{message}")
+    # Druga pętla dla nadgodzin również musi zostać poprawiona
+    user_to_dept = {k[3]: k[0] or "Brak" for k in schedule_data.keys() if k[4] != 1} # Wykluczamy tutaj również
+    for event in all_events:
+        # ... (reszta logiki bez zmian) ...
+
+    return actual_staffing
+
+4. Analiza absencji
+# W pliku staffing_details_window.py
+def _calculate_absence_stats(self, schedule_data, absence_symbols):
+    """Oblicza statystyki absencji."""
+    # ... (inicjalizacja zmiennych bez zmian) ...
+    absence_stats = defaultdict(lambda: {'count': 0, 'days': 0})
+    total_work_days = 0
+    total_possible_work_days = 0
+
+    for user_key, user_schedule in schedule_data.items():
+        # --- KLUCZOWA ZMIANA: Wykluczenie osób z DTN=1 ---
+        dtn_flag = user_key[4]
+        if dtn_flag == 1:
+            continue
+        # --- KONIEC KLUCZOWEJ ZMIANY ---
+
+        for day, day_info in user_schedule.get('days', {}).items():
+            # ... (reszta logiki bez zmian) ...
+            
+    return {
+        'stats': sorted_stats,
+        'total_work_days': total_work_days,
+        'total_possible_work_days': total_possible_work_days
+    }
 
