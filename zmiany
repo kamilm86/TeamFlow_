@@ -1,80 +1,61 @@
-Masz absolutną rację. Przepraszam za błędne założenie dotyczące nazwy okna dialogowego. Sprawdziłem strukturę aplikacji i przygotowałem poprawne rozwiązanie, uwzględniając Twoje wskazówki dotyczące obliczania czasu.
-Zmiany, które wprowadzimy, mają na celu dwie rzeczy:
- * Usprawnienie dodawania nadgodzin: Po naciśnięciu Insert, okno do dodawania nadgodzin automatycznie zaproponuje godzinę rozpoczęcia, obliczoną jako koniec regularnej zmiany pracownika.
- * Poprawienie zapisu do bazy: Zapewnimy, że time_from i time_to są poprawnie obliczane i zapisywane w formacie smalldatetime.
-Poniżej znajdują się wszystkie niezbędne zmiany.
-1. Modyfikacja Głównego Okna (main.py)
-W pliku main.py, w klasie WorkScheduleWindow, zmodyfikujemy metodę odpowiedzialną za obsługę dodawania nadgodzin (wywoływaną przez klawisz Insert).
-Nowa logika będzie najpierw obliczać sugerowany czas rozpoczęcia, a następnie, po otrzymaniu danych z dialogu, poprawnie budować obiekty datetime.
+Jasne, przeanalizowałem strukturę aplikacji i znalazłem odpowiednie miejsca do wprowadzenia zmian. Masz rację, nie ma dedykowanego okna OvertimeEntryDialog. W Twojej aplikacji dodawanie nadgodzin (jak i innych zdarzeń) jest obsługiwane przez uniwersalne okno AddOrEditEventDialog w pliku schedule_edit_dialogs.py, a cała logika jest inicjowana w metodzie add_new_event w pliku main.py.
+Poniżej przedstawiam kompleksowe rozwiązanie, które poprawia obie kwestie:
+ * Poprawne obliczanie time_from i time_to podczas dodawania nadgodzin.
+ * Poprawne obliczanie godziny zakończenia dla standardowej zmiany w grafiku.
+1. Poprawka Budowania Czasu Trwania Nadgodzin
+Wprowadzimy zmiany w pliku main.py, w metodzie add_new_event. Ta metoda jest wywoływana, gdy użytkownik naciska Insert, aby dodać nadgodziny. Zmodyfikujemy ją tak, aby poprawnie konstruowała daty time_from i time_to.
+Zmodyfikowana metoda add_new_event w main.py
+Zastąp istniejącą metodę add_new_event w klasie WorkScheduleWindow poniższym, poprawionym kodem.
 # W pliku main.py w klasie WorkScheduleWindow
 
-# Zastąp istniejącą metodę do dodawania nadgodzin (prawdopodobnie wywoływaną przez akcję lub skrót klawiszowy) poniższym kodem.
-
-def _handle_add_overtime_action(self):
+def add_new_event(self):
     """
-    Obsługuje proces dodawania nadgodzin: oblicza sugerowany czas rozpoczęcia,
-    otwiera dialog i zapisuje dane z poprawnym formatowaniem dat.
+    Otwiera dialog do dodawania nowego zdarzenia (w tym nadgodzin)
+    i poprawnie obsługuje logikę dat.
     """
-    selected_cells_data = self.table.get_data_for_selected_cells()
-    if not selected_cells_data or len(selected_cells_data) > 1:
-        self.statusBar().showMessage("Proszę zaznaczyć dokładnie jedną komórkę, aby dodać nadgodziny.", 4000)
+    selected = self.table.selectionModel().selectedIndexes()
+    if not selected:
+        self.statusBar().showMessage("Proszę zaznaczyć komórkę pracownika i dnia.", 3000)
         return
 
-    cell_data = selected_cells_data[0]
-    
-    # --- NOWA LOGIKA: Obliczanie sugerowanego czasu rozpoczęcia nadgodzin ---
-    suggested_start_time = None
-    try:
-        symbol_text = cell_data.get('symbol', '')
-        if symbol_text:
-            parsed_symbol = parse_symbol(symbol_text)
-            start_hour = parsed_symbol.get('start_hour')
-            work_hours = parsed_symbol.get('work_hours')
-            
-            if start_hour is not None and work_hours is not None:
-                # Oblicz godzinę zakończenia regularnej zmiany
-                end_hour = (start_hour + work_hours) % 24
-                suggested_start_time = f"{int(end_hour):02d}:00"
-    except Exception as e:
-        log_warning(f"Nie udało się obliczyć sugerowanego czasu rozpoczęcia nadgodzin: {e}")
-    # --- KONIEC NOWEJ LOGIKI ---
+    cell_data = self.table.get_data_for_selected_cells()[0]
+    user_id = cell_data.get('uzytkownik_id')
+    date_str = cell_data.get('date_str')
 
-    # Otwórz dialog, przekazując sugerowany czas
-    # Zakładamy, że dialog nazywa się AddNewEventDialog i został dostosowany do przyjęcia nowego parametru
-    dialog = AddNewEventDialog(self, cell_data, default_event_type="Nadgodziny", suggested_time=suggested_start_time, theme=self.current_theme)
+    if not user_id or not date_str:
+        self.statusBar().showMessage("Nie można dodać zdarzenia dla tej komórki.", 3000)
+        return
+
+    # Używamy uniwersalnego dialogu, ale w kontekście nadgodzin
+    dialog = AddOrEditEventDialog(self, event=None, date_str=date_str, user_id=user_id, event_type='Nadgodziny', theme=self.current_theme)
     
     if dialog.exec() == QDialog.Accepted:
         details = dialog.get_event_details()
 
-        # Sprawdź, czy użytkownik na pewno wybrał Nadgodziny
-        if details.get('type') != 'Nadgodziny':
-            # Jeśli wybrano inny typ, obsłuż go inną, dedykowaną metodą (jeśli istnieje)
-            self.statusBar().showMessage("Wybrano inny typ zdarzenia. Proszę użyć dedykowanej opcji.", 3000)
-            return
-            
-        # --- POPRAWIONA LOGIKA BUDOWANIA DATY I CZASU ---
+        # --- NOWA, POPRAWIONA LOGIKA TWORZENIA DAT DLA NADGODZIN ---
         try:
-            date_part = cell_data.get('date_str')
-            time_part = details['start_time']
-            duration_hours = details['duration']
+            time_part = details['time_from']  # Pobiera czas "HH:MM"
+            duration_hours_str = details.get('duration', '0').replace(',', '.')
+            duration_hours = float(duration_hours_str)
 
-            # Budowanie obiektu datetime dla time_from
-            time_from_dt = datetime.datetime.strptime(f"{date_part} {time_part}", "%Y-%m-%d %H:%M")
+            # 1. Tworzymy obiekt datetime dla time_from
+            # Łączymy datę z komórki (np. "2025-07-15") z czasem z dialogu (np. "16:00")
+            time_from_dt = datetime.datetime.strptime(f"{date_str} {time_part}", "%Y-%m-%d %H:%M")
 
-            # Obliczanie time_to
+            # 2. Obliczamy time_to
             time_to_dt = time_from_dt + datetime.timedelta(hours=duration_hours)
 
-        except (ValueError, TypeError, KeyError) as e:
-            log_error(f"Błąd podczas parsowania danych z dialogu nadgodzin: {e}", exception=e)
-            QMessageBox.critical(self, "Błąd Danych", "Wprowadzono nieprawidłowy format danych w oknie zdarzenia.")
+        except (ValueError, TypeError) as e:
+            log_error(f"Błąd podczas parsowania danych dla nadgodzin: {e}", exception=e)
+            QMessageBox.critical(self, "Błąd Danych", "Wprowadzono nieprawidłowy format czasu lub czasu trwania.")
             return
-        # --- KONIEC POPRAWIONEJ LOGIKI ---
+        # --- KONIEC NOWEJ LOGIKI ---
 
-        # Przygotowanie danych do zapisu
-        user_id = cell_data.get('uzytkownik_id')
+        # Dane do zapisu
         location_code = details['location']
         description = details['description']
 
+        # Mapowanie kodów na nazwy i wartości z bazy
         location_display_map = {'h': 'Home Office', 's': 'Stacjonarnie', 'p': 'mPrzystanek'}
         location_db_map = {'h': 1, 's': 3, 'p': 2}
         
@@ -93,55 +74,69 @@ def _handle_add_overtime_action(self):
 
         if success:
             self.statusBar().showMessage("Pomyślnie dodano nadgodziny.", 4000)
-            self.refresh_data()
+            self.refresh_data() # Odśwież dane, aby zobaczyć zmiany
         else:
             QMessageBox.warning(self, "Błąd Zapisu", f"Nie udało się zapisać nadgodzin:\n{message}")
 
-2. Modyfikacja okna dialogowego (schedule_edit_dialogs.py)
-W pliku schedule_edit_dialogs.py, znajdź klasę, która służy do dodawania nowych zdarzeń (prawdopodobnie AddNewEventDialog lub o podobnej nazwie) i dostosuj ją, aby przyjmowała i wykorzystywała suggested_time.
-# W pliku schedule_edit_dialogs.py, w klasie odpowiedzialnej za dodawanie zdarzeń
+2. Poprawka Obliczania Końca Zmiany w Grafiku
+Zgodnie z Twoją prośbą, godzina zakończenia standardowej zmiany powinna być obliczana jako godzina rozpoczęcia + liczba godzin pracy. Poprawimy to w pliku symbol_parser.py, który jest centralnym miejscem do interpretacji symboli z grafiku. Dzięki temu zmiana będzie obowiązywać w całej aplikacji.
+Zmodyfikowana funkcja parse_symbol w symbol_parser.py
+Zastąp istniejącą funkcję parse_symbol w tym pliku poniższym kodem.
+# W pliku symbol_parser.py
 
-# Zmodyfikuj konstruktor (__init__) oraz metodę setup_ui
+def parse_symbol(symbol_text):
+    """
+    Parsuje tekstowy symbol z komórki grafiku na słownik ze szczegółami.
+    WERSJA POPRAWIONA: Prawidłowo oblicza godzinę zakończenia zmiany.
+    """
+    if not symbol_text or not isinstance(symbol_text, str):
+        return {}
 
-class AddNewEventDialog(QDialog):
-    def __init__(self, parent, cell_data, default_event_type=None, suggested_time=None, theme="dark"):
-        super().__init__(parent)
-        # ... (istniejący kod)
-        self.suggested_time = suggested_time # Dodaj nową właściwość
-        # ... (istniejący kod)
-        self.setup_ui()
-        # ...
+    # Wzorzec do znalezienia lokalizacji, godziny rozpoczęcia i liczby godzin
+    # Przykład: "h8-12", "s14", "p7.5"
+    pattern = re.compile(
+        r"^(?P<location>[hsp])?"
+        r"(?P<start_hour>\d{1,2})?"
+        r"(?:[-/](?P<work_hours>\d{1,2}(?:[.,]\d{1,2})?))?"
+        r"\s*(?P<special_symbol>[A-Z]{1,3})?$"
+    )
 
-    def setup_ui(self):
-        # ... (cały kod tworzący layout)
+    match = pattern.match(symbol_text.strip())
+    if not match:
+        # Jeśli główny wzorzec nie pasuje, spróbuj znaleźć sam symbol specjalny
+        special_only_match = re.match(r"^[A-Z]{1,3}$", symbol_text.strip())
+        if special_only_match:
+            return {'special_symbol': special_only_match.group(0)}
+        return {}
 
-        self.time_edit = QTimeEdit()
-        self.time_edit.setDisplayFormat("HH:mm")
+    data = match.groupdict()
+    parsed_data = {}
 
-        # --- NOWA LOGIKA: Ustawianie sugerowanego czasu ---
-        if self.suggested_time:
-            try:
-                # Spróbuj ustawić sugerowany czas
-                self.time_edit.setTime(QTime.fromString(self.suggested_time, "HH:mm"))
-            except Exception:
-                # W razie błędu, ustaw domyślny (np. aktualny)
-                self.time_edit.setTime(QTime.currentTime())
-        else:
-            self.time_edit.setTime(QTime.currentTime())
-        # --- KONIEC NOWEJ LOGIKI ---
-        
-        form_layout.addRow("Godzina rozpoczęcia:", self.time_edit)
-        # ... (reszta kodu UI)
+    # Przetwarzanie danych z dopasowania
+    parsed_data['location'] = data.get('location')
+    parsed_data['special_symbol'] = data.get('special_symbol')
 
-    def get_event_details(self):
-        """Zwraca szczegóły zdarzenia wprowadzone przez użytkownika."""
-        # Upewnij się, że ta metoda zwraca wszystkie potrzebne pola
-        return {
-            "type": self.type_combo.currentData(),
-            "start_time": self.time_edit.time().toString("HH:mm"),
-            "duration": self.hours_spinbox.value(), # Zakładając, że masz QDoubleSpinBox o tej nazwie
-            "location": self.location_combo.currentData(),
-            "description": self.description_edit.text().strip()
-        }
+    start_hour = None
+    if data.get('start_hour'):
+        start_hour = int(data['start_hour'])
+        parsed_data['start_hour'] = start_hour
 
+    work_hours = None
+    if data.get('work_hours'):
+        work_hours = float(data['work_hours'].replace(',', '.'))
+    elif start_hour is not None:
+        # Jeśli podano godzinę rozpoczęcia, ale nie liczbę godzin, domyślnie 8
+        work_hours = 8.0
+    
+    parsed_data['work_hours'] = work_hours
+
+    # --- POPRAWIONA LOGIKA OBLICZANIA GODZINY ZAKOŃCZENIA ---
+    if start_hour is not None and work_hours is not None:
+        # Koniec zmiany to po prostu start + liczba godzin
+        end_hour = start_hour + work_hours
+        # Obsługa przejścia na następny dzień (modulo 24)
+        parsed_data['end_hour'] = end_hour % 24 if end_hour != 24 else 0
+    # --- KONIEC POPRAWIONEJ LOGIKI ---
+
+    return parsed_data
 
