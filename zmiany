@@ -1,90 +1,75 @@
-Jasne, rozumiem. Należy zapewnić, że daty time_from i time_to dla nadgodzin są poprawnie formatowane jako smalldatetime przed zapisem do bazy. To kluczowe dla spójności danych.
-Zmiany wprowadzimy w dwóch miejscach:
- * W pliku schedule_edit_dialogs.py, w oknie dialogowym do wprowadzania nadgodzin, aby upewnić się, że przekazuje ono poprawne dane.
- * W pliku main.py, w metodzie, która odbiera dane z dialogu i przygotowuje je do zapisu, aby poprawnie tworzyła obiekty datetime.
-Poniżej znajdują się wszystkie niezbędne modyfikacje.
-1. Zmiana w oknie dialogowym nadgodzin
-W pliku schedule_edit_dialogs.py, w klasie OvertimeEntryDialog, zmodyfikujemy metodę get_overtime_details, aby zwracała surowe wartości, które zostaną przetworzone w głównym oknie.
-# W pliku schedule_edit_dialogs.py w klasie OvertimeEntryDialog
-
-# Zastąp istniejącą metodę 'get_overtime_details' poniższą wersją
-def get_overtime_details(self):
-    """Zwraca szczegóły nadgodzin wprowadzone przez użytkownika."""
-    return {
-        "start_time": self.time_edit.time().toString("HH:mm"),
-        "duration": self.hours_spinbox.value(),
-        "location": self.location_combo.currentData(),
-        "description": self.description_edit.text().strip()
-    }
-
-2. Modyfikacja metody zapisu w main.py
-To jest kluczowa zmiana. W pliku main.py, w klasie WorkScheduleWindow, zmodyfikujemy metodę _add_overtime_entry (lub o podobnej nazwie), która jest wywoływana po zatwierdzeniu okna nadgodzin.
-Nowa logika będzie:
- * Pobierać datę z komórki (YYYY-MM-DD).
- * Pobierać godzinę rozpoczęcia z dialogu (HH:MM).
- * Łączyć je w jeden obiekt datetime dla time_from.
- * Obliczać time_to przez dodanie liczby godzin do time_from.
-<!-- end list -->
 # W pliku main.py w klasie WorkScheduleWindow
 
-# Zastąp istniejącą metodę do dodawania nadgodzin poniższym kodem
+# ZASTĄP istniejącą metodę do dodawania nadgodzin poniższym kodem
 
-def _add_overtime_entry(self, cell_data):
+def add_overtime_entry(self):
     """
-    Otwiera dialog do wprowadzenia nadgodzin i zapisuje dane w bazie,
-    poprawnie formatując daty time_from i time_to.
+    Otwiera serię okien dialogowych do wprowadzenia nadgodzin i zapisuje dane w bazie,
+    poprawnie formatując daty time_from i time_to jako obiekty datetime.
     """
-    if not cell_data:
+    selected_cells_data = self.table.get_data_for_selected_cells()
+    if not selected_cells_data or len(selected_cells_data) != 1:
+        self.statusBar().showMessage("Proszę zaznaczyć dokładnie jedną komórkę.", 3000)
         return
-
-    dialog = OvertimeEntryDialog(self, cell_data, self.current_theme)
-    if dialog.exec() == QDialog.Accepted:
-        details = dialog.get_overtime_details()
-
-        # --- NOWA, POPRAWIONA LOGIKA TWORZENIA DAT ---
-        try:
-            date_part = cell_data.get('date_str')  # Np. "2025-07-15"
-            time_part = details['start_time']      # Np. "16:30"
-            duration_hours = details['duration']   # Np. 2.5
-
-            # Tworzenie obiektu datetime dla time_from
-            time_from_dt = datetime.datetime.strptime(f"{date_part} {time_part}", "%Y-%m-%d %H:%M")
-
-            # Obliczanie time_to
-            time_to_dt = time_from_dt + datetime.timedelta(hours=duration_hours)
-
-        except (ValueError, TypeError) as e:
-            log_error(f"Błąd podczas parsowania daty lub czasu dla nadgodzin: {e}", exception=e)
-            QMessageBox.critical(self, "Błąd Danych", "Wprowadzono nieprawidłowy format daty lub czasu.")
-            return
-        # --- KONIEC NOWEJ LOGIKI ---
-
-        # Dane do zapisu w bazie
-        user_id = cell_data.get('uzytkownik_id')
-        location_code = details['location']
-        description = details['description']
-
-        # Mapowanie kodów na nazwy i wartości z bazy
-        location_display_map = {'h': 'Home Office', 's': 'Stacjonarnie', 'p': 'mPrzystanek'}
-        location_db_map = {'h': 1, 's': 3, 'p': 2}
         
-        event_name = f"Nadgodziny {location_display_map.get(location_code, 'N/A')}"
-        location_db_value = location_db_map.get(location_code)
+    cell_data = selected_cells_data[0]
+    user_name = cell_data.get('uzytkownik_dane', 'Nieznany')
+    date_display = self.format_date(cell_data.get('date_str'))
 
-        # Wywołanie procedury zapisu z poprawnymi obiektami datetime
-        success, message = self.data_provider.save_overtime_event(
-            user_id=user_id,
-            time_from=time_from_dt,
-            time_to=time_to_dt,
-            location_id=location_db_value,
-            name=event_name,
-            description=description
-        )
+    # 1. Pobierz godzinę rozpoczęcia
+    start_time_str, ok1 = QInputDialog.getText(self, "Dodawanie nadgodzin", f"Godzina rozpoczęcia dla {user_name} w dniu {date_display}:", text="16:00")
+    if not ok1 or not start_time_str: return
 
-        if success:
-            self.statusBar().showMessage("Pomyślnie dodano nadgodziny.", 4000)
-            self.refresh_data() # Odśwież dane, aby zobaczyć zmiany
-        else:
-            QMessageBox.warning(self, "Błąd Zapisu", f"Nie udało się zapisać nadgodzin:\n{message}")
+    # 2. Pobierz liczbę godzin
+    duration_hours, ok2 = QInputDialog.getDouble(self, "Dodawanie nadgodzin", "Liczba godzin:", 2.0, 0.5, 12, 1)
+    if not ok2: return
 
+    # 3. Pobierz lokalizację
+    locations = {"Home Office": "h", "Stacjonarnie": "s", "mPrzystanek": "p"}
+    location_name, ok3 = QInputDialog.getItem(self, "Dodawanie nadgodzin", "Lokalizacja:", list(locations.keys()), 0, False)
+    if not ok3: return
+    location_code = locations[location_name]
+
+    # 4. Pobierz opis
+    description, ok4 = QInputDialog.getText(self, "Dodawanie nadgodzin", "Opis (opcjonalnie):")
+    if not ok4: return # Użytkownik kliknął Anuluj
+
+    # --- NOWA, POPRAWIONA LOGIKA TWORZENIA DAT ---
+    try:
+        date_part = cell_data.get('date_str')  # Np. "2025-07-15"
+        
+        # Tworzenie obiektu datetime dla time_from
+        time_from_dt = datetime.datetime.strptime(f"{date_part} {start_time_str}", "%Y-%m-%d %H:%M")
+
+        # Obliczanie time_to
+        time_to_dt = time_from_dt + datetime.timedelta(hours=duration_hours)
+
+    except (ValueError, TypeError) as e:
+        log_error(f"Błąd podczas parsowania daty lub czasu dla nadgodzin: {e}", exception=e)
+        QMessageBox.critical(self, "Błąd Danych", "Wprowadzono nieprawidłowy format daty lub czasu.")
+        return
+    # --- KONIEC NOWEJ LOGIKI ---
+
+    # Dane do zapisu w bazie
+    user_id = cell_data.get('uzytkownik_id')
+    location_db_map = {'h': 1, 's': 3, 'p': 2}
+    
+    event_name = f"Nadgodziny {location_name}"
+    location_db_value = location_db_map.get(location_code)
+
+    # Wywołanie procedury zapisu z poprawnymi obiektami datetime
+    success, message = self.data_provider.save_overtime_event(
+        user_id=user_id,
+        time_from=time_from_dt,
+        time_to=time_to_dt,
+        location_id=location_db_value,
+        name=event_name,
+        description=description.strip()
+    )
+
+    if success:
+        self.statusBar().showMessage("Pomyślnie dodano nadgodziny.", 4000)
+        self.refresh_data() # Odśwież dane, aby zobaczyć zmiany
+    else:
+        QMessageBox.warning(self, "Błąd Zapisu", f"Nie udało się zapisać nadgodzin:\n{message}")
 
