@@ -1,68 +1,65 @@
-Jasne, przeanalizowałem strukturę aplikacji i znalazłem odpowiednie miejsca do wprowadzenia zmian. Masz rację, nie ma dedykowanego okna OvertimeEntryDialog. W Twojej aplikacji dodawanie nadgodzin (jak i innych zdarzeń) jest obsługiwane przez uniwersalne okno AddOrEditEventDialog w pliku schedule_edit_dialogs.py, a cała logika jest inicjowana w metodzie add_new_event w pliku main.py.
-Poniżej przedstawiam kompleksowe rozwiązanie, które poprawia obie kwestie:
- * Poprawne obliczanie time_from i time_to podczas dodawania nadgodzin.
- * Poprawne obliczanie godziny zakończenia dla standardowej zmiany w grafiku.
-1. Poprawka Budowania Czasu Trwania Nadgodzin
-Wprowadzimy zmiany w pliku main.py, w metodzie add_new_event. Ta metoda jest wywoływana, gdy użytkownik naciska Insert, aby dodać nadgodziny. Zmodyfikujemy ją tak, aby poprawnie konstruowała daty time_from i time_to.
-Zmodyfikowana metoda add_new_event w main.py
-Zastąp istniejącą metodę add_new_event w klasie WorkScheduleWindow poniższym, poprawionym kodem.
+Przepraszam za wcześniejsze nieporozumienia. Skupiłem się na niewłaściwej metodzie. Dziękuję za precyzyjne wskazanie, że zmiany należy wprowadzić w show_add_overtime_dialog.
+Przeanalizowałem kod i przygotowałem poprawioną wersję tej konkretnej metody, która prawidłowo oblicza czas rozpoczęcia i zakończenia nadgodzin, zgodnie z Twoimi wytycznymi.
+Poprawiona metoda show_add_overtime_dialog
+W pliku main.py, w klasie WorkScheduleWindow, proszę zastąpić istniejącą metodę show_add_overtime_dialog poniższym, poprawionym kodem.
 # W pliku main.py w klasie WorkScheduleWindow
 
-def add_new_event(self):
+def show_add_overtime_dialog(self):
     """
-    Otwiera dialog do dodawania nowego zdarzenia (w tym nadgodzin)
-    i poprawnie obsługuje logikę dat.
+    Otwiera dialog do dodawania nadgodzin i zapisuje je w bazie,
+    poprawnie formatując daty time_from i time_to jako smalldatetime.
     """
     selected = self.table.selectionModel().selectedIndexes()
     if not selected:
         self.statusBar().showMessage("Proszę zaznaczyć komórkę pracownika i dnia.", 3000)
         return
 
+    # Pobieramy dane tylko z pierwszej zaznaczonej komórki
     cell_data = self.table.get_data_for_selected_cells()[0]
     user_id = cell_data.get('uzytkownik_id')
-    date_str = cell_data.get('date_str')
+    date_str = cell_data.get('date_str') # Np. '2025-07-10'
 
     if not user_id or not date_str:
         self.statusBar().showMessage("Nie można dodać zdarzenia dla tej komórki.", 3000)
         return
 
-    # Używamy uniwersalnego dialogu, ale w kontekście nadgodzin
+    # Używamy uniwersalnego dialogu w trybie dodawania nadgodzin
     dialog = AddOrEditEventDialog(self, event=None, date_str=date_str, user_id=user_id, event_type='Nadgodziny', theme=self.current_theme)
     
     if dialog.exec() == QDialog.Accepted:
         details = dialog.get_event_details()
 
-        # --- NOWA, POPRAWIONA LOGIKA TWORZENIA DAT DLA NADGODZIN ---
+        # --- KLUCZOWA ZMIANA: Prawidłowe tworzenie obiektów datetime ---
         try:
-            time_part = details['time_from']  # Pobiera czas "HH:MM"
+            # 1. Pobieramy dane z dialogu
+            time_part = details['time_from']  # Czas w formacie "HH:MM"
             duration_hours_str = details.get('duration', '0').replace(',', '.')
             duration_hours = float(duration_hours_str)
 
-            # 1. Tworzymy obiekt datetime dla time_from
-            # Łączymy datę z komórki (np. "2025-07-15") z czasem z dialogu (np. "16:00")
+            # 2. Tworzymy `time_from` jako obiekt datetime
+            # Łączymy datę z komórki (np. "2025-07-10") z czasem rozpoczęcia (np. "16:00")
             time_from_dt = datetime.datetime.strptime(f"{date_str} {time_part}", "%Y-%m-%d %H:%M")
 
-            # 2. Obliczamy time_to
+            # 3. Obliczamy `time_to` przez dodanie czasu trwania
             time_to_dt = time_from_dt + datetime.timedelta(hours=duration_hours)
 
         except (ValueError, TypeError) as e:
-            log_error(f"Błąd podczas parsowania danych dla nadgodzin: {e}", exception=e)
-            QMessageBox.critical(self, "Błąd Danych", "Wprowadzono nieprawidłowy format czasu lub czasu trwania.")
+            log_error(f"Błąd podczas parsowania danych dla nadgodzin w show_add_overtime_dialog: {e}", exception=e)
+            QMessageBox.critical(self, "Błąd Danych", "Wprowadzono nieprawidłowy format czasu lub czasu trwania nadgodzin.")
             return
-        # --- KONIEC NOWEJ LOGIKI ---
+        # --- KONIEC KLUCZOWEJ ZMIANY ---
 
-        # Dane do zapisu
+        # Przygotowanie reszty danych do zapisu
         location_code = details['location']
         description = details['description']
-
-        # Mapowanie kodów na nazwy i wartości z bazy
+        
         location_display_map = {'h': 'Home Office', 's': 'Stacjonarnie', 'p': 'mPrzystanek'}
         location_db_map = {'h': 1, 's': 3, 'p': 2}
         
         event_name = f"Nadgodziny {location_display_map.get(location_code, 'N/A')}"
         location_db_value = location_db_map.get(location_code)
 
-        # Wywołanie procedury zapisu z poprawnymi obiektami datetime
+        # Wywołanie procedury zapisu z poprawnie przygotowanymi obiektami datetime
         success, message = self.data_provider.save_overtime_event(
             user_id=user_id,
             time_from=time_from_dt,
@@ -73,70 +70,8 @@ def add_new_event(self):
         )
 
         if success:
-            self.statusBar().showMessage("Pomyślnie dodano nadgodziny.", 4000)
-            self.refresh_data() # Odśwież dane, aby zobaczyć zmiany
+            self.statusBar().showMessage("Pomyślnie dodano wpis o nadgodzinach.", 4000)
+            self.refresh_data() # Odświeżamy dane, aby zobaczyć nowy wpis
         else:
             QMessageBox.warning(self, "Błąd Zapisu", f"Nie udało się zapisać nadgodzin:\n{message}")
-
-2. Poprawka Obliczania Końca Zmiany w Grafiku
-Zgodnie z Twoją prośbą, godzina zakończenia standardowej zmiany powinna być obliczana jako godzina rozpoczęcia + liczba godzin pracy. Poprawimy to w pliku symbol_parser.py, który jest centralnym miejscem do interpretacji symboli z grafiku. Dzięki temu zmiana będzie obowiązywać w całej aplikacji.
-Zmodyfikowana funkcja parse_symbol w symbol_parser.py
-Zastąp istniejącą funkcję parse_symbol w tym pliku poniższym kodem.
-# W pliku symbol_parser.py
-
-def parse_symbol(symbol_text):
-    """
-    Parsuje tekstowy symbol z komórki grafiku na słownik ze szczegółami.
-    WERSJA POPRAWIONA: Prawidłowo oblicza godzinę zakończenia zmiany.
-    """
-    if not symbol_text or not isinstance(symbol_text, str):
-        return {}
-
-    # Wzorzec do znalezienia lokalizacji, godziny rozpoczęcia i liczby godzin
-    # Przykład: "h8-12", "s14", "p7.5"
-    pattern = re.compile(
-        r"^(?P<location>[hsp])?"
-        r"(?P<start_hour>\d{1,2})?"
-        r"(?:[-/](?P<work_hours>\d{1,2}(?:[.,]\d{1,2})?))?"
-        r"\s*(?P<special_symbol>[A-Z]{1,3})?$"
-    )
-
-    match = pattern.match(symbol_text.strip())
-    if not match:
-        # Jeśli główny wzorzec nie pasuje, spróbuj znaleźć sam symbol specjalny
-        special_only_match = re.match(r"^[A-Z]{1,3}$", symbol_text.strip())
-        if special_only_match:
-            return {'special_symbol': special_only_match.group(0)}
-        return {}
-
-    data = match.groupdict()
-    parsed_data = {}
-
-    # Przetwarzanie danych z dopasowania
-    parsed_data['location'] = data.get('location')
-    parsed_data['special_symbol'] = data.get('special_symbol')
-
-    start_hour = None
-    if data.get('start_hour'):
-        start_hour = int(data['start_hour'])
-        parsed_data['start_hour'] = start_hour
-
-    work_hours = None
-    if data.get('work_hours'):
-        work_hours = float(data['work_hours'].replace(',', '.'))
-    elif start_hour is not None:
-        # Jeśli podano godzinę rozpoczęcia, ale nie liczbę godzin, domyślnie 8
-        work_hours = 8.0
-    
-    parsed_data['work_hours'] = work_hours
-
-    # --- POPRAWIONA LOGIKA OBLICZANIA GODZINY ZAKOŃCZENIA ---
-    if start_hour is not None and work_hours is not None:
-        # Koniec zmiany to po prostu start + liczba godzin
-        end_hour = start_hour + work_hours
-        # Obsługa przejścia na następny dzień (modulo 24)
-        parsed_data['end_hour'] = end_hour % 24 if end_hour != 24 else 0
-    # --- KONIEC POPRAWIONEJ LOGIKI ---
-
-    return parsed_data
 
