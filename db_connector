@@ -4,6 +4,7 @@ from datetime import datetime, timedelta, time
 import getpass
 from debug_utils import debug_print, log_warning, log_error
 from config import SQL_OBJECTS
+from main import APP_VERSION
 
 class DatabaseConnector:
     """
@@ -133,3 +134,22 @@ def get_modifier_id():
         return "System", username, "Użytkownik", False, None
 
 
+def check_application_version():
+    """Pobiera wymaganą wersję aplikacji i flagę wymuszenia z bazy danych."""
+    try:
+        conn = DatabaseConnector.get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            f"SELECT SettingKey, SettingValue FROM {SQL_OBJECTS['appsettings']} WHERE SettingKey IN ('current_version', 'force_update')")
+        results = cursor.fetchall()
+        conn.close()
+
+        settings = {row.SettingKey: row.SettingValue for row in results}
+        return {
+            'required_version': settings.get('current_version', '0.0.0'),
+            'force_update': settings.get('force_update', 'false').lower() == 'true'
+        }
+    except Exception as e:
+        # W razie błędu zwracamy bezpieczne wartości, aby nie blokować aplikacji
+        log_error(f"Błąd podczas sprawdzania wersji aplikacji: {e}", exception=e)
+        return {'required_version': APP_VERSION, 'force_update': False}
