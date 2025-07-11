@@ -1141,6 +1141,7 @@ class StaffingDetailsWindow(QDialog):
         self.load_and_display_data()
 
     def _calculate_hourly_staffing(self, schedule_data, all_events, option="all", location_filter=None):
+        """Oblicza obsadę godzina po godzinie dla każdego dnia."""
         days = self._days_in_month
         schedule_matrix = [[0.0] * days for _ in range(24)]
         overtime_matrix = [[0.0] * days for _ in range(24)]
@@ -1150,23 +1151,22 @@ class StaffingDetailsWindow(QDialog):
         location_map = self._get_daily_location_map(schedule_data)
 
         for user_key, user_schedule in schedule_data.items():
-            # user_id = user_key[3] # To nie jest używane bezpośrednio w tej pętli, ale może być potrzebne do events_map
+            # ### POCZĄTEK ZMIANY ###
+            if user_schedule.get('dtn') == 1:
+                continue
+            # ### KONIEC ZMIANY ###
+
             korekta = float(user_schedule.get('korekta', 0.0) or 0.0)
 
             for day, day_info in user_schedule.get('days', {}).items():
                 day_idx = day - 1
-
-                # Pobierz sparsowany symbol dla danego dnia
                 parsed = parse_symbol(day_info.get('symbol', ''))
 
-                # --- KLUCZOWA ZMIANA: Ignoruj godziny, jeśli symbol specjalny istnieje ---
                 if parsed.get('special_symbol') is not None and parsed.get('special_symbol').strip() != '':
-                    # Jeśli symbol specjalny jest obecny, te godziny nie wliczają się do "obsady grafikowej".
-                    continue  # Przejdź do następnego dnia/pracownika.
-                # --- KONIEC KLUCZOWEJ ZMIANY ---
+                    continue
 
                 if location_filter and location_filter != "-Wszystkie-" and location_map.get(
-                        (user_key[3], day)) != location_filter:  # Użyto user_key[3] dla user_id
+                        (user_key[3], day)) != location_filter:
                     continue
 
                 start, base_hours = parsed.get('start_hour'), parsed.get('work_hours')
@@ -1177,19 +1177,20 @@ class StaffingDetailsWindow(QDialog):
                         for h in range(int(final_hours)):
                             hour = (start + h) % 24
                             schedule_matrix[hour][day_idx] += 1.0
-                            # Logika dla events_matrix nadal powinna działać, ale tylko dla tych,
-                            # którzy przeszli filtr special_symbol.
-                            if events_map.get(user_key[3], {}).get(day, {}).get(hour, 0) > 30:  # Użyto user_key[3]
+                            if events_map.get(user_key[3], {}).get(day, {}).get(hour, 0) > 30:
                                 events_matrix[hour][day_idx] += 1.0
 
-        # Logika dla nadgodzin pozostaje bez zmian, bo nadgodziny to osobny typ zdarzenia,
-        # który ma być wliczany niezależnie od symbolu grafiku.
         user_ids_in_view = {k[3] for k in schedule_data.keys()}
         for event in all_events:
-            # W oryginalnym kodzie było sprawdzenie typu "Nadgodziny", to jest ok.
             if event.get('type') == 'Nadgodziny' and event.get('user_id') in user_ids_in_view:
                 try:
                     user_id = event.get('user_id')
+                    # ### POCZĄTEK ZMIANY ###
+                    # Sprawdzenie DTN dla osoby z nadgodzinami
+                    user_data = next((data for key, data in schedule_data.items() if key[3] == user_id), None)
+                    if user_data and user_data.get('dtn') == 1:
+                        continue
+                    # ### KONIEC ZMIANY ###
                     day = int(event.get('date_key', '0-0-0').split('-')[2])
                     if location_filter and location_filter != "-Wszystkie-" and location_map.get(
                             (user_id, day)) != location_filter:
@@ -1410,6 +1411,11 @@ class StaffingDetailsWindow(QDialog):
         granular_staffing = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
 
         for user_key, user_data in schedule_data.items():
+            # ### POCZĄTEK ZMIANY ###
+            if user_data.get('dtn') == 1:
+                continue
+            # ### KONIEC ZMIANY ###
+
             user_id = user_key[3]
             user_info = {
                 'WydzialGrafik': user_key[0], 'RolaNazwa': user_data.get('rola_nazwa', ''),
@@ -1424,11 +1430,9 @@ class StaffingDetailsWindow(QDialog):
             for day, day_info in user_data.get('days', {}).items():
                 parsed_symbol = parse_symbol(day_info.get('symbol', ''))
 
-                # --- KLUCZOWA ZMIANA: Ignoruj godziny, jeśli symbol specjalny istnieje ---
                 if parsed_symbol.get('special_symbol') is not None and parsed_symbol.get(
                         'special_symbol').strip() != '':
-                    continue  # Przejdź do następnego dnia/pracownika.
-                # --- KONIEC KLUCZOWEJ ZMIANY ---
+                    continue
 
                 start_hour = parsed_symbol.get('start_hour')
                 base_work_hours = parsed_symbol.get('work_hours')
@@ -1443,7 +1447,7 @@ class StaffingDetailsWindow(QDialog):
                 for h in range(max(0, int(final_work_hours))):
                     current_hour = (start_hour + h) % 24
                     event_minutes = events_map.get(user_id, {}).get(day, {}).get(current_hour, 0)
-                    if event_minutes > 30:  # Jeśli spotkanie/szkolenie trwa > 30min, odejmij od obsady
+                    if event_minutes > 30:
                         continue
 
                     grouping_key = (
@@ -1453,7 +1457,7 @@ class StaffingDetailsWindow(QDialog):
                     )
                     granular_staffing[day][current_hour][grouping_key] += 1
 
-        # --- ZMIANA: Dodano brakujące nazwy grup 'TOTAL VOICE' i 'WELCOMER VOICE' ---
+        # Reszta metody pozostaje bez zmian...
         final_group_names = [
             "MASS+WELCAMER+GOLD", "NUMEN+FIRMA", "CZAT", "WELCOMER", "GOLD",
             "NUMEN+FIRMA_VOICE", "WELCOMER VOICE", "TOTAL", "TOTAL VOICE"
@@ -1676,7 +1680,7 @@ class StaffingDetailsWindow(QDialog):
 
     # Metoda do podmiany nr 2
     def _calculate_daily_staffing(self, schedule_data, all_events, option="all", location_filter=None):
-        """Oblicza obsadę dzienną, uwzględniając wszystkie filtry."""
+        """Oblicza obsadę dzienną, uwzgl\u0119dnia wszystkie filtry i ignoruje godziny z symbolami specjalnymi."""
         summary_schedule = defaultdict(lambda: defaultdict(float))
         summary_overtime = defaultdict(lambda: defaultdict(float))
         summary_events = defaultdict(lambda: defaultdict(float))
@@ -1686,15 +1690,24 @@ class StaffingDetailsWindow(QDialog):
 
         # 1. Oblicz sumy dzienne dla grafiku i zdarzeń
         for user_key, user_schedule in schedule_data.items():
+            # ### POCZĄTEK ZMIANY ###
+            if user_schedule.get('dtn') == 1:
+                continue
+            # ### KONIEC ZMIANY ###
+
             user_id, wydzial = user_key[3], user_key[0] or "Brak"
             korekta = float(user_schedule.get('korekta', 0.0) or 0.0)
 
             for day, day_info in user_schedule.get('days', {}).items():
+                parsed = parse_symbol(day_info.get('symbol', ''))
+
+                if parsed.get('special_symbol') is not None and parsed.get('special_symbol').strip() != '':
+                    continue
+
                 shift_location = location_map.get((user_id, day))
                 if location_filter and location_filter != "-Wszystkie-" and shift_location != location_filter:
                     continue
 
-                parsed = parse_symbol(day_info.get('symbol', ''))
                 start, base_hours = parsed.get('start_hour'), parsed.get('work_hours')
                 final_hours = base_hours + korekta if base_hours is not None else 0
 
@@ -1711,6 +1724,12 @@ class StaffingDetailsWindow(QDialog):
             if event.get('type') == 'Nadgodziny' and event.get('user_id') in user_to_dept:
                 try:
                     user_id = event.get('user_id')
+                    # ### POCZĄTEK ZMIANY ###
+                    # Sprawdzenie DTN dla osoby z nadgodzinami
+                    user_data = next((data for key, data in schedule_data.items() if key[3] == user_id), None)
+                    if user_data and user_data.get('dtn') == 1:
+                        continue
+                    # ### KONIEC ZMIANY ###
                     day = int(event.get('date_key', '0-0-0').split('-')[2])
 
                     event_location = location_map.get((user_id, day))
@@ -1725,11 +1744,9 @@ class StaffingDetailsWindow(QDialog):
                 except (ValueError, IndexError):
                     continue
 
-        # --- ZMIANA: Ta część kodu była brakująca w poprzedniej wersji ---
         # 3. Połącz wyniki w zależności od opcji
         all_depts = set(summary_schedule.keys()) | set(summary_overtime.keys()) | set(summary_events.keys())
         final_summary = defaultdict(lambda: [0.0] * self._days_in_month)
-
         for dept in all_depts:
             for day_idx in range(self._days_in_month):
                 s = summary_schedule[dept].get(day_idx, 0.0)
