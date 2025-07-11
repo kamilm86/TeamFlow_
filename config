@@ -1,18 +1,33 @@
-# config.py
-
 import configparser
 import os
+import sys  # Dodano import sys
 from debug_utils import log_error
+
+# ### POCZĄTEK NOWEGO KODU ###
+def resource_path(relative_path):
+    """ Zwraca poprawną ścieżkę do zasobu, działa zarówno dla trybu developerskiego,
+        jak i dla spakowanej aplikacji PyInstaller. """
+    try:
+        # PyInstaller tworzy tymczasowy folder i przechowuje jego ścieżkę w _MEIPASS
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+
+    return os.path.join(base_path, relative_path)
+# ### KONIEC NOWEGO KODU ###
+
 
 # Utworzenie parsera i zdefiniowanie ścieżki do pliku
 config = configparser.ConfigParser()
-config_file_path = 'config.ini'
+# ### ZMIANA: Użycie nowej funkcji do znalezienia ścieżki ###
+config_file_path = resource_path('config.ini')
+
 
 # Sprawdzenie, czy plik konfiguracyjny istnieje
 if not os.path.exists(config_file_path):
     raise FileNotFoundError(f"Krytyczny błąd: Plik konfiguracyjny '{config_file_path}' nie został znaleziony. Aplikacja nie może zostać uruchomiona.")
 
-config.read(config_file_path)
+config.read(config_file_path, encoding='utf-8') # Dodano kodowanie dla pewności
 
 # Przygotowanie słownika DATABASE_CONFIG dla db_connector.py
 try:
