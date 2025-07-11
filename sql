@@ -31,6 +31,9 @@ BEGIN
     END
 END
 GO
+
+EXEC dbo.UpdateAppSetting 'current_version', '1.0.1' 
+EXEC dbo.UpdateAppSetting 'force_update', 'true'
 -------------------------------------------------------------------------------------
 USE [ZarzadzaniePraca]
 GO
