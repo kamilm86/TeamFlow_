@@ -1,3 +1,37 @@
+-- Tabela do przechowywania globalnych ustawień aplikacji
+CREATE TABLE dbo.AppSettings (
+    SettingKey NVARCHAR(100) PRIMARY KEY,
+    SettingValue NVARCHAR(255) NOT NULL,
+    LastModified DATETIME DEFAULT GETDATE()
+);
+
+-- Wstawienie domyślnych wartości: aktualna wersja i flaga wymuszenia
+INSERT INTO dbo.AppSettings (SettingKey, SettingValue) VALUES 
+('current_version', '1.0.0'),
+('force_update', 'false');
+
+-- Procedura do aktualizacji ustawień
+GO
+CREATE PROCEDURE dbo.UpdateAppSetting
+    @Key NVARCHAR(100),
+    @Value NVARCHAR(255)
+AS
+BEGIN
+    SET NOCOUNT ON;
+    IF EXISTS (SELECT 1 FROM dbo.AppSettings WHERE SettingKey = @Key)
+    BEGIN
+        UPDATE dbo.AppSettings
+        SET SettingValue = @Value, LastModified = GETDATE()
+        WHERE SettingKey = @Key;
+    END
+    ELSE
+    BEGIN
+        INSERT INTO dbo.AppSettings (SettingKey, SettingValue)
+        VALUES (@Key, @Value);
+    END
+END
+GO
+-------------------------------------------------------------------------------------
 USE [ZarzadzaniePraca]
 GO
 
