@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
 from PySide6.QtCore import Qt, Signal
 from styles import AppStyles
 from db_connector import DatabaseConnector, get_modifier_id
+from config import SQL_OBJECTS
 
 class ScheduleControlDialog(QDialog):
     data_refresh_needed = Signal()
@@ -15,7 +16,7 @@ class ScheduleControlDialog(QDialog):
         self.year = year
         self.month = month
         self.is_dark_theme = getattr(parent, 'is_dark_theme', False)
-        self.login_windows, _, _, _ = get_modifier_id() # Pobierz nazwę użytkownika Windows
+        self.login_windows, _, _, _, _= get_modifier_id() # Pobierz nazwę użytkownika Windows
 
         self.setWindowTitle("Sugestie i blokowanie grafiku")
         self.setMinimumWidth(450)
@@ -119,7 +120,7 @@ class ScheduleControlDialog(QDialog):
 
         try:
             # Zakładamy, że procedura obsługuje parametr NULL dla grup (oznaczający 'wszystkie')
-            sql = f"EXEC dbo.p_P_ZZ_ImportujPlanyUrlopowe {self.year}, {self.month}, '{self.login_windows}', NULL"
+            sql = f"EXEC {SQL_OBJECTS['p_importujplanyurlopowe']} {self.year}, {self.month}, '{self.login_windows}', NULL"
             conn = DatabaseConnector.get_connection()
             conn.execute(sql)
             conn.commit()
@@ -149,7 +150,7 @@ class ScheduleControlDialog(QDialog):
             cursor = conn.cursor()
 
             # Status sugestii
-            query_sug = f"SELECT Status FROM dbo.p_T_ZZ_DatyBlokowaniaSugestii WHERE Rok={self.year} AND Miesiac={self.month}"
+            query_sug = f"SELECT Status FROM {SQL_OBJECTS['datyblokowaniasugestii']} WHERE Rok={self.year} AND Miesiac={self.month}"
             sug_status = cursor.execute(query_sug).fetchone()
             if sug_status:
                 if sug_status[0] == 0: self.suggestions_status_label.setText("Odblokowany")
@@ -159,7 +160,7 @@ class ScheduleControlDialog(QDialog):
                 self.suggestions_status_label.setText("Nieustawiony")
 
             # Status publikacji
-            query_pub = f"SELECT TOP 1 Id FROM dbo.p_T_ZZ_DatyPublikacjiGrafiku WHERE Status=1 AND Rok={self.year} AND Miesiac={self.month}"
+            query_pub = f"SELECT TOP 1 Id FROM {SQL_OBJECTS['datypublikacjigrafiku']} WHERE Status=1 AND Rok={self.year} AND Miesiac={self.month}"
             pub_status = cursor.execute(query_pub).fetchone()
             if pub_status:
                 self.publish_status_label.setText("Opublikowany")
@@ -176,7 +177,7 @@ class ScheduleControlDialog(QDialog):
 
     def _set_suggestions_status(self, status_code):
         """Ustawia status sugestii i odświeża widok."""
-        sql = f"exec dbo.p_P_ZZ_BlokowanieSugestii {self.year}, {self.month}, GETDATE(), '{self.login_windows}', {status_code}, 1"
+        sql = f"exec {SQL_OBJECTS['p_blokowaniesugestii']} {self.year}, {self.month}, GETDATE(), '{self.login_windows}', {status_code}, 1"
         if self._execute_procedure(sql):
             QMessageBox.information(self, "Sukces", "Status sugestii został zmieniony.")
             self.load_initial_status()
@@ -191,14 +192,14 @@ class ScheduleControlDialog(QDialog):
         self._set_suggestions_status(2)
 
     def publish_schedule(self):
-        sql = f"exec dbo.p_P_ZZ_PublikowanieGrafiku {self.year}, {self.month}, '{self.login_windows}', 1"
+        sql = f"exec {SQL_OBJECTS['p_publikowaniegrafiku']} {self.year}, {self.month}, '{self.login_windows}', 1"
         if self._execute_procedure(sql):
             QMessageBox.information(self, "Sukces", "Grafik został opublikowany.")
             self.load_initial_status()
             self.data_refresh_needed.emit()
 
     def unpublish_schedule(self):
-        sql = f"exec dbo.p_P_ZZ_PublikowanieGrafiku {self.year}, {self.month}, '{self.login_windows}', 0"
+        sql = f"exec {SQL_OBJECTS['p_publikowaniegrafiku']} {self.year}, {self.month}, '{self.login_windows}', 0"
         if self._execute_procedure(sql):
             QMessageBox.information(self, "Sukces", "Publikacja grafiku została cofnięta.")
             self.load_initial_status()
@@ -207,7 +208,7 @@ class ScheduleControlDialog(QDialog):
     def get_suggestions(self):
         # Wersja dla Pythona nie pobiera danych do Excela, tylko wywołuje procedurę
         # i emituje sygnał do odświeżenia głównego okna.
-        sql = f"exec dbo.p_P_ZZ_PobierzSugestieII {self.year}, {self.month}, {self.month}, {self.year}, 1, 0"
+        sql = f"exec {SQL_OBJECTS['p_pobierzsugestieii']} {self.year}, {self.month}, {self.month}, {self.year}, 1, 0"
         if self._execute_procedure(sql):
              QMessageBox.information(self, "Sukces", "Procedura pobierania sugestii została uruchomiona.\nDane zostaną odświeżone.")
              self.data_refresh_needed.emit()
@@ -286,7 +287,7 @@ class SuggestionsOutDialog(QDialog):
         self.groups_list.clear()
         query = f"""
             SELECT distinct PrzelozonyDane 
-            FROM dbo.[p_T_DO_KonfiguracjaZatrudnienie]
+            FROM {SQL_OBJECTS['konfiguracjazatrudnienie']}
             """
 
             # FROM dbo.v_DO_KonfiguracjaZatrudnienie
@@ -320,7 +321,7 @@ class SuggestionsOutDialog(QDialog):
             return
 
         try:
-            sql = f"EXEC dbo.p_P_ZZ_PobieranieSugestiiOut {self.year}, {self.month}, '{self.user_app_id}', {selected_groups_str}"
+            sql = f"EXEC {SQL_OBJECTS['p_pobieraniesugestiiout']} {self.year}, {self.month}, '{self.user_app_id}', {selected_groups_str}"
             conn = DatabaseConnector.get_connection()
             conn.execute(sql)
             conn.commit()
@@ -349,7 +350,7 @@ class SuggestionsOutDialog(QDialog):
 
         try:
             # Zakładamy, że istnieje procedura, która hermetyzuje logikę z pętli VBA
-            sql = f"EXEC dbo.p_P_ZZ_ImportujPlanyUrlopowe {self.year}, {self.month}, '{self.user_app_id}', {selected_groups_str}"
+            sql = f"EXEC {SQL_OBJECTS['p_importujplanyurlopowe']} {self.year}, {self.month}, '{self.user_app_id}', {selected_groups_str}"
             conn = DatabaseConnector.get_connection()
             conn.execute(sql)
             conn.commit()
