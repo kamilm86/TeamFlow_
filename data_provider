@@ -4,13 +4,13 @@ from PySide6.QtCore import QObject, Signal
 from db_connector import DatabaseConnector
 from datetime import datetime, timedelta
 import time
-from collections import defaultdict
+from business_rules import BusinessRules
 from debug_utils import debug_print, log_warning, log_error
 from dataclasses import dataclass, field
 from typing import Dict, List, Tuple, Optional, Any
 from functools import lru_cache
 from symbol_parser import parse_symbols_batch,parse_symbol
-
+from config import SQL_OBJECTS
 
 @dataclass
 class MonthlyDataContainer:
@@ -62,11 +62,11 @@ class DataProvider(QObject):
 
             # Dynamiczne budowanie zapytania w zależności od limitu
             if limit:
-                query = "SELECT TOP (?) * FROM [dbo].[fn_GetScheduleAuditData](?, ?) ORDER BY DataModyfikacji DESC"
+                query = f"SELECT TOP (?) * FROM {SQL_OBJECTS['fn_getscheduleauditdata']}(?, ?) ORDER BY DataModyfikacji DESC"
                 params = (limit, year, month)
             else:
                 # Zawsze sortuj, aby zachować spójność
-                query = "SELECT * FROM [dbo].[fn_GetScheduleAuditData](?, ?) ORDER BY DataModyfikacji DESC"
+                query = f"SELECT * FROM {SQL_OBJECTS['fn_getscheduleauditdata']}(?, ?) ORDER BY DataModyfikacji DESC"
                 params = (year, month)
 
             cursor.execute(query, params)
@@ -218,7 +218,7 @@ class DataProvider(QObject):
         try:
             conn = self.db_connector.get_connection()
             cursor = conn.cursor()
-            query = "SELECT * FROM [dbo].[fn_GetForecastData] (?, ?)"
+            query = f"SELECT * FROM {SQL_OBJECTS['fn_getforecastdata']} (?, ?)"
             cursor.execute(query, (year, month))
 
             # Mapowanie na podstawie nazw kolumn zwróconych przez bazę
@@ -312,21 +312,8 @@ class DataProvider(QObject):
         Zwraca słownik mapujący zagregowane grupy na zbiory wydziałów (WydzialGrafik).
         Centralizuje logikę biznesową dotyczącą przynależności do grup.
         """
-        # Ta logika jest odzwierciedleniem tego, jak liczona jest obsada rzeczywista
-        # w metodzie _calculate_actual_staffing_matrix.
-        mapping = {
-            "TOTAL VOICE": {'WNT', 'WZK1v', 'WZK2v', 'WZK3v', 'WZK3w', 'WZFv'},
-            "MASS+WELCAMER+GOLD": {'WZKv', 'WZK3w', 'WNT', 'WZK1v', 'WZK2v', 'WZK3v'},
-            "NUMEN+FIRMA": {'WZFv', 'WZFc'},
-            "CZAT": {'WZFv', 'WZK3v', 'WZK3w', 'WZK1c', 'WZK2c', 'WZK3c', 'WZFc', 'OBDc'},
-            "WELCOMER": {'WZK3v', 'WZK3c', 'WZK3w'},
-            "GOLD": {'WZK2v', 'WZK2c'},
-            "NUMEN+FIRMA_VOICE": {'WZFv'},
-            "WELCOMER VOICE": {'WZK3v', 'WZK3w'}
-        }
-        # Grupa TOTAL jest specjalnym przypadkiem - zawiera wszystkie wydziały.
-        # Nie dodajemy jej tutaj, będzie obsługiwana osobno.
-        return mapping
+        # Logika została przeniesiona do centralnego pliku business_rules.py
+        return BusinessRules.GROUP_MAPPING
 
     def refresh_data(self, year: int, month: int, grupa: int, funkcja: int):
         """
@@ -546,7 +533,7 @@ class DataProvider(QObject):
 
     def _fetch_schedule_data(self, year: int, month: int, grupa: int, funkcja: int) -> List[Dict]:
         """Pobiera dane grafiku z bazy z dodatkowymi parametrami."""
-        query = "SELECT * FROM [dbo].[fn_GetScheduleData](?, ?, ?, ?)"  # ZAPYTANIE Z 4 PARAMETRAMI
+        query = f"SELECT * FROM {SQL_OBJECTS['fn_getscheduledata']}(?, ?, ?, ?)"  # ZAPYTANIE Z 4 PARAMETRAMI
         conn = self.db_connector.get_connection()
         cursor = conn.cursor()
         cursor.execute(query, (year, month, grupa, funkcja))  # PRZEKAZANIE PARAMETRÓW
@@ -563,8 +550,8 @@ class DataProvider(QObject):
 
     def _fetch_events_data(self, year: int, month: int) -> List[Dict]:
         """Pobiera wszystkie zdarzenia miesiąca"""
-        query = """
-        SELECT * FROM [dbo].[fn_GetEventsData](?, ?) 
+        query = f"""
+        SELECT * FROM {SQL_OBJECTS['fn_geteventsdata']}(?, ?) 
         """
         conn = self.db_connector.get_connection()
         cursor = conn.cursor()
