@@ -37,8 +37,6 @@ from config import SQL_OBJECTS
 from debug_utils import debug_print, log_warning, log_error, setup_logging, close_log_file
 from symbol_parser import parse_symbol, build_symbol, get_symbol_description
 
-APP_VERSION = "1.0.0"
-
 class ScheduleKeyboardFilter(QObject):
     """
     Dedykowany filtr zdarzeń klawiatury dla tabeli grafiku z obsługą:
@@ -3987,7 +3985,7 @@ class WorkScheduleWindow(QMainWindow):
             dialog.exec()
             sys.exit()  # Zakończ proces po zamknięciu dialogu
             return
-        
+
         try:
             current_date_data = self.date_combo.currentData()
             if not current_date_data:
