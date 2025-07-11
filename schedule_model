@@ -3,7 +3,7 @@ from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QDate
 from PySide6.QtGui import QColor, QBrush, QFont
 from debug_utils import debug_print, log_warning, log_error
 from symbol_parser import parse_symbol, get_symbol_description
-
+from config import SQL_OBJECTS
 
 # Definicje ról danych
 ROLE_DATA = Qt.UserRole
@@ -371,24 +371,15 @@ class ScheduleTableModel(QAbstractTableModel):
         """
         self.beginResetModel()
 
-        # Ustawienie podstawowych informacji o wyświetlanym okresie
+        # Ustawienie podstawowych informacji o okresie (bez zmian)
         self._year = year
         self._month = month
         self._days_in_month = self._get_days_in_month(year, month)
-
-        # Oblicz, które kolumny przypadają na weekendy dla danego miesiąca
         self._weekend_columns = self._find_weekend_columns(year, month)
-
         self._working_days = self._fetch_working_days(year, month)
-
-        # Bezpośrednie przypisanie już przetworzonych danych
         self._processed_data = processed_data if processed_data else {}
-
-        # Atrybut _data nie jest już potrzebny w tej logice, bo operujemy na _processed_data
         self._data = []
 
-        # Aktualizacja kluczy i liczników na podstawie nowych danych
-        self._keys = list(self._processed_data.keys())
         self._row_count = len(self._keys)
         self._update_column_structure()
 
@@ -866,7 +857,7 @@ class ScheduleTableModel(QAbstractTableModel):
         try:
             conn = DatabaseConnector.get_connection()
             cursor = conn.cursor()
-            query = "SELECT LiczbaDniPracujacych FROM dbo.Kalendarz WHERE ROK = ? AND Miesiąc = ?"
+            query = f"SELECT iloscDniPracujacych LiczbaDniPracujacych FROM {SQL_OBJECTS['dnipracujace']} WHERE ROK = ? AND Miesiąc = ?"
             cursor.execute(query, (year, month))
             result = cursor.fetchone()
             conn.close()
