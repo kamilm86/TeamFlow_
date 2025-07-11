@@ -1,6 +1,5 @@
 import sys
 import time
-from collections import defaultdict
 from datetime import datetime, timedelta, date
 from typing import List, Dict, Optional, Tuple, Any
 from PySide6.QtWidgets import (QApplication, QMainWindow, QTableWidget, QTableWidgetItem, QTableView, QItemDelegate,
@@ -16,6 +15,7 @@ from PySide6.QtGui import QShortcut, QKeySequence, QFont, QColor, QIcon, QPixmap
     QLinearGradient, QRadialGradient, QStandardItem, QStandardItemModel
 
 from db_connector import DatabaseConnector, get_modifier_id, check_application_version
+from config import APP_VERSION
 from settings_dialog import AppSettingsDialog
 from schedule_edit_dialogs import InsertSymbolDialog, ScheduleChangeDialog
 from settings_db import SettingsDatabase
@@ -514,7 +514,7 @@ class UpdateRequiredDialog(QDialog):
         self.countdown_label.setText(f"Aplikacja zostanie zamknięta za {self.countdown} sekund...")
         if self.countdown <= 0:
             self.timer.stop()
-            QApplication.quit()  # Zamknij całą aplikację
+            self.accept()
 
 class WorkScheduleWindow(QMainWindow):
     def __init__(self):
