@@ -1,1 +1,31 @@
+# Plik: business_rules.py
 
+class BusinessRules:
+    """
+    Centralne miejsce do przechowywania reguł biznesowych aplikacji.
+    Dzięki temu kluczowe zestawy danych i mapowania są w jednym miejscu,
+    co ułatwia ich modyfikację i utrzymanie.
+    """
+
+    # Zbiór symboli, które są traktowane jako absencje i powodują
+    # automatyczne odwołanie powiązanych zdarzeń (spotkań, nadgodzin).
+    # Używane w main.py do weryfikacji, czy należy odwołać delegacje.
+    ABSENCE_SYMBOLS = {
+        'U', 'UZ', 'UOP', 'CO', 'CR', 'UB', 'UM', 'UO', 'UOD', 'US', 'UT', 'UW',
+        'CRW', 'CSR', 'ZO', 'ZS', 'NN', 'NU', 'NW', 'O', 'OS', 'USW', 'Z'
+    }
+
+    # Mapowanie nazw grup używanych w filtrach i raportach na zbiory
+    # wydziałów (WydzialGrafik), które wchodzą w ich skład.
+    # Używane w data_provider.py do filtrowania i w staffing_details_window.py
+    # do agregacji danych.
+    GROUP_MAPPING = {
+        "TOTAL VOICE": {'WNT', 'WZK1v', 'WZK2v', 'WZK3v', 'WZK3w', 'WZFv'},
+        "MASS+WELCAMER+GOLD": {'WZKv', 'WZK3w', 'WNT', 'WZK1v', 'WZK2v', 'WZK3v'},
+        "NUMEN+FIRMA": {'WZFv', 'WZFc'},
+        "CZAT": {'WZFv', 'WZK3v', 'WZK3w', 'WZK1c', 'WZK2c', 'WZK3c', 'WZFc', 'OBDc'},
+        "WELCOMER": {'WZK3v', 'WZK3c', 'WZK3w'},
+        "GOLD": {'WZK2v', 'WZK2c'},
+        "NUMEN+FIRMA_VOICE": {'WZFv'},
+        "WELCOMER VOICE": {'WZK3v', 'WZK3w'}
+    }
