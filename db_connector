@@ -1,10 +1,11 @@
+from config import APP_VERSION 
 import pyodbc
 from config import DATABASE_CONFIG
 from datetime import datetime, timedelta, time
 import getpass
 from debug_utils import debug_print, log_warning, log_error
 from config import SQL_OBJECTS
-from main import APP_VERSION
+
 
 class DatabaseConnector:
     """
