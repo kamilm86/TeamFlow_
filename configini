@@ -40,3 +40,4 @@ datyblokowaniasugestii = dbo.p_T_ZZ_DatyBlokowaniaSugestii
 datypublikacjigrafiku = dbo.p_T_ZZ_DatyPublikacjiGrafiku
 konfiguracjazatrudnienie = dbo.p_T_DO_KonfiguracjaZatrudnienie
 dnipracujace = dbo.p_T_SL_KalendarzMiesiecy
+appsettings = dbo.AppSettings
