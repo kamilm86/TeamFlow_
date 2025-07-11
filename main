@@ -11,10 +11,11 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QTableWidget, QTableWi
                                QGridLayout, QSizePolicy, QTableWidgetSelectionRange)
 from PySide6.QtCore import Qt, QThread, Signal, QDate, QTimer, QPoint, QModelIndex, QRect, QEvent, QItemSelectionModel, \
     QAbstractTableModel, QObject
+from packaging.version import parse as parse_version # Do poprawnego porównywania wersji
 from PySide6.QtGui import QShortcut, QKeySequence, QFont, QColor, QIcon, QPixmap, QPainter, QPolygon, QBrush, QPen, \
     QLinearGradient, QRadialGradient, QStandardItem, QStandardItemModel
 
-from db_connector import DatabaseConnector, get_modifier_id
+from db_connector import DatabaseConnector, get_modifier_id, check_application_version
 from settings_dialog import AppSettingsDialog
 from schedule_edit_dialogs import InsertSymbolDialog, ScheduleChangeDialog
 from settings_db import SettingsDatabase
@@ -34,9 +35,9 @@ from config import SQL_OBJECTS
 
 # POPRAWKA: Dodaj import funkcji debug
 from debug_utils import debug_print, log_warning, log_error, setup_logging, close_log_file
-
 from symbol_parser import parse_symbol, build_symbol, get_symbol_description
 
+APP_VERSION = "1.0.0"
 
 class ScheduleKeyboardFilter(QObject):
     """
@@ -479,6 +480,44 @@ class CustomMultiComboBox(QComboBox):
 #             log_error(f"Błąd podczas rysowania delegata: {e}")
 #             QStyledItemDelegate.paint(self, painter, option, index)
 
+class UpdateRequiredDialog(QDialog):
+    """Modalne okno informujące o konieczności aktualizacji i wymuszające zamknięcie."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Wymagana aktualizacja")
+        self.setModal(True)
+        # Blokada przycisku zamknięcia (X)
+        self.setWindowFlags(Qt.Dialog | Qt.CustomizeWindowHint | Qt.WindowTitleHint)
+
+        self.countdown = 15  # Czas w sekundach
+
+        layout = QVBoxLayout(self)
+        info_label = QLabel(
+            "<b>Dostępna jest nowa wersja aplikacji.</b><br><br>"
+            "Aby zapewnić spójność danych i dostęp do nowych funkcji, dalsza praca na tej wersji nie jest możliwa.<br>"
+            "Zapisz swoją pracę."
+        )
+        info_label.setAlignment(Qt.AlignCenter)
+        layout.addWidget(info_label)
+
+        self.countdown_label = QLabel(f"Aplikacja zostanie zamknięta za {self.countdown} sekund...")
+        self.countdown_label.setAlignment(Qt.AlignCenter)
+        self.countdown_label.setStyleSheet("font-weight: bold; color: #e74c3c;")
+        layout.addWidget(self.countdown_label)
+
+        self.timer = QTimer(self)
+        self.timer.setInterval(1000)
+        self.timer.timeout.connect(self.update_countdown)
+        self.timer.start()
+
+    def update_countdown(self):
+        self.countdown -= 1
+        self.countdown_label.setText(f"Aplikacja zostanie zamknięta za {self.countdown} sekund...")
+        if self.countdown <= 0:
+            self.timer.stop()
+            QApplication.quit()  # Zamknij całą aplikację
+
 class WorkScheduleWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -571,8 +610,20 @@ class WorkScheduleWindow(QMainWindow):
 
         # Sprawdzamy uprawnienia
         if not self.check_user_permissions():
+            # Sprawdzanie wersji, nawet jeśli uprawnienia się nie zgadzają
+            # Pozwala to uniknąć sytuacji, w której stary klient blokuje aktualizację
+            # chociaż nie może się nawet zalogować.
+            version_info = check_application_version()
+            if parse_version(APP_VERSION) < parse_version(version_info['required_version']):
+                dialog = UpdateRequiredDialog(self)
+                dialog.exec()
             return
-
+        version_info = check_application_version()
+        if parse_version(APP_VERSION) < parse_version(version_info['required_version']):
+            dialog = UpdateRequiredDialog(self)
+            dialog.exec()
+            # Bezpieczne wyjście, jeśli dialog zostanie jakoś zamknięty przedwcześnie
+            sys.exit()
         # --- SEKCJA 3: Tworzenie modeli i łączenie z UI ---
         self.schedule_model = ScheduleTableModel(self, user_role=self.current_user_role)
         self.events_model = EventsTableModel(self)
@@ -3919,9 +3970,24 @@ class WorkScheduleWindow(QMainWindow):
 
     def check_for_new_data(self):
         """
-        Sprawdza, czy w bazie pojawiły się nowe dane grafiku lub zdarzeń,
-        i tworzy szczegółowe powiadomienie.
+        Sprawdza, czy w bazie pojawiły się nowe dane ORAZ czy nie jest wymagana aktualizacja.
         """
+        # Krok 1: Sprawdź wersję i flagę wymuszenia aktualizacji
+        version_info = check_application_version()
+
+        # Jeśli flaga force_update jest aktywna lub wersja aplikacji jest przestarzała
+        is_update_forced = version_info['force_update']
+        is_version_obsolete = parse_version(APP_VERSION) < parse_version(version_info['required_version'])
+
+        if is_update_forced or is_version_obsolete:
+            debug_print(
+                f"Wykryto polecenie zdalnej aktualizacji (force: {is_update_forced}, obsolete: {is_version_obsolete}). Zamykanie aplikacji.")
+            self.check_timer.stop()  # Zatrzymaj dalsze sprawdzanie
+            dialog = UpdateRequiredDialog(self)
+            dialog.exec()
+            sys.exit()  # Zakończ proces po zamknięciu dialogu
+            return
+        
         try:
             current_date_data = self.date_combo.currentData()
             if not current_date_data:
