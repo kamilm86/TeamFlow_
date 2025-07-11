@@ -1,8 +1,9 @@
 import pyodbc
-from config import DATABASE_CONFIG, ENVIRONMENT
+from config import DATABASE_CONFIG
 from datetime import datetime, timedelta, time
 import getpass
 from debug_utils import debug_print, log_warning, log_error
+from config import SQL_OBJECTS
 
 class DatabaseConnector:
     """
@@ -12,31 +13,33 @@ class DatabaseConnector:
     @staticmethod
     def get_connection():
         """
-        Zwraca połączenie do bazy danych na podstawie konfiguracji
+        Zwraca połączenie do bazy danych na podstawie konfiguracji z pliku config.ini
         """
-        db_config = DATABASE_CONFIG[ENVIRONMENT]
+        db_config = DATABASE_CONFIG
 
-        if db_config['ENGINE'] == 'QSQLITE':
-            pass
-        elif db_config['ENGINE'] == 'mssql':
-            # Połączenie do MS SQL Server
+        if db_config.get('engine') == 'mssql':
             connection_string = (
-                f"DRIVER={{{db_config['DRIVER']}}};"
-                f"SERVER={db_config['SERVER']};"
-                f"DATABASE={db_config['DATABASE']};"
+                f"DRIVER={{{db_config.get('driver')}}};"
+                f"SERVER={db_config.get('server')};"
+                f"DATABASE={db_config.get('database')};"
             )
 
-            # Dodaj uwierzytelnianie
-            if 'TRUSTED_CONNECTION' in db_config and db_config['TRUSTED_CONNECTION'] == 'yes':
+            # Sprawdź, jakiego uwierzytelniania użyć
+            if db_config.get('trusted_connection', 'no').lower() == 'yes':
                 connection_string += "Trusted_Connection=yes;"
             else:
-                connection_string += f"UID={db_config['USER']};PWD={db_config['PASSWORD']};"
+                user = db_config.get('user')
+                password = db_config.get('password')
+                if user and password:
+                    connection_string += f"UID={user};PWD={password};"
+                else:
+                    raise ValueError(
+                        "Konfiguracja bazy danych wymaga 'trusted_connection=yes' albo podania 'user' i 'password' w pliku config.ini.")
 
             conn = pyodbc.connect(connection_string)
             return conn
-
         else:
-            raise ValueError(f"Nieobsługiwany silnik bazy danych: {db_config['ENGINE']}")
+            raise ValueError(f"Nieobsługiwany silnik bazy danych: {db_config.get('engine')}")
 
     @staticmethod
     def execute_query(query, params=None, fetch_all=True):
@@ -106,7 +109,7 @@ def get_modifier_id():
         conn = DatabaseConnector.get_connection()
         cursor = conn.cursor()
 
-        query = "SELECT * FROM [dbo].[GetUserAppInfo](?)"
+        query = f"SELECT * FROM {SQL_OBJECTS['fn_getuserappinfo']}(?)"
 
         cursor.execute(query, (username,))
         result = cursor.fetchone()
