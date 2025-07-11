@@ -1,0 +1,42 @@
+[database]
+# Konfiguracja połączenia z bazą danych
+engine = mssql
+driver = ODBC Driver 17 for SQL Server
+server = localhost\SQLEXPRESS
+database = ZarzadzaniePraca
+trusted_connection = yes
+# Jeśli nie używasz 'trusted_connection', ustaw 'no' i podaj poniższe dane
+user =
+password =
+
+[sql_objects]
+# Nazwy funkcji, procedur, tabel i widoków używanych w aplikacji
+# Dzięki temu można je zmieniać bez modyfikacji kodu Python.
+
+# Funkcje
+fn_getscheduleauditdata = dbo.fn_GetScheduleAuditData
+fn_getforecastdata = dbo.fn_GetForecastData
+fn_getscheduledata = dbo.fn_GetScheduleData
+fn_geteventsdata = dbo.fn_GetEventsData
+fn_getuserappinfo = dbo.GetUserAppInfo
+
+# Procedury składowane
+p_importzmianynaserwer = dbo.p_P_ZZ_ImportZmianyNaSerwer_v3
+p_nadgodzinywstawienie = dbo.p_P_ZZ_NadgodzinyWstawienie_v3
+p_saveusersettings = dbo.SaveUserSettings
+p_getusersettings = dbo.GetUserSettings
+p_importujplanyurlopowe = dbo.p_P_ZZ_ImportujPlanyUrlopowe
+p_blokowaniesugestii = dbo.p_P_ZZ_BlokowanieSugestii
+p_publikowaniegrafiku = dbo.p_P_ZZ_PublikowanieGrafiku
+p_pobierzsugestieii = dbo.p_P_ZZ_PobierzSugestieII
+p_pobieraniesugestiiout = dbo.p_P_ZZ_PobieranieSugestiiOut
+
+# Tabele i widoki
+grafikipracy = dbo.p_T_ZZ_GrafikiPracy
+spotkania = dbo.p_t_zz_Spotkania
+szkolenia = dbo.p_t_zz_Szkolenia
+nadgodziny = dbo.p_t_zz_Nadgodziny
+datyblokowaniasugestii = dbo.p_T_ZZ_DatyBlokowaniaSugestii
+datypublikacjigrafiku = dbo.p_T_ZZ_DatyPublikacjiGrafiku
+konfiguracjazatrudnienie = dbo.p_T_DO_KonfiguracjaZatrudnienie
+dnipracujace = dbo.p_T_SL_KalendarzMiesiecy
