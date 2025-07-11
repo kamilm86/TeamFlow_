@@ -5,7 +5,7 @@ from db_connector import DatabaseConnector
 import os
 import getpass
 from debug_utils import debug_print, log_warning, log_error
-
+from config import SQL_OBJECTS
 
 class SettingsDatabase:
     """Klasa do obsługi bazy danych ustawień użytkownika w SQL Server"""
@@ -51,8 +51,8 @@ class SettingsDatabase:
                 log_to_console
             )
 
-            sql_query = """
-                EXEC SaveUserSettings
+            sql_query = f"""
+                EXEC {SQL_OBJECTS['p_saveusersettings']}
                     @login_windows=?, @theme=?, @font_family=?, @font_size=?,
                     @load_all_events=?, @visible_columns=?, @show_schedule_comment=?,\
                     @import_grupa=?, @import_funkcja=?,\
@@ -108,8 +108,7 @@ class SettingsDatabase:
         try:
             conn = DatabaseConnector.get_connection()
             cursor = conn.cursor()
-            # Upewnij się, że procedura GetUserSettings zwraca 14 kolumn
-            cursor.execute("EXEC GetUserSettings @login_windows=?", (login_windows,))
+            cursor.execute(f"EXEC {SQL_OBJECTS['p_getusersettings']} @login_windows=?", (login_windows,))
             result = cursor.fetchone()
             conn.close()
 
@@ -133,6 +132,6 @@ class SettingsDatabase:
                 return defaults
         except Exception as e:
             # Jeśli wystąpi jakikolwiek błąd, zaloguj go i zwróć domyślne
-            log_error(f"Błąd podczas ładowania ustawień dla '{login_windows}'. Sprawdź, czy procedura GetUserSettings zwraca 14 kolumn. Używam ustawień domyślnych.", exception=e)
+            log_error(f"Błąd podczas ładowania ustawień dla '{login_windows}'. Sprawdź, czy procedura  zwraca 14 kolumn. Używam ustawień domyślnych.", exception=e)
             debug_print(f"Użyte ustawienia domyślne z powodu błędu: {defaults}")
             return defaults
