@@ -1,114 +1,52 @@
-Jasne, to kluczowa zmiana, aby zapewnić, że analizy obsady odzwierciedlają rzeczywisty stan zespołu dostępnego do pracy. Wprowadzimy globalną modyfikację we wszystkich miejscach, gdzie obliczana jest obsada, aby wykluczyć osoby mające flagę DTN (długotrwała nieobecność) ustawioną na 1.
-Zmiany zostaną wprowadzone w pliku staffing_details_window.py, który jest odpowiedzialny za całe okno "Szczegóły Obsady".
-Kluczowa zmiana logiczna
-W każdej funkcji obliczeniowej dodamy na początku pętli warunek, który sprawdza flagę DTN pracownika. Jeśli flaga jest ustawiona na 1, pracownik ten zostanie całkowicie pominięty w dalszych obliczeniach dla danej analizy.
-Zakładam, że klucz słownika schedule_data (czyli user_key) ma następującą strukturę, gdzie DTN znajduje się na 5. pozycji (indeks 4):
-(Wydzial, Grupa, Przelozony, Uzytkownik_ID, **DTN**, ...)
-Zmodyfikowane funkcje w staffing_details_window.py
-Poniżej znajdują się wszystkie niezbędne, poprawione funkcje.
-1. Obsada godzinowa
-# W pliku staffing_details_window.py
-def _calculate_hourly_staffing(self, schedule_data, all_events):
-    """Oblicza obsadę godzina po godzinie dla każdego dnia."""
-    # ... (inicjalizacja zmiennych bez zmian) ...
-    hourly_staffing = defaultdict(lambda: [0] * 24)
-    events_map = self._get_events_duration_per_hour(all_events)
+# Plik: db_connector.py
 
-    for user_key, user_schedule in schedule_data.items():
-        # --- KLUCZOWA ZMIANA: Wykluczenie osób z DTN=1 ---
-        dtn_flag = user_key[4]
-        if dtn_flag == 1:
-            continue
-        # --- KONIEC KLUCZOWEJ ZMIANY ---
+    @staticmethod
+    def get_connection():
+        """
+        Zwraca połączenie do bazy danych, automatycznie testując listę sterowników
+        z pliku config.ini, aż znajdzie działający.
+        """
+        db_config = DATABASE_CONFIG
         
-        user_id = user_key[3]
-        korekta = float(user_schedule.get('korekta', 0.0) or 0.0)
+        if db_config.get('engine') != 'mssql':
+            raise ValueError(f"Nieobsługiwany silnik bazy danych: {db_config.get('engine')}")
 
-        for day, day_info in user_schedule.get('days', {}).items():
-            parsed = parse_symbol(day_info.get('symbol', ''))
-            # ... (reszta logiki bez zmian) ...
+        # Pobierz listę sterowników z konfiguracji
+        drivers_to_try = [driver.strip() for driver in db_config.get('driver_fallbacks', '').split(',')]
+        if not drivers_to_try:
+            raise ValueError("Brak zdefiniowanych sterowników w 'driver_fallbacks' w pliku config.ini.")
             
-    return hourly_staffing
+        base_connection_string = f"SERVER={db_config.get('server')};DATABASE={db_config.get('database')};"
 
-2. Obsada dzienna
-# W pliku staffing_details_window.py
-def _calculate_daily_staffing(self, schedule_data, all_events, option="all", location_filter=None):
-    """Oblicza obsadę dzienną, ignoruje godziny z symbolami specjalnymi."""
-    # ... (inicjalizacja zmiennych bez zmian) ...
-    summary_schedule = defaultdict(lambda: defaultdict(float))
-    summary_overtime = defaultdict(lambda: defaultdict(float))
-    summary_events = defaultdict(lambda: defaultdict(float))
+        # Dodaj informacje o uwierzytelnianiu
+        if db_config.get('trusted_connection', 'no').lower() == 'yes':
+            base_connection_string += "Trusted_Connection=yes;"
+        else:
+            user = db_config.get('user')
+            password = db_config.get('password')
+            if user and password:
+                base_connection_string += f"UID={user};PWD={password};"
+            else:
+                raise ValueError("Konfiguracja wymaga 'trusted_connection=yes' albo podania 'user' i 'password' w config.ini.")
 
-    for user_key, user_schedule in schedule_data.items():
-        # --- KLUCZOWA ZMIANA: Wykluczenie osób z DTN=1 ---
-        dtn_flag = user_key[4]
-        if dtn_flag == 1:
-            continue
-        # --- KONIEC KLUCZOWEJ ZMIANY ---
+        last_error = None
+        # Pętla próbująca połączyć się z każdym sterownikiem z listy
+        for driver in drivers_to_try:
+            try:
+                connection_string = f"DRIVER={{{driver}}};{base_connection_string}"
+                debug_print(f"Próba połączenia z użyciem sterownika: {driver}")
+                conn = pyodbc.connect(connection_string, timeout=5)
+                debug_print(f"Połączenie udane! Użyty sterownik: {driver}")
+                return conn # Jeśli połączenie się powiedzie, zwracamy je i kończymy funkcję
+            except pyodbc.InterfaceError as e:
+                last_error = e
+                debug_print(f"Nie udało się połączyć używając '{driver}': {e}")
+                continue # Jeśli sterownik nie pasuje, przejdź do następnego
 
-        user_id, wydzial = user_key[3], user_key[0] or "Brak"
-        korekta = float(user_schedule.get('korekta', 0.0) or 0.0)
-        
-        for day, day_info in user_schedule.get('days', {}).items():
-            # ... (reszta logiki bez zmian) ...
-
-    # Druga pętla dla nadgodzin również musi zostać poprawiona
-    user_to_dept = {k[3]: k[0] or "Brak" for k in schedule_data.keys() if k[4] != 1} # Wykluczamy tutaj również
-    for event in all_events:
-        # ... (reszta logiki bez zmian) ...
-
-    return final_summary
-
-3. Prognoza vs. Rzeczywistość
-# W pliku staffing_details_window.py
-def _calculate_actual_staffing_matrix(self, schedule_data, all_events, location_filter):
-    """Oblicza macierz rzeczywistej obsady godzina po godzinie."""
-    # ... (inicjalizacja zmiennych bez zmian) ...
-    actual_staffing = defaultdict(lambda: [0] * 24 * self._days_in_month)
-    location_map = self._get_daily_location_map(schedule_data)
-
-    for user_key, user_schedule in schedule_data.items():
-        # --- KLUCZOWA ZMIANA: Wykluczenie osób z DTN=1 ---
-        dtn_flag = user_key[4]
-        if dtn_flag == 1:
-            continue
-        # --- KONIEC KLUCZOWEJ ZMIANY ---
-        
-        user_id, wydzial = user_key[3], user_key[0] or "Brak"
-        korekta = float(user_schedule.get('korekta', 0.0) or 0.0)
-
-        for day, day_info in user_schedule.get('days', {}).items():
-            # ... (reszta logiki bez zmian) ...
-
-    # Druga pętla dla nadgodzin również musi zostać poprawiona
-    user_to_dept = {k[3]: k[0] or "Brak" for k in schedule_data.keys() if k[4] != 1} # Wykluczamy tutaj również
-    for event in all_events:
-        # ... (reszta logiki bez zmian) ...
-
-    return actual_staffing
-
-4. Analiza absencji
-# W pliku staffing_details_window.py
-def _calculate_absence_stats(self, schedule_data, absence_symbols):
-    """Oblicza statystyki absencji."""
-    # ... (inicjalizacja zmiennych bez zmian) ...
-    absence_stats = defaultdict(lambda: {'count': 0, 'days': 0})
-    total_work_days = 0
-    total_possible_work_days = 0
-
-    for user_key, user_schedule in schedule_data.items():
-        # --- KLUCZOWA ZMIANA: Wykluczenie osób z DTN=1 ---
-        dtn_flag = user_key[4]
-        if dtn_flag == 1:
-            continue
-        # --- KONIEC KLUCZOWEJ ZMIANY ---
-
-        for day, day_info in user_schedule.get('days', {}).items():
-            # ... (reszta logiki bez zmian) ...
-            
-    return {
-        'stats': sorted_stats,
-        'total_work_days': total_work_days,
-        'total_possible_work_days': total_possible_work_days
-    }
-
+        # Jeśli pętla zakończyła się i żadne połączenie się nie udało
+        log_error("Nie udało się nawiązać połączenia z bazą danych przy użyciu żadnego z dostępnych sterowników.", exception=last_error)
+        raise ConnectionError(
+            f"Nie można połączyć się z bazą danych. Sprawdź konfigurację w pliku config.ini "
+            f"oraz upewnij się, że przynajmniej jeden ze sterowników jest zainstalowany.\n\n"
+            f"Ostatni błąd: {last_error}"
+        ) from last_error
