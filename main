@@ -645,13 +645,12 @@ class WorkScheduleWindow(QMainWindow):
         self.setup_date_combo()
         self.date_combo.currentIndexChanged.connect(self.on_date_combo_changed)
 
-        current_data = self.date_combo.currentData()
-        if current_data:
-            year, month = current_data
-            self.update_data(year, month)
-            self.update_filter_dates()
-
+        # Wyczyść tabelę zdarzeń, aby na starcie była pusta
         self.clear_events_on_startup()
+
+        # Użyj timera, aby załadować dane PO pierwszym wyświetleniu okna.
+        # Małe opóźnienie (50ms) daje pewność, że okno zdąży się narysować.
+        QTimer.singleShot(50, self.load_initial_data)
 
         self.check_timer = QTimer(self);
         self.check_timer.timeout.connect(self.check_for_new_data);
@@ -1424,6 +1423,16 @@ class WorkScheduleWindow(QMainWindow):
 
         filter_layout.addWidget(text_edit, 1)  # Dodaj z rozciąganiem
         parent_layout.addLayout(filter_layout)
+
+    def load_initial_data(self):
+        """Uruchamia proces ładowania danych po pierwszym wyświetleniu okna."""
+        debug_print("Uruchamianie leniwego ładowania danych początkowych...")
+        current_data = self.date_combo.currentData()
+        if current_data:
+            year, month = current_data
+            # Używamy metody update_data z opcją asynchroniczną
+            self.update_data(year, month, use_async=True)
+            self.update_filter_dates()
 
     def setup_filter_combo(self, label_text, combo_name, parent_layout):
         """Konfiguruje filtr jako ComboBox z wielokrotnym wyborem"""
