@@ -139,11 +139,11 @@ coll = COLLECT(
 pyinstaller --name "TeamFlowApp" --onefile --windowed --add-data "config.ini;." main.py
 
 --------
-@echo off
+::@echo off
 setlocal enabledelayedexpansion
 
 :: ============================================================================
-:: KONFIGURACJA - ZMIEŃ TYLKO TE DWIE LINIE
+:: KONFIGURACJA - UPEWNIJ SIĘ, ŻE TE ŚCIEŻKI SĄ POPRAWNE
 :: ============================================================================
 set "SourceDir=\\serwer\zasob\Sciezka\Do\Aplikacji"
 set "AppName=TeamFlowApp.exe"
@@ -154,79 +154,85 @@ set "LocalDir=%TEMP%\TeamFlowAppCache"
 set "LocalAppPath=%LocalDir%\%AppName%"
 set "SourceAppPath=%SourceDir%\%AppName%"
 
-:: Utworzenie folderu lokalnego
-if not exist "%LocalDir%" mkdir "%LocalDir%" >nul 2>nul
+title (DIAGNOSTYKA) - Uruchamianie TeamFlowApp...
 
-title Uruchamianie TeamFlowApp...
-cls
 echo.
-echo  ======================================
-echo     Uruchamianie aplikacji TeamFlow
-echo  ======================================
+echo  ==============================================
+echo     TRYB DIAGNOSTYCZNY - Uruchamianie aplikacji
+echo  ==============================================
 echo.
-echo  Trwa sprawdzanie wersji, prosze czekac...
+
+echo [DIAG] Zmienna SourceDir: %SourceDir%
+echo [DIAG] Zmienna AppName:     %AppName%
+echo [DIAG] Pelna sciezka zrodlowa: %SourceAppPath%
+echo [DIAG] Pelna sciezka lokalna:  %LocalAppPath%
+echo.
 
 :: Sprawdzenie dostępności pliku na serwerze
+echo [DIAG] Sprawdzam, czy istnieje plik zrodlowy...
 if not exist "%SourceAppPath%" (
-    echo.
-    echo [BLAD] Nie mozna odnalezc pliku aplikacji na serwerze.
-    echo        Sprawdz polaczenie sieciowe, VPN lub poprawnosc sciezki.
-    pause
-    exit /b
+    echo [BLAD] Nie znaleziono pliku: %SourceAppPath%
+    echo        Sprawdz polaczenie sieciowe i VPN.
+    goto EndScript
 )
+echo [DIAG] Plik zrodlowy znaleziony.
+echo.
+
+:: Utworzenie folderu lokalnego
+if not exist "%LocalDir%" (
+    echo [DIAG] Tworze folder lokalny: %LocalDir%
+    mkdir "%LocalDir%"
+) else (
+    echo [DIAG] Folder lokalny juz istnieje.
+)
+echo.
 
 :: Pobranie wersji pliku z serwera
+echo [DIAG] Probuje pobrac wersje z pliku na serwerze...
 set "SourceVersion="
 for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command "(Get-Item -LiteralPath '%SourceAppPath%').VersionInfo.FileVersion"`) do set "SourceVersion=%%i"
+echo [DIAG] Wersja na serwerze: %SourceVersion%
+echo.
 
 :: Pobranie wersji pliku lokalnego
+echo [DIAG] Probuje pobrac wersje z pliku lokalnego...
 set "LocalVersion=0"
 if exist "%LocalAppPath%" (
     for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command "(Get-Item -LiteralPath '%LocalAppPath%').VersionInfo.FileVersion"`) do set "LocalVersion=%%i"
 )
+echo [DIAG] Wersja lokalna: %LocalVersion%
+echo.
 
 :: Porównanie wersji
 if "%SourceVersion%"=="%LocalVersion%" (
-    echo  Wersja aplikacji jest aktualna.
+    echo [INFO] Wersje sa identyczne. Przechodze do uruchomienia.
     goto LaunchApp
 )
 
-:: Kopiowanie, jeśli wersje się różnią lub pliku lokalnego nie ma
-if "%LocalVersion%"=="0" (
-    echo  Pobieranie aplikacji (pierwsze uruchomienie)...
-) else (
-    echo  Dostepna jest nowa wersja. Aktualizowanie...
-)
-echo  To moze potrwac chwile...
+echo [INFO] Wersje sa rozne. Rozpoczynam procedure kopiowania.
 echo.
 
-:: --- NOWA, BARDZIEJ NIEZAWODNA METODA KOPIOWANIA ---
-:: Użycie PowerShell do skopiowania pliku, co jest bardziej odporne na problemy sieciowe.
-powershell -NoProfile -Command "Copy-Item -Path '%SourceAppPath%' -Destination '%LocalAppPath%' -Force"
+:: --- KOMENDA KOPIOWANIA Z PEŁNYM WYJŚCIEM ---
+echo [DIAG] Uruchamiam komende kopiowania PowerShell z opcja -Verbose...
+powershell -NoProfile -Command "Copy-Item -Path '%SourceAppPath%' -Destination '%LocalAppPath%' -Force -Verbose"
 
-:: Sprawdzenie, czy kopiowanie się powiodło
-:: PowerShell ustawia %ERRORLEVEL% na 0 w razie sukcesu, a na 1 (lub więcej) w razie błędu.
+echo.
+echo [DIAG] Komenda kopiowania zakonczona. Kod bledu (ERRORLEVEL): %ERRORLEVEL%
+echo.
+
 if %ERRORLEVEL% EQU 0 (
-    echo  Aktualizacja zakonczona pomyslnie.
+    echo [SUKCES] Kopiowanie zakonczone pomyslnie (kod 0).
 ) else (
-    echo.
-    echo [BLAD] Wystapil blad podczas kopiowania nowej wersji.
-    echo        Mozliwy problem z uprawnieniami do odczytu pliku na serwerze.
-    echo        Skontaktuj sie z pomoca techniczna.
-    pause
-    exit /b
+    echo [BLAD] Kopiowanie zakonczylo sie bledem (kod %ERRORLEVEL%).
 )
 
 :LaunchApp
-:: Ostateczne sprawdzenie, czy plik istnieje lokalnie
-if not exist "%LocalAppPath%" (
-    echo [BLAD KRYTYCZNY] Plik aplikacji nie zostal poprawnie skopiowany.
-    pause
-    exit /b
-)
-
-echo  Uruchamianie aplikacji...
+echo [DIAG] Proba uruchomienia aplikacji z: %LocalAppPath%
 start "" "%LocalAppPath%"
-exit /b
 
+:EndScript
+echo.
+echo --- Koniec skryptu diagnostycznego ---
+echo Skopiuj cala zawartosc tego okna i wklej w odpowiedzi.
+pause
 
