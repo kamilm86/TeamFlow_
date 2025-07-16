@@ -14,6 +14,7 @@ from packaging.version import parse as parse_version # Do poprawnego porównywan
 from PySide6.QtGui import QShortcut, QKeySequence, QFont, QColor, QIcon, QPixmap, QPainter, QPolygon, QBrush, QPen, \
     QLinearGradient, QRadialGradient, QStandardItem, QStandardItemModel
 
+from data_provider import DataProvider
 from db_connector import DatabaseConnector, get_modifier_id, check_application_version
 from config import APP_VERSION
 from settings_dialog import AppSettingsDialog
@@ -527,153 +528,121 @@ class WorkScheduleWindow(QMainWindow):
         # Wczytujemy CAŁY słownik ustawień do atrybutu klasy
         self.user_settings = self.settings_db.load_settings()
 
-        # --- KLUCZOWA POPRAWKA: Konfiguracja logowania po wczytaniu ustawień ---
-        # Używamy zaimportowanej funkcji bezpośrednio tutaj
-        from debug_utils import setup_logging, debug_print
-
-        # Pobieramy ustawienia z wczytanego słownika.
-        # Jeśli jakiegoś klucza brakuje, Domyślnie logowanie jest WYŁĄCZONE.
-        log_to_file_setting = self.user_settings.get('log_to_file', False)
-        log_to_console_setting = self.user_settings.get('log_to_console', False)
-
-        # Konfigurujemy logowanie na podstawie faktycznych ustawień.
         setup_logging(
-            log_to_file=log_to_file_setting,
-            log_to_console=log_to_console_setting
+            log_to_file=self.user_settings.get('log_to_file', False),
+            log_to_console=self.user_settings.get('log_to_console', False)
         )
-        # --- KONIEC POPRAWKI ---
-
         debug_print(f"ZAŁADOWANE USTAWIENIA PRZY STARCIE: {self.user_settings}")
-        debug_print(f"Logowanie do pliku ustawiono na: {log_to_file_setting}")
-        debug_print(f"Logowanie do konsoli ustawiono na: {log_to_console_setting}")
 
-        # Dalsza część konstruktora __init__ pozostaje bez zmian
+        # Atrybuty potrzebne do samego UI, bez logiki biznesowej na starcie
         self.current_user_role = None
-        self.current_user_id = None
-        self.db_connector = DatabaseConnector()
-        # Używamy wczytanego słownika do konfiguracji
         self.is_dark_theme = self.user_settings.get('theme') == 'dark'
         self.current_font = self.user_settings.get('font_family')
         self.current_font_size = self.user_settings.get('font_size')
-        self.import_grupa = self.user_settings.get('import_grupa', 3)
-        self.import_funkcja = self.user_settings.get('import_funkcja', 1)
-        self.show_comment_column = self.user_settings.get('show_schedule_comment', False)
-        self.can_see_next_month = False
-
-        from data_provider import DataProvider
         self.data_provider = DataProvider()
-        self.statusBar().showMessage("Gotowy")
-
         self.column_definitions = ColumnDefinitions()
         self.employee_columns = self.column_definitions.get_ui_display_columns()
         self.default_visible_columns = self.column_definitions.DEFAULT_VISIBLE_COLUMNS
         saved_columns = self.user_settings.get('visible_columns')
         self.visible_columns = saved_columns if saved_columns else self.default_visible_columns.copy()
+        self.show_comment_column = self.user_settings.get('show_schedule_comment', False)
 
-        self.data_provider.data_changed.connect(self.on_data_changed)
+        # Przywrócenie brakujących atrybutów odczytywanych z ustawień
+        self.import_grupa = self.user_settings.get('import_grupa', 3)
+        self.import_funkcja = self.user_settings.get('import_funkcja', 1)
+
         self.setWindowTitle("TeamFlowApp")
         self.setGeometry(100, 100, 1600, 800)
 
-        # Inicjalizacja atrybutów
-        self.left_panel_visible = True
-        self._updating_selection = False
-        self._cross_filtering_enabled = True
-        self.raw_data = []
-        self.processed_data = {}
-        self.last_modification_date = None
-        self.all_events_data = []
-        self.user_info_map = {}
-
-        self._selection_timer = QTimer();
-        self._selection_timer.setSingleShot(True)
-        self._selection_timer.timeout.connect(self._handle_selection_change)
-
-        # Timery do opóźnionego filtrowania list
-        self._przelozony_filter_timer = QTimer()
-        self._przelozony_filter_timer.setSingleShot(True)
-        self._przelozony_filter_timer.setInterval(300)  # Opóźnienie 300 ms
-
-        self._uzytkownik_filter_timer = QTimer()
-        self._uzytkownik_filter_timer.setSingleShot(True)
-        self._uzytkownik_filter_timer.setInterval(300)  # Opóźnienie 300 ms
-
-        self._selection_debounce_delay = 50  # Opóźnienie w milisekundach (50ms)
-
-        # --- SEKCJA 2: Budowa UI i sprawdzenie uprawnień ---
+        # --- SEKCJA 2: Budowa UI w stanie początkowym (nieaktywnym) ---
         font = QFont(self.current_font, self.current_font_size)
         QApplication.setFont(font)
 
-        # Tworzymy UI
-        self.setup_ui()
+        # Inicjalizacja pustych modeli
+        self.schedule_model = ScheduleTableModel(self)
+        self.events_model = EventsTableModel(self)
 
-        # Sprawdzamy uprawnienia
+        # Tworzenie UI
+        self.setup_ui()
+        self.table.set_model(self.schedule_model)
+        self.events_table.setModel(self.events_model)
+
+        # Zastosowanie motywu i deaktywacja kontrolek
+        self.apply_theme_settings('dark' if self.is_dark_theme else 'light', self.current_font, self.current_font_size)
+        self.manage_ui_state(enabled=False)  # Wyłączamy wszystko na starcie
+
+        # --- SEKCJA 3: Podłączenie sygnału startowego ---
+        self.load_data_button.clicked.connect(self.start_full_initialization)
+
+        # Podłączamy pozostałe sygnały, które nie zależą od danych
+        self.shortcut_f1 = QShortcut(QKeySequence(Qt.Key_F1), self)
+        self.shortcut_f1.activated.connect(self.toggle_left_panel)
+        # Pozostałe sygnały, które mają sens dopiero po załadowaniu danych,
+        # zostaną podłączone w `start_full_initialization` lub już są podłączone.
+
+        debug_print("=== APLIKACJA URUCHOMIONA - OCZEKIWANIE NA AKCJĘ UŻYTKOWNIKA === ")
+
+    def manage_ui_state(self, enabled: bool):
+        """Włącza lub wyłącza kluczowe elementy interfejsu użytkownika."""
+        # Panel filtrów
+        if hasattr(self, '_left_panel'):
+            self._left_panel.setEnabled(enabled)
+
+        # Główne przyciski akcji
+        action_buttons = [
+            self.settings_button, self.refresh_button, self.show_audit_button,
+            self.staffing_details_button, self.schedule_control_button,
+            self.manage_columns_button, self.toggle_events_panel_button,
+            self.insert_change_button, self.insert_symbol_button,
+            self.cancel_delegation_button, self.add_overtime_button
+        ]
+        for button in action_buttons:
+            if hasattr(self, button.objectName()):
+                button.setEnabled(enabled)
+
+        # Wybór daty
+        if hasattr(self, 'date_combo'):
+            self.date_combo.setEnabled(enabled)
+
+    def start_full_initialization(self):
+        """Uruchamia pełną inicjalizację aplikacji po kliknięciu przycisku."""
+        self.load_data_button.setText("Sprawdzanie uprawnień...")
+        self.load_data_button.setEnabled(False)
+        QApplication.processEvents()
+
+        # Krok 1: Sprawdzenie uprawnień i wersji
         if not self.check_user_permissions():
-            # Sprawdzanie wersji, nawet jeśli uprawnienia się nie zgadzają
-            # Pozwala to uniknąć sytuacji, w której stary klient blokuje aktualizację
-            # chociaż nie może się nawet zalogować.
-            version_info = check_application_version()
-            if parse_version(APP_VERSION) < parse_version(version_info['required_version']):
-                dialog = UpdateRequiredDialog(self)
-                dialog.exec()
+            QMessageBox.critical(self, "Brak uprawnień", "Nie masz uprawnień do korzystania z aplikacji.")
+            self.close()
             return
+
         version_info = check_application_version()
         if parse_version(APP_VERSION) < parse_version(version_info['required_version']):
             dialog = UpdateRequiredDialog(self)
             dialog.exec()
-            # Bezpieczne wyjście, jeśli dialog zostanie jakoś zamknięty przedwcześnie
             sys.exit()
-        # --- SEKCJA 3: Tworzenie modeli i łączenie z UI ---
-        self.schedule_model = ScheduleTableModel(self, user_role=self.current_user_role)
-        self.events_model = EventsTableModel(self)
+            return
 
-        # --- KLUCZOWA ZMIANA KOLEJNOŚCI ---
-        # Konfigurujemy modele i delegatów DOPIERO po setup_ui i check_user_permissions
-        self.schedule_model.set_visible_columns(self.visible_columns)
-        self.schedule_model.set_show_comment_column(self.show_comment_column)
-        self.schedule_model.set_theme(self.is_dark_theme)
-        self.events_model.set_theme(self.is_dark_theme)
+        # Krok 2: Aktywacja interfejsu i ukrycie przycisku startowego
+        self.manage_ui_state(enabled=True)
+        self.load_data_button.setVisible(False)
+        self.refresh_button.setVisible(True)
 
-        self.table.set_model(self.schedule_model)
-        self.events_table.setModel(self.events_model)
-
-        # Ta metoda tworzy delegata na podstawie wczytanych self.user_settings
+        # ### POCZĄTEK ZMIANY - PRZYWRÓCENIE BRAKUJĄCYCH FUNKCJI ###
+        # Krok 3: Konfiguracja właściwości tabel i edycji (przeniesione z __init__)
+        # To musi być wykonane po sprawdzeniu uprawnień, ale przed załadowaniem danych,
+        # aby delegaty (ikony) i edycja były gotowe na przyjęcie danych.
         self.setup_table_properties()
-
-        # --- SEKCJA 4: Załadowanie danych i podłączenie sygnałów ---
         self.setup_keyboard_editing()
-        self.apply_theme_settings('dark' if self.is_dark_theme else 'light', self.current_font, self.current_font_size)
+        # ### KONIEC ZMIANY ###
+
+        # Krok 4: Wypełnienie dat i uruchomienie ładowania danych
         self.setup_date_combo()
-        self.date_combo.currentIndexChanged.connect(self.on_date_combo_changed)
+        self.load_initial_data()
 
-        # Wyczyść tabelę zdarzeń, aby na starcie była pusta
-        self.clear_events_on_startup()
-
-        # Użyj timera, aby załadować dane PO pierwszym wyświetleniu okna.
-        # Małe opóźnienie (50ms) daje pewność, że okno zdąży się narysować.
-        QTimer.singleShot(50, self.load_initial_data)
-
-        self.check_timer = QTimer(self);
-        self.check_timer.timeout.connect(self.check_for_new_data);
-        self.check_timer.start(60000)
-
-        # Skróty klawiszowe
-        self.shortcut_f1 = QShortcut(QKeySequence(Qt.Key_F1), self);
-        self.shortcut_f1.activated.connect(self.toggle_left_panel)
-        self.shortcut_f2 = QShortcut(QKeySequence(Qt.Key_F2), self);
-        self.shortcut_f2.activated.connect(self.toggle_events_panel)
-        self.shortcut_f12 = QShortcut(QKeySequence(Qt.Key_F12), self);
-        self.shortcut_f12.activated.connect(self.clear_special_symbol_from_selected_cells)
-        self.shortcut_f3 = QShortcut(QKeySequence(Qt.Key_F3), self);
-        self.shortcut_f3.activated.connect(self.show_insert_change_dialog)
-        self.shortcut_f4 = QShortcut(QKeySequence(Qt.Key_F4), self);
-        self.shortcut_f4.activated.connect(self.show_insert_symbol_dialog)
-        self.shortcut_f5 = QShortcut(QKeySequence(Qt.Key_F5), self);
-        self.shortcut_f5.activated.connect(self.cancel_delegations)
-
-        debug_print("=== APLIKACJA TEAMFLOW URUCHOMIONA ===")
-        debug_print(f"Użytkownik: {self.current_user_app_id} ({self.current_user_role})")
-        debug_print(f"Motyw: {'ciemny' if self.is_dark_theme else 'jasny'}")
-        debug_print(f"Czcionka: {self.current_font} {self.current_font_size}pt")
+        # Krok 5: Uruchomienie cyklicznego sprawdzania zmian
+        if hasattr(self, 'check_timer'):
+            self.check_timer.start(60000)
 
     def show_staffing_details_window(self):
         # Sprawdź, czy wybrany jest miesiąc
@@ -1209,13 +1178,17 @@ class WorkScheduleWindow(QMainWindow):
         date_label = QLabel("Miesiąc:")
         self.date_combo = QComboBox()
         self.date_combo.setStyleSheet(AppStyles.get_combobox_style("dark" if self.is_dark_theme else "light"))
-        self.setup_date_combo()
-        # self.date_combo.currentIndexChanged.connect(self.on_date_combo_changed)
+        # self.setup_date_combo()
+
+        self.load_data_button = QPushButton("🚀 Pobierz Dane")
+        self.load_data_button.setToolTip("Kliknij, aby połączyć się z bazą i załadować dane.")
+        self.load_data_button.setStyleSheet(AppStyles.get_button_style("dark" if self.is_dark_theme else "light"))
 
         self.refresh_button = QPushButton("Odśwież dane")
         self.refresh_button.clicked.connect(self.refresh_data)
         self.refresh_button.setToolTip("Odśwież dane (używa async loading dla lepszej wydajności)")
-        self.refresh_button.setStyleSheet(AppStyles.get_button_style("dark" if self.is_dark_theme else "light"))  #
+        self.refresh_button.setStyleSheet(AppStyles.get_button_style("dark" if self.is_dark_theme else "light"))
+        self.refresh_button.setVisible(False)  # Początkowo niewidoczny
 
         self.show_audit_button = QPushButton("Historia Zmian")
         self.show_audit_button.clicked.connect(self.show_audit_log_window)
@@ -1229,6 +1202,7 @@ class WorkScheduleWindow(QMainWindow):
         self.staffing_details_button.setToolTip("Pokaż szczegóły obsady godzinowej")
 
         top_bar_layout.addWidget(self.settings_button)
+        top_bar_layout.addWidget(self.load_data_button)
         top_bar_layout.addWidget(date_label)
         top_bar_layout.addWidget(self.date_combo)
         top_bar_layout.addWidget(self.refresh_button)
