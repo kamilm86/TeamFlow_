@@ -137,3 +137,100 @@ coll = COLLECT(
 ----------------------------------------------------------------------
 
 pyinstaller --name "TeamFlowApp" --onefile --windowed --add-data "config.ini;." main.py
+
+--------
+@echo off
+setlocal enabledelayedexpansion
+
+:: ============================================================================
+:: KONFIGURACJA - ZMIEŃ TYLKO TE DWIE LINIE
+:: ============================================================================
+
+:: 1. Podaj pełną ścieżkę sieciową do FOLDERU, w którym znajduje się aplikacja
+set "SourceDir=\\serwer\zasob\Sciezka\Do\Aplikacji"
+
+:: 2. Podaj dokładną nazwę pliku wykonywalnego .exe Twojej aplikacji
+set "AppName=TeamFlowApp.exe"
+
+:: ============================================================================
+:: Dalsza część skryptu - nie wymaga modyfikacji
+:: ============================================================================
+
+:: Definicja ścieżki lokalnej w katalogu tymczasowym użytkownika
+set "LocalDir=%TEMP%\TeamFlowAppCache"
+set "LocalAppPath=%LocalDir%\%AppName%"
+set "SourceAppPath=%SourceDir%\%AppName%"
+
+:: Utworzenie lokalnego folderu, jeśli nie istnieje
+if not exist "%LocalDir%" mkdir "%LocalDir%"
+
+title Uruchamianie TeamFlowApp...
+cls
+echo.
+echo  ======================================
+echo     Uruchamianie aplikacji TeamFlow
+echo  ======================================
+echo.
+echo  Trwa przygotowywanie, prosze czekac...
+echo.
+
+:: --- Sprawdzanie wersji ---
+set "SourceVersion="
+set "LocalVersion="
+
+:: Sprawdź, czy plik źródłowy jest dostępny
+if not exist "%SourceAppPath%" (
+    echo [BLAD] Nie mozna odnalezc pliku aplikacji na serwerze.
+    echo Sprawdz polaczenie sieciowe i VPN.
+    pause
+    exit
+)
+
+:: Pobierz wersję pliku z serwera za pomocą PowerShell
+for /f "delims=" %%i in ('powershell -Command "(Get-Item '%SourceAppPath%').VersionInfo.FileVersion"') do set "SourceVersion=%%i"
+
+:: Pobierz wersję pliku lokalnego, jeśli istnieje
+if exist "%LocalAppPath%" (
+    for /f "delims=" %%i in ('powershell -Command "(Get-Item '%LocalAppPath%').VersionInfo.FileVersion"') do set "LocalVersion=%%i"
+)
+
+:: Porównaj wersje
+if "%SourceVersion%"=="%LocalVersion%" (
+    echo  Wersja aplikacji jest aktualna. Uruchamianie...
+    goto LaunchApp
+)
+
+:: --- Kopiowanie pliku z paskiem postępu ---
+if "%LocalVersion%"=="" (
+    echo  Aplikacja nie zostala jeszcze zainstalowana lokalnie.
+) else (
+    echo  Wykryto nowa wersje (%SourceVersion%).
+)
+echo  Trwa aktualizacja, to moze potrwac chwile...
+echo.
+
+:: Użycie robocopy do skopiowania pliku.
+:: Flagi /NJH /NJS /NFL /NDL /NP ukrywają wszystkie dodatkowe informacje,
+:: pozostawiając tylko pasek postępu (jeśli jest generowany).
+:: > nul ukrywa resztę komunikatów.
+robocopy "%SourceDir%" "%LocalDir%" "%AppName%" /NJH /NJS /NFL /NDL /NP > nul
+
+:: Sprawdzenie, czy kopiowanie się powiodło
+if not errorlevel 1 (
+    echo.
+    echo  Aktualizacja zakonczona. Uruchamianie...
+    goto LaunchApp
+) else (
+    echo [BLAD] Wystapil blad podczas kopiowania nowej wersji.
+    echo Sprobuj ponownie lub skontaktuj sie z pomoca techniczna.
+    pause
+    exit
+)
+
+
+:LaunchApp
+:: Uruchomienie aplikacji z lokalnej kopii
+start "" "%LocalAppPath%"
+exit
+
+
