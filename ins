@@ -139,6 +139,7 @@ coll = COLLECT(
 pyinstaller --name "TeamFlowApp" --onefile --windowed --add-data "config.ini;." main.py
 
 --------
+
 @echo off
 setlocal enabledelayedexpansion
 
@@ -149,10 +150,12 @@ set "SourceDir=\\serwer\zasob\Sciezka\Do\Aplikacji"
 set "AppName=TeamFlowApp.exe"
 :: ============================================================================
 
+:: Definicje ścieżek
 set "LocalDir=%TEMP%\TeamFlowAppCache"
 set "LocalAppPath=%LocalDir%\%AppName%"
 set "SourceAppPath=%SourceDir%\%AppName%"
 
+:: Utworzenie folderu lokalnego
 if not exist "%LocalDir%" mkdir "%LocalDir%" >nul 2>nul
 
 title Uruchamianie TeamFlowApp...
@@ -209,18 +212,20 @@ if not exist "%LocalAppPath%" (
 )
 
 echo.
-echo  Proba uruchomienia aplikacji z lokalizacji:
-echo  %LocalAppPath%
-echo.
+echo  Uruchamianie aplikacji...
 
-:: Zmiana bieżącego katalogu na katalog aplikacji
-cd /d "%LocalDir%"
+:: ============================================================================
+:: OSTATECZNA POPRAWKA W TYM MIEJSCU
+:: ============================================================================
+:: Zamiast zmieniać katalog i uruchamiać po nazwie,
+:: podajemy komendzie START pełną ścieżkę do pliku w zmiennej LocalAppPath.
+:: To jest najbardziej niezawodna metoda.
 
-:: Uruchomienie aplikacji
-start "" "%AppName%"
+start "" "%LocalAppPath%"
 
-echo.
-echo --- Koniec skryptu ---
-pause
+:: ============================================================================
+
+exit /b
+
 
 
