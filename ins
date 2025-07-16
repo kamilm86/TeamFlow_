@@ -155,7 +155,7 @@ set "LocalAppPath=%LocalDir%\%AppName%"
 set "SourceAppPath=%SourceDir%\%AppName%"
 
 :: Utworzenie folderu lokalnego
-if not exist "%LocalDir%" mkdir "%LocalDir%"
+if not exist "%LocalDir%" mkdir "%LocalDir%" >nul 2>nul
 
 title Uruchamianie TeamFlowApp...
 cls
@@ -165,24 +165,24 @@ echo     Uruchamianie aplikacji TeamFlow
 echo  ======================================
 echo.
 echo  Trwa sprawdzanie wersji, prosze czekac...
-echo.
 
 :: Sprawdzenie dostępności pliku na serwerze
 if not exist "%SourceAppPath%" (
+    echo.
     echo [BLAD] Nie mozna odnalezc pliku aplikacji na serwerze.
-    echo Sprawdz polaczenie sieciowe, VPN lub poprawnosc sciezki w skrypcie.
+    echo        Sprawdz polaczenie sieciowe, VPN lub poprawnosc sciezki.
     pause
     exit /b
 )
 
 :: Pobranie wersji pliku z serwera
 set "SourceVersion="
-for /f "usebackq delims=" %%i in (`powershell -Command "(Get-Item -LiteralPath '%SourceAppPath%').VersionInfo.FileVersion"`) do set "SourceVersion=%%i"
+for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command "(Get-Item -LiteralPath '%SourceAppPath%').VersionInfo.FileVersion"`) do set "SourceVersion=%%i"
 
 :: Pobranie wersji pliku lokalnego
 set "LocalVersion=0"
 if exist "%LocalAppPath%" (
-    for /f "usebackq delims=" %%i in (`powershell -Command "(Get-Item -LiteralPath '%LocalAppPath%').VersionInfo.FileVersion"`) do set "LocalVersion=%%i"
+    for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command "(Get-Item -LiteralPath '%LocalAppPath%').VersionInfo.FileVersion"`) do set "LocalVersion=%%i"
 )
 
 :: Porównanie wersji
@@ -197,26 +197,28 @@ if "%LocalVersion%"=="0" (
 ) else (
     echo  Dostepna jest nowa wersja. Aktualizowanie...
 )
-
+echo  To moze potrwac chwile...
 echo.
 
-:: Użycie ROBOCOPY do skopiowania pliku z ukrytymi szczegółami
-robocopy "%SourceDir%" "%LocalDir%" "%AppName%" /NJH /NJS /NFL /NDL /NP > nul
+:: --- NOWA, BARDZIEJ NIEZAWODNA METODA KOPIOWANIA ---
+:: Użycie PowerShell do skopiowania pliku, co jest bardziej odporne na problemy sieciowe.
+powershell -NoProfile -Command "Copy-Item -Path '%SourceAppPath%' -Destination '%LocalAppPath%' -Force"
 
-:: POPRAWKA: Prawidłowe sprawdzanie wyniku Robocopy.
-:: Kody od 0 do 3 oznaczają sukces (pliki skopiowane, brak zmian lub dodatkowe pliki).
-if %ERRORLEVEL% LSS 4 (
+:: Sprawdzenie, czy kopiowanie się powiodło
+:: PowerShell ustawia %ERRORLEVEL% na 0 w razie sukcesu, a na 1 (lub więcej) w razie błędu.
+if %ERRORLEVEL% EQU 0 (
     echo  Aktualizacja zakonczona pomyslnie.
-    goto LaunchApp
 ) else (
-    echo [BLAD] Wystapil blad podczas kopiowania nowej wersji (Kod: %ERRORLEVEL%).
-    echo Sprobuj ponownie lub skontaktuj sie z pomoca techniczna.
+    echo.
+    echo [BLAD] Wystapil blad podczas kopiowania nowej wersji.
+    echo        Mozliwy problem z uprawnieniami do odczytu pliku na serwerze.
+    echo        Skontaktuj sie z pomoca techniczna.
     pause
     exit /b
 )
 
 :LaunchApp
-:: Ostateczne sprawdzenie, czy plik istnieje lokalnie przed uruchomieniem
+:: Ostateczne sprawdzenie, czy plik istnieje lokalnie
 if not exist "%LocalAppPath%" (
     echo [BLAD KRYTYCZNY] Plik aplikacji nie zostal poprawnie skopiowany.
     pause
