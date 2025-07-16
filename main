@@ -1333,7 +1333,7 @@ class WorkScheduleWindow(QMainWindow):
         filters_layout.addWidget(self.uzytkownik_list)
 
         # ZMIANA: Etykieta i nazwa widgetu zmienione na "Lokalizacja Domyślna"
-        self.add_horizontal_filter("Lokalizacja Domyślna:", "default_location_combo", filters_layout)
+        self.add_horizontal_filter("LD:", "default_location_combo", filters_layout)
 
         self.add_horizontal_filter("System Pracy:", "system_czasu_pracy_combo", filters_layout)
         self.add_horizontal_filter("Rola:", "rola_combo", filters_layout)
