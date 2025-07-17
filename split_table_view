@@ -1,155 +1,106 @@
-
 from PySide6.QtWidgets import (QWidget, QTableView, QVBoxLayout, QHBoxLayout,
                                QSplitter, QHeaderView, QAbstractItemView, QScrollBar, QSizePolicy,
                                QTableWidgetSelectionRange)
 from PySide6.QtCore import Qt, Signal, QItemSelectionModel, QEvent, QModelIndex, QItemSelection, QTimer
 from debug_utils import debug_print, log_warning, log_error
+from styles import AppStyles
 
 
 class SplitTableView(QWidget):
     """
     Widget zawierający dwa zsynchronizowane widoki tabeli - tabelę pracowników i tabelę grafiku.
-    POPRAWIONA WERSJA z lepszą synchronizacją przewijania i wysokości wierszy.
     """
-    # Sygnał emitowany przy zmianie zaznaczenia w dowolnej tabeli
     selection_changed = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
 
-        # Konfiguracja podstawowa
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
         self.main_layout.setSpacing(0)
 
-        # Splitter do podziału na dwie tabele
         self.splitter = QSplitter(Qt.Horizontal)
 
-        # Tworzenie i konfiguracja tabeli pracowników
+        # --- ZMIANA: Powrót do standardowych nagłówków QHeaderView ---
         self.employees_view = QTableView()
+        self.schedule_view = QTableView()
+        # --- KONIEC ZMIANY ---
+
         self.employees_view.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.employees_view.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.employees_view.verticalHeader().setVisible(True)
         self.employees_view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-        # Ustaw jednolitą wysokość wierszy
         self.employees_view.verticalHeader().setDefaultSectionSize(25)
         self.employees_view.verticalHeader().setMinimumSectionSize(25)
         self.employees_view.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
 
-        # Ustawienia nagłówka dla tabeli pracowników
         self.employees_view.horizontalHeader().setFixedHeight(35)
         self.employees_view.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self.employees_view.horizontalHeader().setSectionsClickable(True)
 
-        # Tworzenie i konfiguracja tabeli grafiku
-        self.schedule_view = QTableView()
         self.schedule_view.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.schedule_view.setSelectionBehavior(QAbstractItemView.SelectItems)
         self.schedule_view.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.schedule_view.verticalHeader().setVisible(False)
         self.schedule_view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
 
-        # Ustaw jednolitą wysokość wierszy - taką samą jak w tabeli pracowników
         self.schedule_view.verticalHeader().setDefaultSectionSize(25)
         self.schedule_view.verticalHeader().setMinimumSectionSize(25)
         self.schedule_view.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
 
-        # Ustawienia nagłówka dla tabeli grafiku
         self.schedule_view.horizontalHeader().setFixedHeight(35)
-
-        # Wyłącz sortowanie w tabeli grafiku
         self.schedule_view.setSortingEnabled(False)
-
-        # Wyłącz możliwość klikania w nagłówki tabeli grafiku
         self.schedule_view.horizontalHeader().setSectionsClickable(False)
 
-        # TERAZ ustawiamy paski przewijania (po utworzeniu obu tabel)
-        # PROSTE ROZWIĄZANIE: Zawsze widoczne poziome paski przewijania
         self.employees_view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
         self.employees_view.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-
-        # Tabela grafiku też ma zawsze widoczny poziomy pasek
         self.schedule_view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
 
-        # Dodawanie tabel do splittera
         self.splitter.addWidget(self.employees_view)
         self.splitter.addWidget(self.schedule_view)
-
-        # Dodawanie splittera do głównego layoutu
         self.main_layout.addWidget(self.splitter)
 
-        # Ustawia, który panel ma się rozciągać, a który ma trzymać rozmiar.
-        # Wartość '0' oznacza brak rozciągania, '1' oznacza rozciąganie.
-        self.splitter.setStretchFactor(0, 0)  # Lewy panel (index 0) nie rozciąga się
-        self.splitter.setStretchFactor(1, 1)  # Prawy panel (index 1) wypełnia resztę
-        # --- KONIEC NOWEGO KODU ---
+        self.splitter.setStretchFactor(0, 0)
+        self.splitter.setStretchFactor(1, 1)
 
-        # Flaga blokująca nieskończone pętle
         self._is_updating = False
-
-        # Referencja do modelu
         self._model = None
-
-        # UPROSZCZONY timer do synchronizacji
         self._sync_timer = QTimer()
         self._sync_timer.setSingleShot(True)
         self._sync_timer.timeout.connect(self._delayed_sync_heights)
 
-        # UPROSZCZONE ukrywanie tylko pionowego paska przewijania
         self._setup_simple_scrollbar_hiding()
-
-        # Konfiguracja menu kontekstowego dla nagłówków
         self.schedule_view.horizontalHeader().setContextMenuPolicy(Qt.CustomContextMenu)
 
     def set_header_height(self, height):
-        """Ustawia stałą wysokość dla obu nagłówków poziomych."""
         self.employees_view.horizontalHeader().setFixedHeight(height)
         self.schedule_view.horizontalHeader().setFixedHeight(height)
 
     def set_schedule_columns_width(self):
-        """Ustawia stałą szerokość wszystkich kolumn dni w tabeli grafiku"""
         if not self._model:
             return
-
-        # Pobierz całkowitą liczbę kolumn w widoku (łącznie z sumą RBH)
         total_columns = self.schedule_view.model().columnCount()
-
-        # Ustaw szerokość 60px dla wszystkich kolumn dni (wszystkie oprócz ostatniej)
         for col in range(total_columns - 1):
             self.schedule_view.setColumnWidth(col, 60)
-
-        # Szerokość kolumny sumy pozostaje większa
         self.schedule_view.setColumnWidth(total_columns - 1, 70)
 
     def rowCount(self):
-        """Kompatybilność wsteczna z SplitTableWidget"""
         return self.employees_view.model().rowCount() if self.employees_view.model() else 0
 
     def columnCount(self):
-        """Kompatybilność wsteczna z SplitTableWidget"""
         if not self.employees_view.model():
             return 0
         return self.employees_view.model().columnCount() + self.schedule_view.model().columnCount()
 
     def _connect_signals(self):
-        """UPROSZCZONE łączenie sygnałów między komponentami"""
-        # TYLKO podstawowa synchronizacja przewijania
         self._sync_vertical_scrollbars()
-
-        # Synchronizacja zaznaczenia - tylko jeśli model istnieje
         if self.employees_view.model() and self.schedule_view.model():
             self._sync_row_selection()
-
-        # Podstawowa synchronizacja wysokości wierszy
         self._force_sync_heights()
 
     def _setup_simple_scrollbar_hiding(self):
-        """UPROSZCZONA METODA: Ukrywa pionowy i poziomy pasek w tabeli pracowników"""
-        # Ukryj pionowy pasek przewijania
         self.employees_view.verticalScrollBar().setStyleSheet("QScrollBar:vertical { width: 0px; }")
-
-        # Ukryj poziomy pasek przewijania wizualnie, ale zachowaj przestrzeń
         h_scrollbar = self.employees_view.horizontalScrollBar()
         if h_scrollbar:
             h_scrollbar.setStyleSheet("""
@@ -167,18 +118,12 @@ class SplitTableView(QWidget):
                     border: none;
                 }
             """)
-            # Zablokuj przewijanie poziome w tabeli pracowników
             h_scrollbar.setRange(0, 0)
 
-        debug_print("Ukryto paski przewijania w tabeli pracowników (zachowano przestrzeń)")
-
     def _sync_vertical_scrollbars(self):
-        """UPROSZCZONA synchronizacja przewijania pionowego między tabelami"""
-        # Pobierz paski przewijania pionowe
         employees_vbar = self.employees_view.verticalScrollBar()
         schedule_vbar = self.schedule_view.verticalScrollBar()
 
-        # Funkcje do synchronizacji przewijania pionowego
         def sync_employees_to_schedule():
             if not self._is_updating:
                 self._is_updating = True
@@ -191,417 +136,183 @@ class SplitTableView(QWidget):
                 employees_vbar.setValue(schedule_vbar.value())
                 self._is_updating = False
 
-        # Połącz zdarzenia przewijania pionowego
         employees_vbar.valueChanged.connect(sync_employees_to_schedule)
         schedule_vbar.valueChanged.connect(sync_schedule_to_employees)
-
-        # NOWE: Synchronizacja poziomych pasków przewijania dla wysokości
         self._sync_horizontal_scrollbar_visibility()
 
     def _sync_row_selection(self):
-        """Synchronizuje zaznaczenie wiersza między tabelami"""
-        # Sprawdź, czy modele selekcji istnieją
         if not self.employees_view.selectionModel() or not self.schedule_view.selectionModel():
-            debug_print("Ostrzeżenie: Modele selekcji nie są jeszcze dostępne")
             return
-
-        # Połącz sygnały zaznaczenia
-        self.employees_view.selectionModel().selectionChanged.connect(
-            lambda selected, deselected: self._on_employees_selection_changed(selected, deselected)
-        )
-        self.schedule_view.selectionModel().selectionChanged.connect(
-            lambda selected, deselected: self._on_schedule_selection_changed(selected, deselected)
-        )
+        self.employees_view.selectionModel().selectionChanged.connect(self._on_employees_selection_changed)
+        self.schedule_view.selectionModel().selectionChanged.connect(self._on_schedule_selection_changed)
 
     def _on_employees_selection_changed(self, selected, deselected):
-        """Obsługuje zmianę zaznaczenia w tabeli pracowników - ZOPTYMALIZOWANE"""
         if not self._is_updating:
             self._is_updating = True
-
             try:
-                # Pobierz zaznaczone wiersze z tabeli pracowników
                 selection = self.employees_view.selectionModel().selection()
-
-                # Wyczyść zaznaczenie w tabeli grafiku
                 self.schedule_view.selectionModel().clearSelection()
-
-                # Zaznacz te same wiersze w tabeli grafiku
                 for index_range in selection:
-                    top_row = index_range.top()
-                    bottom_row = index_range.bottom()
-
-                    # Zaznacz wszystkie komórki w wierszu dla tabeli grafiku
-                    for row in range(top_row, bottom_row + 1):
-                        # Tworzenie zakresu dla całego wiersza
+                    for row in range(index_range.top(), index_range.bottom() + 1):
                         left = self.schedule_view.model().index(row, 0)
                         right = self.schedule_view.model().index(row, self.schedule_view.model().columnCount() - 1)
                         row_selection = QItemSelectionModel.Select | QItemSelectionModel.Rows
                         self.schedule_view.selectionModel().select(QItemSelection(left, right), row_selection)
-
-                # ZMIANA: Emituj sygnał tylko raz na końcu
                 self.selection_changed.emit()
-
             finally:
                 self._is_updating = False
 
     def _on_schedule_selection_changed(self, selected, deselected):
-        """Obsługuje zmianę zaznaczenia w tabeli grafiku - ZOPTYMALIZOWANE"""
         if not self._is_updating:
             self._is_updating = True
-
             try:
-                # Pobierz unikalne zaznaczone wiersze z tabeli grafiku
-                rows = set()
-                for index in self.schedule_view.selectionModel().selectedIndexes():
-                    rows.add(index.row())
-
-                # Wyczyść zaznaczenie w tabeli pracowników
+                rows = set(index.row() for index in self.schedule_view.selectionModel().selectedIndexes())
                 self.employees_view.selectionModel().clearSelection()
-
-                # Zaznacz te same wiersze w tabeli pracowników
                 for row in rows:
-                    # Tworzenie zakresu dla całego wiersza
                     left = self.employees_view.model().index(row, 0)
                     right = self.employees_view.model().index(row, self.employees_view.model().columnCount() - 1)
                     row_selection = QItemSelectionModel.Select | QItemSelectionModel.Rows
-                    selection = QItemSelection(left, right)
-                    self.employees_view.selectionModel().select(selection, row_selection)
-
-                # ZMIANA: Emituj sygnał tylko raz na końcu
+                    self.employees_view.selectionModel().select(QItemSelection(left, right), row_selection)
                 self.selection_changed.emit()
-
             finally:
                 self._is_updating = False
 
     def _on_scrollbar_range_changed(self, min_val, max_val):
-        """NOWA METODA: Reaguje na zmiany zakresu paska przewijania (co może oznaczać zmianę widoczności)"""
-        # Gdy zakres się zmienia, może to oznaczać że pasek stał się widoczny/niewidoczny
-        # Wymuszamy ponowną synchronizację wysokości z opóźnieniem
         self._sync_timer.start(50)
 
     def _force_sync_heights(self, row_height=25):
-        """
-        UPROSZCZONA METODA: Wymusza synchronizację wysokości wierszy.
-        WERSJA POPRAWIONA: Przyjmuje wysokość jako parametr.
-        """
         if not self.employees_view.model():
             return
-
-        # Ustaw jednolitą wysokość dla wszystkich wierszy na podstawie parametru
         row_count = self.employees_view.model().rowCount()
-
         for row in range(row_count):
             self.employees_view.setRowHeight(row, row_height)
             self.schedule_view.setRowHeight(row, row_height)
 
-        debug_print(f"Zsynchronizowano wysokość {row_count} wierszy na {row_height}px")
-
     def _delayed_sync_heights(self):
-        """NOWA METODA: Opóźniona synchronizacja wysokości wierszy"""
         self._force_sync_heights()
 
-    # USUNIĘTO eventFilter który powodował problemy
-
     def set_model(self, model):
-        """POPRAWIONA metoda ustawiania modelu z lepszą synchronizacją"""
         self._model = model
-
         if model:
-            # Pobierz liczbę kolumn pracowników
             visible_columns = model.get_visible_columns()
             employee_columns_count = len(visible_columns)
-
-            debug_print(
-                f"SplitTableView.set_model - widoczne kolumny: {visible_columns}, liczba: {employee_columns_count}")
-
-            # Ustaw model dla obu tabel
             self.employees_view.setModel(model)
             self.schedule_view.setModel(model)
-
-            # Pobierz styl motywu z rodzica, jeśli dostępny
             if hasattr(self.parent(), 'is_dark_theme'):
                 theme = "dark" if self.parent().is_dark_theme else "light"
-                from styles import AppStyles
                 self.employees_view.setStyleSheet(AppStyles.get_table_style(theme))
                 self.schedule_view.setStyleSheet(AppStyles.get_table_style(theme))
-
-            # Ukryj/pokaż odpowiednie kolumny
             for col in range(model.columnCount()):
                 if col < employee_columns_count:
-                    # Kolumny pracowników widoczne w employees_view, ukryte w schedule_view
                     self.employees_view.showColumn(col)
                     self.schedule_view.hideColumn(col)
                 else:
-                    # Kolumny grafiku ukryte w employees_view, widoczne w schedule_view
                     self.employees_view.hideColumn(col)
                     self.schedule_view.showColumn(col)
-
-            # WAŻNA ZMIANA: Najpierw dostosuj szerokości kolumn
             self._set_column_widths()
-
-            # Dostosuj szerokość tabeli pracowników do zawartości
-            # self.adjust_employees_table_width()
-
-            # Włącz sortowanie dla tabeli pracowników
             self.employees_view.setSortingEnabled(True)
-
-            # UPROSZCZONE: Podstawowa synchronizacja bez złożonych timerów
             self._force_sync_heights()
-
-            # Podłącz sygnały
             self._connect_signals()
 
     def adjust_employees_table_width(self):
-        """
-        Finalna metoda, która oblicza wymaganą szerokość lewego panelu
-        i ustawia podział w splitterze, teraz z dodatkową diagnostyką.
-        """
-        debug_print("--- URUCHOMIONO: adjust_employees_table_width ---")
-
-        if not self._model:
-            debug_print("BŁĄD: Model nie istnieje. Zatrzymuję.")
-            return
-
-        # 1. Oblicz docelową szerokość lewego panelu
+        if not self._model: return
         target_width = 0
         visible_cols = self._model.get_visible_columns()
-        debug_print(f"Widoczne kolumny do zsumowania: {visible_cols}")
-
         for col_idx in range(len(visible_cols)):
             if not self.employees_view.isColumnHidden(col_idx):
-                col_width = self.employees_view.columnWidth(col_idx)
-                target_width += col_width
-                debug_print(f"  - Kolumna {col_idx} (ID: {visible_cols[col_idx]}), szerokość: {col_width}px. Suma: {target_width}px")
-
-        # 2. Dodaj stałą szerokość dla nagłówka pionowego
-        vertical_header_width = 40
-        target_width += vertical_header_width
-        debug_print(f"Szerokość po dodaniu nagłówka pionowego ({vertical_header_width}px): {target_width}px")
-
-        # 3. Pobierz aktualną, całkowitą szerokość splittera
+                target_width += self.employees_view.columnWidth(col_idx)
+        target_width += 40
         total_splitter_width = self.splitter.width()
-        debug_print(f"Odczytana całkowita szerokość splittera: {total_splitter_width}px")
-
-        # 4. Oblicz szerokość dla prawego panelu
         right_panel_width = total_splitter_width - target_width
-        debug_print(f"Obliczona szerokość prawego panelu (całość - lewy): {right_panel_width}px")
-
-        # 5. Ustaw ostateczne, początkowe rozmiary dla obu paneli
-        final_sizes = [target_width, right_panel_width]
-        debug_print(f"Wywołuję self.splitter.setSizes({final_sizes})")
-        self.splitter.setSizes(final_sizes)
-        debug_print("--- ZAKOŃCZONO: adjust_employees_table_width ---")
+        self.splitter.setSizes([target_width, right_panel_width])
 
     def setRowCount(self, count):
-        """Kompatybilność wsteczna z SplitTableWidget"""
-        if hasattr(self, 'employees_view') and self.employees_view.model():
-            if hasattr(self._model, 'setRowCount'):
-                self._model.setRowCount(count)
+        if hasattr(self, 'employees_view') and self.employees_view.model() and hasattr(self._model, 'setRowCount'):
+            self._model.setRowCount(count)
 
     def selectedRanges(self):
-        """Zwraca wybrane zakresy z widoku tabeli"""
         if hasattr(self, 'schedule_view') and self.schedule_view:
-            # Pobierz zaznaczone indeksy z modelu selekcji
             selection_model = self.schedule_view.selectionModel()
             if selection_model:
                 selected_indexes = selection_model.selectedIndexes()
-
-                # Przekształć zaznaczone indeksy na zakresy QTableWidgetSelectionRange
                 if selected_indexes:
-                    # Grupuj zaznaczone indeksy według wierszy
                     row_groups = {}
                     for index in selected_indexes:
                         row = index.row()
-                        if row not in row_groups:
-                            row_groups[row] = []
+                        if row not in row_groups: row_groups[row] = []
                         row_groups[row].append(index.column())
-
-                    # Utwórz zakresy zaznaczenia
                     ranges = []
                     for row, columns in row_groups.items():
                         if columns:
-                            min_col = min(columns)
-                            max_col = max(columns)
-                            # Utwórz zakres zaznaczenia
-                            selection_range = QTableWidgetSelectionRange(
-                                row, min_col, row, max_col
-                            )
-                            ranges.append(selection_range)
-
+                            min_col, max_col = min(columns), max(columns)
+                            ranges.append(QTableWidgetSelectionRange(row, min_col, row, max_col))
                     return ranges
-
-        # Jeśli nie udało się pobrać zakresów, zwróć pustą listę
         return []
 
     def _set_column_widths(self):
-        """Ustawia szerokości kolumn na podstawie informacji z modelu"""
-        if not self._model:
-            return
-
-        # Pobierz informacje o kolumnach
+        if not self._model: return
         visible_columns = self._model.get_visible_columns()
-
-        # Pobierz informacje o wszystkich kolumnach
         all_columns = self._model._employee_columns
-
-        # Utwórz słownik dla szybkiego wyszukiwania
-        column_info = {col_id: (col_name, col_width) for col_id, col_name, col_width in all_columns}
-
-        # Ustaw szerokości kolumn pracowników
+        column_info = {col_id: (name, width) for col_id, name, width in all_columns}
         for col_idx, col_id in enumerate(visible_columns):
-            # Znajdź informacje o kolumnie (szerokość)
-            if col_id in column_info:
-                col_name, width = column_info[col_id]
-                self.employees_view.setColumnWidth(col_idx, width)
-                debug_print(f"Ustawiono szerokość kolumny {col_id} ({col_name}) na {width}px")
-            else:
-                # Domyślna szerokość jeśli nie znaleziono
-                self.employees_view.setColumnWidth(col_idx, 100)
-                debug_print(f"Nie znaleziono informacji o kolumnie {col_id}, ustawiono domyślną szerokość 100px")
-
-        # Ustaw stałą szerokość dla kolumn dni miesiąca
+            width = column_info.get(col_id, (None, 100))[1]
+            self.employees_view.setColumnWidth(col_idx, width)
         days_in_month = self._model._days_in_month if hasattr(self._model, '_days_in_month') else 31
-        for day in range(1, days_in_month + 1):
-            col = day - 1  # Indeks kolumny w schedule_view
-            self.schedule_view.setColumnWidth(col, 65)  # Ustaw szerokość kolumny dnia na 65px
-
-        # Ustaw szerokość kolumny sumy RBH (przedostatnia kolumna)
+        for day in range(1, days_in_month + 2):
+            self.schedule_view.setColumnWidth(day - 1, 65)
         if days_in_month > 0:
-            self.schedule_view.setColumnWidth(days_in_month, 50)  # Kolumna sumy ma 50px
-
-        # Ustaw szerokość kolumny bilansu RBH (ostatnia kolumna)
-        if days_in_month > 0:
-            self.schedule_view.setColumnWidth(days_in_month + 1, 50)  # Kolumna bilansu ma 50px
+            self.schedule_view.setColumnWidth(days_in_month, 50)
+            self.schedule_view.setColumnWidth(days_in_month + 1, 50)
 
     def get_selected_rows(self):
-        """Zwraca listę indeksów zaznaczonych wierszy"""
-        # Pobierz zaznaczone indeksy z tabeli pracowników
-        indexes = self.employees_view.selectionModel().selectedIndexes()
-
-        # Wyodrębnij unikalne wiersze
-        rows = sorted(set(index.row() for index in indexes))
-
-        return rows
+        return sorted(set(index.row() for index in self.employees_view.selectionModel().selectedIndexes()))
 
     def get_selected_cells(self):
-        """Zwraca listę zaznaczonych komórek z tabeli grafiku"""
-        # Pobierz zaznaczone indeksy z tabeli grafiku
-        indexes = self.schedule_view.selectionModel().selectedIndexes()
-
-        # Konwertuj indeksy na krotki (wiersz, kolumna)
-        cells = [(index.row(), index.column()) for index in indexes]
-
-        return cells
+        return [(index.row(), index.column()) for index in self.schedule_view.selectionModel().selectedIndexes()]
 
     def get_data_for_selected_cells(self):
-        """Zwraca dane dla zaznaczonych komórek z tabeli grafiku"""
-        if not self._model:
-            return []
-
-        # Pobierz zaznaczone indeksy z tabeli grafiku
+        if not self._model: return []
         indexes = self.schedule_view.selectionModel().selectedIndexes()
-
-        # Debugging
-        debug_print(f"Pobieranie danych dla {len(indexes)} zaznaczonych indeksów")
-
-        # Pobierz dane dla każdego indeksu
         cells_data = []
         for index in indexes:
             data = self._model.data(index, Qt.UserRole)
-            if data:
-                # Tylko dla kolumn dni (pomijamy dane pracowników)
-                if isinstance(data, dict) and 'date_str' in data and 'uzytkownik_id' in data:
-                    cells_data.append(data)
-                    debug_print(f"Dodano dane komórki: {data.get('uzytkownik_id')}, {data.get('date_str')}")
-
+            if data and isinstance(data, dict) and 'date_str' in data and 'uzytkownik_id' in data:
+                cells_data.append(data)
         return cells_data
 
     def clear(self):
-        """Czyści widoki"""
-        # Usuń bieżące zaznaczenie
-        if self.employees_view.selectionModel():
-            self.employees_view.selectionModel().clearSelection()
-
-        if self.schedule_view.selectionModel():
-            self.schedule_view.selectionModel().clearSelection()
+        if self.employees_view.selectionModel(): self.employees_view.selectionModel().clearSelection()
+        if self.schedule_view.selectionModel(): self.schedule_view.selectionModel().clearSelection()
 
     def set_data_at(self, row, col, value):
-        """Ustawia dane w modelu na podanej pozycji"""
-        if not self._model:
-            return False
-
+        if not self._model: return False
         index = self._model.index(row, col)
-        if not index.isValid():
-            return False
-
-        return self._model.setData(index, value, Qt.EditRole)
+        return self._model.setData(index, value, Qt.EditRole) if index.isValid() else False
 
     def get_global_column_index(self, table, column):
-        """Konwertuje lokalny indeks kolumny do globalnego indeksu w modelu"""
-        if not self._model:
-            return -1
-
-        if table == 'employees':
-            # Dla tabeli pracowników indeks lokalny = indeks globalny
-            return column
-        elif table == 'schedule':
-            # Dla tabeli grafiku dodaj offset równy liczbie kolumn pracowników
-            return column + len(self._model.get_visible_columns())
-
+        if not self._model: return -1
+        if table == 'employees': return column
+        if table == 'schedule': return column + len(self._model.get_visible_columns())
         return -1
 
     def update_cell_icon(self, row, day, has_meeting=False, has_training=False, has_overtime=False):
-        """Aktualizuje ikony w komórce grafiku"""
-        if not self._model:
-            return
-
-        # Oblicz globalny indeks kolumny
-        visible_columns = len(self._model.get_visible_columns())
-        col = visible_columns + day - 1  # -1 bo dni są numerowane od 1
-
-        # Pobierz bieżące dane komórki
+        if not self._model: return
+        col = len(self._model.get_visible_columns()) + day - 1
         index = self._model.index(row, col)
         cell_data = self._model.data(index, Qt.UserRole)
-
-        if not isinstance(cell_data, dict):
-            return
-
-        # Aktualizuj dane w modelu
+        if not isinstance(cell_data, dict): return
         updated_data = cell_data.copy()
-        updated_data.update({
-            'has_meeting': has_meeting,
-            'has_training': has_training,
-            'has_overtime': has_overtime
-        })
-
-        # Użyj niestandardowej metody modelu do aktualizacji ikon
+        updated_data.update({'has_meeting': has_meeting, 'has_training': has_training, 'has_overtime': has_overtime})
         if hasattr(self._model, 'update_cell_data'):
             self._model.update_cell_data(index, updated_data)
-
-        # Odśwież widok
         self.schedule_view.update(index)
 
     def _sync_horizontal_scrollbar_visibility(self):
-        """NOWA METODA: Synchronizuje widoczność poziomych pasków przewijania"""
         employees_hbar = self.employees_view.horizontalScrollBar()
         schedule_hbar = self.schedule_view.horizontalScrollBar()
-
-        def sync_horizontal_visibility():
-            """Synchronizuje widoczność poziomych pasków przewijania"""
+        def sync_visibility():
             if schedule_hbar and employees_hbar:
-                # Jeśli prawy pasek jest widoczny, pokaż lewy (ale nieaktywny)
-                if schedule_hbar.isVisible():
-                    employees_hbar.show()
-                else:
-                    employees_hbar.hide()
-
-        # Monitoruj zmiany widoczności prawego paska przewijania
+                employees_hbar.setVisible(schedule_hbar.isVisible())
         if schedule_hbar:
-            # Użyj sygnału rangeChanged jako wskaźnika zmiany widoczności
-            schedule_hbar.rangeChanged.connect(lambda: QTimer.singleShot(10, sync_horizontal_visibility))
-
-        # Wywołaj początkową synchronizację
-        sync_horizontal_visibility()
-
-        debug_print(
-            "Skonfigurowano synchronizację poziomych pasków przewijania")  # split_table_view.py - POPRAWIONA WERSJA z lepszą synchronizacją
+            schedule_hbar.rangeChanged.connect(lambda: QTimer.singleShot(10, sync_visibility))
+        sync_visibility()
