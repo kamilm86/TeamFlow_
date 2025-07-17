@@ -1,11 +1,10 @@
-# Plik: settings_db.py
-# UWAGA: ZASTĄP CAŁĄ ZAWARTOŚĆ SWOJEGO PLIKU PONIŻSZYM KODEM
-
+# -*- coding: utf-8 -*-
 from db_connector import DatabaseConnector
 import os
 import getpass
 from debug_utils import debug_print, log_warning, log_error
 from config import SQL_OBJECTS
+
 
 class SettingsDatabase:
     """Klasa do obsługi bazy danych ustawień użytkownika w SQL Server"""
@@ -24,7 +23,7 @@ class SettingsDatabase:
                       show_schedule_comment=False, login_windows=None, import_grupa=3, import_funkcja=1,
                       show_special_symbol=True, show_location_symbol=True,
                       special_symbol_position='top_left', location_symbol_position='bottom_left',
-                      log_to_file=False, log_to_console=False):
+                      log_to_file=True, log_to_console=False):
         if login_windows is None:
             login_windows = self.get_current_login_windows()
 
@@ -54,29 +53,15 @@ class SettingsDatabase:
             sql_query = f"""
                 EXEC {SQL_OBJECTS['p_saveusersettings']}
                     @login_windows=?, @theme=?, @font_family=?, @font_size=?,
-                    @load_all_events=?, @visible_columns=?, @show_schedule_comment=?,\
-                    @import_grupa=?, @import_funkcja=?,\
-                    @show_special_symbol=?, @show_location_symbol=?,\
-                    @special_symbol_position=?, @location_symbol_position=?, \
+                    @load_all_events=?, @visible_columns=?, @show_schedule_comment=?,
+                    @import_grupa=?, @import_funkcja=?,
+                    @show_special_symbol=?, @show_location_symbol=?,
+                    @special_symbol_position=?, @location_symbol_position=?, 
                     @log_to_file=?, @log_to_console=?
             """
 
-            # --- DODANE LOGOWANIE DLA DIAGNOSTYKI ---
-            # Zastąp placeholdery '?' rzeczywistymi wartościami dla celów debugowania.
-            # UWAGA: To jest TYLKO do debugowania! Nigdy nie buduj zapytań SQL przez konkatenację stringów
-            # w produkcyjnym kodzie z uwagi na bezpieczeństwo (SQL Injection).
-            # pyodbc obsługuje parametryzację poprawnie i bezpiecznie.
-            debug_log_query = sql_query.replace("\\", "")  # Usuń backslashe, jeśli są w stringu
-
-            # Tworzymy stringa z parametrami do wyświetlenia w logu
-            # Bezpieczniej jest przedstawić parametry jako listę, a nie wbudowywać je w query.
-            # Zbudowanie pełnego stringa z zapytaniem jest trudne z pyodbc,
-            # bo parametry są wysyłane oddzielnie.
-            # Zamiast tego, zalogujemy zapytanie i listę parametrów.
-
-            debug_print(f"SQL do wykonania: {debug_log_query.strip()}")
+            debug_print(f"SQL do wykonania: {sql_query.strip()}")
             debug_print(f"Parametry do SQL: {params_to_save}")
-            # --- KONIEC DODANEGO LOGOWANIA ---
 
             cursor.execute(sql_query, params_to_save)
 
@@ -90,7 +75,7 @@ class SettingsDatabase:
 
     def load_settings(self, login_windows=None):
         """Ładuje ustawienia użytkownika, w tym parametry importu, wyglądu ikon oraz debugowania."""
-        from debug_utils import log_error, debug_print # Dodatkowy import
+        from debug_utils import log_error, debug_print  # Dodatkowy import
 
         if login_windows is None:
             login_windows = self.get_current_login_windows()
@@ -101,7 +86,7 @@ class SettingsDatabase:
             'import_grupa': 3, 'import_funkcja': 1,
             'show_special_symbol': True, 'show_location_symbol': True,
             'special_symbol_position': 'top_left', 'location_symbol_position': 'top_right',
-            'log_to_file': False,
+            'log_to_file': True,
             'log_to_console': False
         }
 
@@ -124,14 +109,13 @@ class SettingsDatabase:
                     'special_symbol_position': str(result[10]), 'location_symbol_position': str(result[11]),
                     'log_to_file': bool(result[12]), 'log_to_console': bool(result[13])
                 })
-                # Jeśli wszystko się uda, zwróć wczytane ustawienia
                 return settings
             else:
-                # Jeśli nie ma ustawień dla użytkownika, zwróć domyślne
                 debug_print("Nie znaleziono ustawień dla użytkownika w bazie. Używam ustawień domyślnych.")
                 return defaults
         except Exception as e:
-            # Jeśli wystąpi jakikolwiek błąd, zaloguj go i zwróć domyślne
-            log_error(f"Błąd podczas ładowania ustawień dla '{login_windows}'. Sprawdź, czy procedura  zwraca 14 kolumn. Używam ustawień domyślnych.", exception=e)
+            log_error(
+                f"Błąd podczas ładowania ustawień dla '{login_windows}'. Sprawdź, czy procedura zwraca 14 kolumn. Używam ustawień domyślnych.",
+                exception=e)
             debug_print(f"Użyte ustawienia domyślne z powodu błędu: {defaults}")
             return defaults
