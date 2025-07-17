@@ -2,6 +2,7 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushB
                                QListWidget, QListWidgetItem, QAbstractItemView, QCheckBox, QFrame)
 from PySide6.QtCore import Qt
 from styles import AppStyles
+from business_rules import BusinessRules  # ZMIANA: Dodano import
 
 
 class ColumnSelectDialog(QDialog):
@@ -23,7 +24,6 @@ class ColumnSelectDialog(QDialog):
 
         self.user_role = user_role
 
-        # Przekazujemy stan checkboxa bezpośrednio do metody budującej UI
         self.setup_ui(is_comment_column_checked)
         self.apply_dialog_theme()
 
@@ -34,8 +34,6 @@ class ColumnSelectDialog(QDialog):
 
         self.setStyleSheet(AppStyles.get_dialog_style(actual_theme))
 
-        # --- NOWY KOD DO STYLIZACJI PÓL WYBORU ---
-        # Definiujemy kolory w zależności od motywu
         if actual_theme == "dark":
             unchecked_bg = AppStyles.DARK_BACKGROUND_MAIN
             unchecked_border = AppStyles.DARK_BORDER_PRIMARY
@@ -47,7 +45,6 @@ class ColumnSelectDialog(QDialog):
             accent_color = AppStyles.ACCENT_COLOR_LIGHT
             accent_hover = AppStyles.ACCENT_COLOR_LIGHT_HOVER
 
-        # Kompletny styl dla QListWidget z uwzględnieniem wskaźników
         list_style = f"""
             QListWidget {{
                 background-color: {AppStyles.DARK_BACKGROUND_CONTROLS if actual_theme == 'dark' else AppStyles.LIGHT_BACKGROUND_CONTROLS};
@@ -60,26 +57,12 @@ class ColumnSelectDialog(QDialog):
                 border: 1px solid {accent_color};
                 border-radius: 2px;
             }}
-            QListWidget::indicator {{
-                width: 13px;
-                height: 13px;
-                border-radius: 3px;
-            }}
-            QListWidget::indicator:unchecked {{
-                background-color: {unchecked_bg};
-                border: 1px solid {unchecked_border};
-            }}
-            QListWidget::indicator:unchecked:hover {{
-                border: 1px solid {accent_color};
-            }}
-            QListWidget::indicator:checked {{
-                background-color: {accent_color};
-                border: 1px solid {accent_hover};
-                image: none;
-            }}
+            QListWidget::indicator {{ width: 13px; height: 13px; border-radius: 3px; }}
+            QListWidget::indicator:unchecked {{ background-color: {unchecked_bg}; border: 1px solid {unchecked_border}; }}
+            QListWidget::indicator:unchecked:hover {{ border: 1px solid {accent_color}; }}
+            QListWidget::indicator:checked {{ background-color: {accent_color}; border: 1px solid {accent_hover}; image: none; }}
         """
         self.columns_list.setStyleSheet(list_style)
-        # --- KONIEC NOWEGO KODU ---
 
         button_style = AppStyles.get_button_style(actual_theme)
         self.move_up_button.setStyleSheet(button_style)
@@ -119,7 +102,8 @@ class ColumnSelectDialog(QDialog):
 
         self.komentarz_checkbox = QCheckBox("Pokaż kolumnę 'Komentarz do Grafiku'")
         self.komentarz_checkbox.setChecked(is_comment_checked)
-        self.komentarz_checkbox.setVisible(self.user_role == "Pracownik WPR")
+        # ZMIANA: Sprawdzanie uprawnień za pomocą BusinessRules
+        self.komentarz_checkbox.setVisible(BusinessRules.has_permission(self.user_role, 'view_schedule_comment_column'))
         main_layout.addWidget(self.komentarz_checkbox)
 
         buttons_layout = QHBoxLayout()
@@ -195,7 +179,6 @@ class ColumnSelectDialog(QDialog):
                 selected_columns.append(col_id)
         return selected_columns
 
-    # ZMIENIONA NAZWA METODY
     def get_comment_column_state(self):
         """Zwraca stan zaznaczenia checkboxa komentarza."""
         return self.komentarz_checkbox.isChecked()
