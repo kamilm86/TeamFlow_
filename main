@@ -79,11 +79,12 @@ class ScheduleKeyboardFilter(QObject):
         if key in (Qt.Key_Plus, Qt.Key_Equal, Qt.Key_Minus):
             self._clear_digit_buffer()
             self._clear_char_buffer()
-            self._handle_hour_modification(key)
+            if BusinessRules.has_permission(self.main_window.current_user_role, 'schedule_keyboard_edit'):
+                self._handle_hour_modification(key)
             return True
 
         role = self.main_window.current_user_role
-        can_edit_hours_symbols = role in ["Pracownik WPR", "Lider OUT"]
+        can_edit_hours_symbols = BusinessRules.has_permission(role, 'schedule_keyboard_edit')
 
         is_digit_key = (Qt.Key_0 <= key <= Qt.Key_9)
         is_char_key = (Qt.Key_A <= key <= Qt.Key_Z)
@@ -106,7 +107,8 @@ class ScheduleKeyboardFilter(QObject):
             return True
 
         if is_delete_key:
-            self.main_window.clear_selected_cells()
+            if BusinessRules.has_permission(role, 'action_delete_symbol'):
+                self.main_window.clear_selected_cells()
             self._clear_digit_buffer()
             self._clear_char_buffer()
             return True
@@ -124,9 +126,6 @@ class ScheduleKeyboardFilter(QObject):
 
     def _handle_hour_modification(self, key):
         """Obsługuje zwiększanie/zmniejszanie liczby godzin (+/-/=)."""
-        if self.main_window.current_user_role not in ["Pracownik WPR", "Lider OUT"]:
-            return
-
         selected_cells_data = self.main_window.table.get_data_for_selected_cells()
         if not selected_cells_data: return
         if not self.main_window._can_modify_cells(selected_cells_data): return
@@ -138,7 +137,7 @@ class ScheduleKeyboardFilter(QObject):
         for cell_data in selected_cells_data:
             system_pracy = cell_data.get('system_czasu_pracy', '')
 
-            if not system_pracy or system_pracy.strip().lower() != 'r\u00f3wnowa\u017cny':
+            if not system_pracy or system_pracy.strip().lower() != 'równoważny':
                 skipped_count += 1
                 continue
 
@@ -150,8 +149,7 @@ class ScheduleKeyboardFilter(QObject):
                 if parsed.get('work_hours') is None: continue
 
                 current_hours = int(parsed['work_hours'])
-                new_hours = min(12, current_hours + 1) if key in (Qt.Key_Plus, Qt.Key_Equal) else max(1,
-                                                                                                      current_hours - 1)
+                new_hours = min(12, current_hours + 1) if key in (Qt.Key_Plus, Qt.Key_Equal) else max(1, current_hours - 1)
                 if new_hours == current_hours: continue
 
                 new_symbol = build_symbol(
@@ -170,22 +168,21 @@ class ScheduleKeyboardFilter(QObject):
                     updated_info.append((user_id, date_str, result.get('returned_symbol')))
                 else:
                     error_messages.append(
-                        f"\ud83d\udc64 {cell_data.get('uzytkownik_dane')}: {result.get('message', 'B\u0142\u0105d zapisu.')}")
+                        f"🧑 {cell_data.get('uzytkownik_dane')}: {result.get('message', 'Błąd zapisu.')}")
             except (ValueError, TypeError) as e:
-                log_warning(f"B\u0142\u0105d modyfikacji godzin dla symbolu '{current_symbol}': {e}")
-                error_messages.append(f"\ud83d\udc64 {cell_data.get('uzytkownik_dane')}: B\u0142\u0105d aplikacji: {e}")
+                log_warning(f"Błąd modyfikacji godzin dla symbolu '{current_symbol}': {e}")
+                error_messages.append(f"🧑 {cell_data.get('uzytkownik_dane')}: Błąd aplikacji: {e}")
 
         if updated_info:
             self.main_window._update_cells_with_new_symbols(updated_info)
             self.main_window.schedule_model.layoutChanged.emit()
-            self.main_window.statusBar().showMessage(f"Zmieniono liczb\u0119 godzin dla {len(updated_info)} kom\u00f3rek.", 4000)
+            self.main_window.statusBar().showMessage(f"Zmieniono liczbę godzin dla {len(updated_info)} komórek.", 4000)
 
         if error_messages:
-            QMessageBox.warning(self.main_window, "B\u0142\u0119dy podczas zapisu",
-                                "Wyst\u0105pi\u0142y nast\u0119puj\u0105ce b\u0142\u0119dy:\\n\\n" + "\\n".join(error_messages))
+            QMessageBox.warning(self.main_window, "Błędy podczas zapisu",
+                                "Wystąpiły następujące błędy:\n\n" + "\n".join(error_messages))
         elif not updated_info and skipped_count > 0 and skipped_count == len(selected_cells_data):
-            self.main_window.statusBar().showMessage(f"Operacja dozwolona tylko dla Zmianowego Systemu Czasu Pracy.",
-                                                     5000)
+            self.main_window.statusBar().showMessage(f"Operacja dozwolona tylko dla Zmianowego Systemu Czasu Pracy.", 5000)
 
     def _handle_char_input(self, char: str):
         self._clear_digit_buffer()
@@ -205,7 +202,7 @@ class ScheduleKeyboardFilter(QObject):
         if symbol in self.main_window.get_all_valid_symbols():
             self.main_window.apply_symbol_from_keyboard(symbol)
         else:
-            self.main_window.statusBar().showMessage(f"B\u0142\u0105d: Symbol '{symbol}' jest nieprawid\u0142owy!", 4000)
+            self.main_window.statusBar().showMessage(f"Błąd: Symbol '{symbol}' jest nieprawidłowy!", 4000)
 
     def _handle_digit_input(self, digit: int):
         self._clear_char_buffer()
@@ -250,6 +247,7 @@ class ScheduleKeyboardFilter(QObject):
         selected_cells_data = self.main_window.table.get_data_for_selected_cells()
         if not selected_cells_data: return False
         return self.main_window._can_modify_cells(selected_cells_data)
+
 
 class CustomMultiComboBox(QComboBox):
     """Niestandardowy ComboBox z obsługa wielokrotnego wyboru (wersja poprawiona)."""
@@ -537,11 +535,9 @@ class WorkScheduleWindow(QMainWindow):
         self.setup_date_combo()
         self.load_initial_data()
 
-        # Uruchomienie timera sprawdzającego zmiany w bazie
         self.check_timer = QTimer(self)
         self.check_timer.timeout.connect(self.check_for_new_data)
-        self.check_timer.start(60000)  # Sprawdzaj co 60 sekund
-
+        self.check_timer.start(60000)
 
     def check_if_update_is_required(self) -> bool:
         """Sprawdza wersję aplikacji i zwraca True, jeśli wymagana jest aktualizacja."""
@@ -554,25 +550,19 @@ class WorkScheduleWindow(QMainWindow):
         return False
 
     def show_staffing_details_window(self):
-        # Leniwe importowanie
         from staffing_details_window import StaffingDetailsWindow
-
         current_data = self.date_combo.currentData()
         if not current_data:
             QMessageBox.warning(self, "Brak danych", "Proszę wybrać miesiąc, aby wyświetlić szczegóły obsady.",
                                 QMessageBox.Ok)
             return
-
         year, month = current_data
-
         if self.staffing_details_win and not self.staffing_details_win.isHidden():
             self.staffing_details_win.activateWindow()
             self.staffing_details_win.raise_()
             self.staffing_details_win.set_current_theme(self.is_dark_theme)
             self.staffing_details_win.update_for_new_month_or_filters(year, month)
-            debug_print(f"StaffingDetailsWindow: Aktywowano i zaktualizowano istniejące okno dla {year}-{month}.")
         else:
-            debug_print(f"StaffingDetailsWindow: Tworzenie nowego okna dla {year}-{month}.")
             self.staffing_details_win = StaffingDetailsWindow(
                 self, self.data_provider, year, month, self.import_grupa, self.import_funkcja
             )
@@ -581,14 +571,12 @@ class WorkScheduleWindow(QMainWindow):
 
     def setup_keyboard_editing(self):
         """Konfiguruje edycję klawiatury dla komórek grafiku"""
-        allowed_roles = ["Pracownik WPR", "Lider OUT"]
-        if not hasattr(self, 'current_user_role') or self.current_user_role not in allowed_roles:
-            debug_print(
-                f"Edycja klawiatury wyłączona - rola '{getattr(self, 'current_user_role', 'Brak')}' nie ma uprawnień.")
+        # ZMIANA: Sprawdzanie uprawnień przez BusinessRules
+        if not BusinessRules.has_permission(self.current_user_role, 'schedule_keyboard_edit'):
+            debug_print(f"Edycja klawiatury wyłączona - rola '{self.current_user_role}' nie ma uprawnień.")
             return
 
         self.keyboard_filter = ScheduleKeyboardFilter(self)
-
         if hasattr(self, 'table') and hasattr(self.table, 'schedule_view'):
             self.table.schedule_view.installEventFilter(self.keyboard_filter)
             debug_print(f"Włączono edycję klawiatury dla roli: {self.current_user_role}")
@@ -604,27 +592,21 @@ class WorkScheduleWindow(QMainWindow):
     def quick_edit_selected_cells(self, start_hour):
         """Szybka edycja zaznaczonych komórek z klawiatury"""
         try:
-            allowed_roles = ["Pracownik WPR", "Lider OUT"]
-            if not hasattr(self, 'current_user_role') or self.current_user_role not in allowed_roles:
+            # ZMIANA: Sprawdzanie uprawnień przez BusinessRules
+            if not BusinessRules.has_permission(self.current_user_role, 'schedule_keyboard_edit'):
                 return
 
             selected_cells_data = self.table.get_data_for_selected_cells()
-
-            if not self._can_modify_cells(selected_cells_data):
-                return
-            if not selected_cells_data:
+            if not self._can_modify_cells(selected_cells_data) or not selected_cells_data:
                 return
 
             schedule_cells = [cell for cell in selected_cells_data if isinstance(cell, dict) and 'date_str' in cell and 'uzytkownik_id' in cell]
-
             if not schedule_cells:
                 return
 
             grouped_changes = {}
             for cell_data in schedule_cells:
-                user_id = cell_data.get('uzytkownik_id')
-                user_name = cell_data.get('uzytkownik_dane', '')
-                date_str = cell_data.get('date_str')
+                user_id, user_name, date_str = cell_data.get('uzytkownik_id'), cell_data.get('uzytkownik_dane', ''), cell_data.get('date_str')
                 try:
                     year, month, day = date_str.split('-')
                     formatted_date = f"{day}.{month}.{year}"
@@ -635,35 +617,20 @@ class WorkScheduleWindow(QMainWindow):
                     grouped_changes[user_key] = []
                 grouped_changes[user_key].append(formatted_date)
 
-            # Przygotuj komunikat potwierdzenia
             changes_info = f"Zmiana godziny rozpoczęcia na {start_hour}:00 dla:\n\n"
             for (user_id, user_name), dates in grouped_changes.items():
-                changes_info += f"👤 {user_name}:\n"
+                changes_info += f"🧑 {user_name}:\n"
                 dates_str = ", ".join(sorted(dates))
                 changes_info += f"   📅 {dates_str}\n\n"
-
             changes_info += f"Łącznie: {len(schedule_cells)} komórek"
 
-            # Pokaż potwierdzenie
-            reply = QMessageBox.question(
-                self,
-                "Potwierdzenie szybkiej edycji",
-                changes_info,
-                QMessageBox.Yes | QMessageBox.No,
-                QMessageBox.Yes
-            )
-
+            reply = QMessageBox.question(self, "Potwierdzenie szybkiej edycji", changes_info, QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
             if reply == QMessageBox.Yes:
                 self._apply_quick_changes(schedule_cells, start_hour)
-
         except Exception as e:
             log_error(f"Błąd podczas szybkiej edycji: {e}")
-            QMessageBox.critical(
-                self,
-                "Błąd",
-                f"Wystąpił błąd podczas edycji: {str(e)}",
-                QMessageBox.Ok
-            )
+            QMessageBox.critical(self, "Błąd", f"Wystąpił błąd podczas edycji: {str(e)}", QMessageBox.Ok)
+
 
     def _apply_quick_changes(self, schedule_cells, start_hour):
         """Stosuje szybką zmianę godziny rozpoczęcia z obsługą błędów."""
@@ -681,7 +648,7 @@ class WorkScheduleWindow(QMainWindow):
                 location=parsed.get('location') or cell_data.get('lokalizacja_domyslna'),
                 start_hour=start_hour,
                 work_hours=parsed.get('work_hours') or work_hours,
-                special_symbol=None  # Szybka zmiana godziny usuwa symbol specjalny
+                special_symbol=None
             )
             try:
                 user_id, date_str, nr_kadrowy = cell_data.get('uzytkownik_id'), cell_data.get(
@@ -694,10 +661,10 @@ class WorkScheduleWindow(QMainWindow):
                     updated_info.append((user_id, date_str, result.get('returned_symbol')))
                 else:
                     error_messages.append(
-                        f"👤 {cell_data.get('uzytkownik_dane')}: {result.get('message', 'Błąd zapisu.')}")
+                        f"🧑 {cell_data.get('uzytkownik_dane')}: {result.get('message', 'Błąd zapisu.')}")
             except Exception as e:
                 log_error(f"Błąd krytyczny w _apply_quick_changes: {e}")
-                error_messages.append(f"👤 {cell_data.get('uzytkownik_dane')}: Błąd aplikacji: {e}")
+                error_messages.append(f"🧑 {cell_data.get('uzytkownik_dane')}: Błąd aplikacji: {e}")
 
         if updated_info:
             self._update_cells_with_new_symbols(updated_info)
@@ -708,6 +675,7 @@ class WorkScheduleWindow(QMainWindow):
             QMessageBox.warning(self, "Błędy podczas zapisu",
                                 "Wystąpiły następujące błędy:\n\n" + "\n".join(error_messages))
 
+
     def _show_keyboard_edit_results(self, successful_updates, failed_updates, error_messages, start_hour):
         """Pokazuje wyniki edycji klawiatury - uproszczone komunikaty"""
         if successful_updates > 0:
@@ -715,26 +683,15 @@ class WorkScheduleWindow(QMainWindow):
             if failed_updates > 0:
                 message += f"\n\n⚠️ {failed_updates} aktualizacji nie powiodło się"
                 if error_messages:
-                    message += ":\n" + "\n".join(error_messages[:3])  # Pokaż tylko 3 błędy
+                    message += ":\n" + "\n".join(error_messages[:3])
                     if len(error_messages) > 3:
                         message += f"\n... i {len(error_messages) - 3} więcej błędów"
-            QMessageBox.information(
-                self,
-                "Edycja klawiatury",
-                message,
-                QMessageBox.Ok
-            )
+            QMessageBox.information(self, "Edycja klawiatury", message, QMessageBox.Ok)
         else:
             message = f"Nie udało się zaktualizować żadnej komórki (cyfra: {start_hour})"
             if error_messages:
                 message += f"\n\nBłędy:\n" + "\n".join(error_messages[:5])
-
-            QMessageBox.warning(
-                self,
-                "Błąd edycji klawiatury",
-                message,
-                QMessageBox.Ok
-            )
+            QMessageBox.warning(self, "Błąd edycji klawiatury", message, QMessageBox.Ok)
 
     def _prepare_deletion_summary_message(self, schedule_cells: list) -> str:
         """
@@ -743,13 +700,11 @@ class WorkScheduleWindow(QMainWindow):
         """
         if not schedule_cells:
             return "Nie wybrano żadnych komórek z symbolami do usunięcia."
-
         grouped_deletions = {}
-        # Grupowanie komórek: Użytkownik -> Lista sformatowanych dat z symbolami
         for cell_data in schedule_cells:
             user_name = cell_data.get('uzytkownik_dane', 'Nieznany Użytkownik')
             date_str = cell_data.get('date_str', 'Nieznana Data')
-            symbol = cell_data.get('symbol', '??')  # Pobierz symbol do wyświetlenia
+            symbol = cell_data.get('symbol', '??')
             try:
                 year, month, day = date_str.split('-')
                 formatted_date = f"{day}.{month}.{year}"
@@ -761,10 +716,10 @@ class WorkScheduleWindow(QMainWindow):
 
         summary_lines = ["Czy na pewno chcesz usunąć symbole dla następujących pozycji?\n"]
         for user_name, date_symbol_list in grouped_deletions.items():
-            summary_lines.append(f"👤 {user_name}:")
-            for date_with_symbol in sorted(date_symbol_list):  # Sortuj daty dla spójności
+            summary_lines.append(f"🧑 {user_name}:")
+            for date_with_symbol in sorted(date_symbol_list):
                 summary_lines.append(f"   • {date_with_symbol}")
-            summary_lines.append("")  # Pusta linia dla lepszej czytelności między użytkownikami
+            summary_lines.append("")
         summary_lines.append(f"Łącznie zostanie wyczyszczonych: {len(schedule_cells)} komórek.")
         return "\n".join(summary_lines)
 
@@ -776,13 +731,12 @@ class WorkScheduleWindow(QMainWindow):
             if hasattr(self, 'keyboard_filter') and hasattr(self.keyboard_filter, '_buffer_timer'):
                 self.keyboard_filter._buffer_timer.stop()
                 self.keyboard_filter._digit_buffer = ""
-            allowed_roles = ["Pracownik WPR", "Lider OUT"]
-            if not hasattr(self, 'current_user_role') or self.current_user_role not in allowed_roles:
-                debug_print("Brak uprawnień do usuwania symboli klawiatury")
-                return
+
             selected_cells_data = self.table.get_data_for_selected_cells()
+
             if not self._can_modify_cells(selected_cells_data):
                 return
+
             if not selected_cells_data:
                 debug_print("Brak zaznaczonych komórek do wyczyszczenia")
                 return
@@ -795,25 +749,26 @@ class WorkScheduleWindow(QMainWindow):
                         schedule_cells.append(cell_data)
 
             if not schedule_cells:
-                self.statusBar().showMessage("Zaznaczone komórki są puste lub nie zawierają symboli do usunięcia.",
-                                             3000)
+                QMessageBox.information(
+                    self,
+                    "Brak symboli do usunięcia",
+                    "Zaznaczone komórki są już puste lub nie zawierają symboli, które można usunąć.",
+                    QMessageBox.Ok
+                )
                 return
 
             user_date_pairs = {(cell.get('uzytkownik_id'), cell.get('date_str')) for cell in schedule_cells}
             events_to_cancel = self._find_events_to_cancel(user_date_pairs)
 
-            # Przygotuj szczegółowy komunikat potwierdzenia
             confirmation_message = self._prepare_deletion_summary_message(schedule_cells)
-
             if events_to_cancel:
                 grouped_events = self._group_events_by_user_date(events_to_cancel)
                 delegations_info = self._prepare_delegations_description(grouped_events)
-                confirmation_message += f"\n\n{delegations_info}"
+                confirmation_message += f"\\n\\n{delegations_info}"
 
-            # Pokaż potwierdzenie
             reply = QMessageBox.question(
                 self,
-                "Potwierdzenie usunięcia",  # Zmieniono tytuł
+                "Potwierdzenie usunięcia",
                 confirmation_message,
                 QMessageBox.Yes | QMessageBox.No,
                 QMessageBox.Yes
@@ -1583,33 +1538,29 @@ class WorkScheduleWindow(QMainWindow):
         current_data = self.date_combo.currentData()
         if current_data:
             selected_year, selected_month = current_data
-
             today = QDate.currentDate()
-            # Oblicz datę dla następnego miesiąca
             next_month_date = today.addMonths(1)
-
-            # Sprawdź, czy wybrany rok i miesiąc zgadzają się z następnym miesiącem
             if selected_year == next_month_date.year() and selected_month == next_month_date.month():
                 is_next_month_selected = True
 
-        if hasattr(self, 'add_overtime_button') and hasattr(self, 'current_user_role'):
-            self.add_overtime_button.setVisible(self.current_user_role == "Pracownik WPR")
+        # --- POCZĄTEK POPRAWKI ---
+        # Użycie centralnej funkcji do zarządzania widocznością przycisków
+        if hasattr(self, 'add_overtime_button'):
+            self.add_overtime_button.setVisible(
+                BusinessRules.has_permission(self.current_user_role, 'button_add_overtime'))
 
-        # Ustaw widoczność przycisku "Obsada" tylko dla roli "Pracownik WPR"
-        if hasattr(self, 'staffing_details_button') and hasattr(self, 'current_user_role'):
-            self.staffing_details_button.setVisible(self.current_user_role == "Pracownik WPR")
+        if hasattr(self, 'staffing_details_button'):
+            self.staffing_details_button.setVisible(
+                BusinessRules.has_permission(self.current_user_role, 'button_staffing_details'))
 
-        if hasattr(self, 'current_user_role') and self.current_user_role == "Pracownik WPR":
-            debug_print("Edycja klawiatury włączona: cyfry 0-9 = godzina start, Delete/Backspace = usuń symbol")
+        if hasattr(self, 'show_audit_button'):
+            self.show_audit_button.setVisible(BusinessRules.has_permission(self.current_user_role, 'button_show_audit'))
 
-        if hasattr(self, 'show_audit_button') and hasattr(self, 'current_user_role'):
-            self.show_audit_button.setVisible(self.current_user_role == "Pracownik WPR")
-
-        if hasattr(self, 'schedule_control_button') and hasattr(self, 'current_user_role'):
-            allowed_roles = ["Pracownik WPR", "Lider OUT"]
-            # Przycisk jest widoczny TYLKO, gdy rola się zgadza ORAZ wybrany jest następny miesiąc
-            is_visible = self.current_user_role in allowed_roles and is_next_month_selected
-            self.schedule_control_button.setVisible(is_visible)
+        if hasattr(self, 'schedule_control_button'):
+            # Przycisk widoczny tylko, gdy rola się zgadza ORAZ wybrany jest następny miesiąc
+            can_see_button = BusinessRules.has_permission(self.current_user_role, 'button_schedule_control')
+            self.schedule_control_button.setVisible(can_see_button and is_next_month_selected)
+        # --- KONIEC POPRAWKI ---
 
     def show_audit_log_window(self):
         """Tworzy i pokazuje okno historii zmian."""
@@ -1700,9 +1651,12 @@ class WorkScheduleWindow(QMainWindow):
 
     def show_insert_symbol_dialog(self):
         """Pokazuje okno dialogowe do wstawiania symbolu nieobecności."""
-        # Leniwe importowanie
-        from schedule_edit_dialogs import InsertSymbolDialog
+        # ZMIANA: Sprawdzanie uprawnień na początku metody
+        if not BusinessRules.has_permission(self.current_user_role, 'schedule_cell_actions'):
+            self.statusBar().showMessage("Brak uprawnień do wstawiania symboli.", 3000)
+            return
 
+        from schedule_edit_dialogs import InsertSymbolDialog
         dialog = InsertSymbolDialog(self)
         if dialog.exec():
             selected_symbol = dialog.get_selected_symbol()
@@ -2228,23 +2182,23 @@ class WorkScheduleWindow(QMainWindow):
 
     def show_insert_change_dialog(self):
         """Pokazuje okno dialogowe do wstawiania zmian w grafiku"""
-        # Leniwe importowanie
-        from schedule_edit_dialogs import ScheduleChangeDialog
+        # ZMIANA: Sprawdzanie uprawnień na początku metody
+        if not BusinessRules.has_permission(self.current_user_role, 'schedule_cell_actions'):
+            self.statusBar().showMessage("Brak uprawnień do wstawiania zmian.", 3000)
+            return
 
+        from schedule_edit_dialogs import ScheduleChangeDialog
         current_data = self.date_combo.currentData()
         if not current_data:
             QMessageBox.warning(self, "Błąd", "Nie wybrano miesiąca. Nie można dodać zmiany grafiku.", QMessageBox.Ok)
             return
-
         year, month = current_data
         selected_cells = self.table.get_data_for_selected_cells()
-
         if not self._can_modify_cells(selected_cells) or not selected_cells:
             if not selected_cells:
                 QMessageBox.warning(self, "Brak zaznaczenia", "Nie zaznaczono żadnych komórek do edycji.",
                                     QMessageBox.Ok)
             return
-
         grouped_cells = self.group_cells_by_user_and_day(selected_cells)
         dialog = ScheduleChangeDialog(self, grouped_cells, year, month)
         dialog.exec()
@@ -5970,12 +5924,10 @@ class WorkScheduleWindow(QMainWindow):
         """Obsługuje zamknięcie aplikacji"""
         try:
             debug_print("=== ZAMYKANIE APLIKACJI TEAMFLOW ===")
-            debug_print(f"Sesja trwała od uruchomienia aplikacji")
-
             self.cleanup_keyboard_filter()
             close_log_file()
         except:
-            pass  # Ignoruj błędy podczas zamykania
+            pass
         finally:
             event.accept()
 
