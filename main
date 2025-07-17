@@ -537,8 +537,10 @@ class WorkScheduleWindow(QMainWindow):
         self.setup_date_combo()
         self.load_initial_data()
 
-        if hasattr(self, 'check_timer'):
-            self.check_timer.start(60000)
+        # Uruchomienie timera sprawdzającego zmiany w bazie
+        self.check_timer = QTimer(self)
+        self.check_timer.timeout.connect(self.check_for_new_data)
+        self.check_timer.start(60000)  # Sprawdzaj co 60 sekund
 
 
     def check_if_update_is_required(self) -> bool:
@@ -1731,10 +1733,10 @@ class WorkScheduleWindow(QMainWindow):
                 grouped_events = self._group_events_by_user_date(events_to_cancel)
                 delegations_info = self._prepare_delegations_description(grouped_events)
 
-            complete_info = f"Czy na pewno chcesz wprowadzić następujące zmiany?\\n\\n{changes_info}"
+            complete_info = f"Czy na pewno chcesz wprowadzić następujące zmiany?\n\n{changes_info}"
             if delegations_info:
-                complete_info += f"\\n{delegations_info}"
-            complete_info += f"\\n\u0141ącznie: {len(schedule_cells)} komórek zmieni symbol"
+                complete_info += f"\n{delegations_info}"
+            complete_info += f"\nŁącznie: {len(schedule_cells)} komórek zmieni symbol"
             if events_to_cancel:
                 complete_info += f", {len(events_to_cancel)} delegacji zostanie odwołanych"
 
@@ -2052,15 +2054,21 @@ class WorkScheduleWindow(QMainWindow):
             return False
 
     def check_for_new_data(self):
-        """Sprawdza, czy w bazie pojawiły się nowe dane ORAZ czy nie jest wymagana aktualizacja."""
+        """
+        Sprawdza, czy w bazie pojawiły się nowe dane ORAZ czy nie jest wymagana aktualizacja.
+        """
+        # Krok 1: Sprawdź wersję i flagę wymuszenia aktualizacji
         version_info = check_application_version()
         is_update_forced = version_info['force_update']
         is_version_obsolete = parse_version(APP_VERSION) < parse_version(version_info['required_version'])
+
         if is_update_forced or is_version_obsolete:
-            self.check_timer.stop()
+            debug_print(
+                f"Wykryto polecenie zdalnej aktualizacji (force: {is_update_forced}, obsolete: {is_version_obsolete}). Zamykanie aplikacji.")
+            self.check_timer.stop()  # Zatrzymaj dalsze sprawdzanie
             dialog = UpdateRequiredDialog(self)
             dialog.exec()
-            sys.exit()
+            sys.exit()  # Zakończ proces po zamknięciu dialogu
             return
 
         try:
@@ -2358,7 +2366,23 @@ class WorkScheduleWindow(QMainWindow):
             self.table.schedule_view.viewport().update()
 
             if self.user_settings.get('save_to_db'):
-                self.settings_db.save_settings(**self.user_settings, visible_columns=self.visible_columns)
+                # --- POCZĄTEK POPRAWKI ---
+                # Tworzymy kopię słownika i usuwamy z niej klucz,
+                # który nie jest argumentem metody save_settings.
+                settings_to_save = self.user_settings.copy()
+                settings_to_save.pop('save_to_db', None)  # Bezpieczne usunięcie klucza
+
+                self.settings_db.save_settings(
+                    **settings_to_save,  # Rozpakowujemy słownik BEZ klucza 'save_to_db'
+                    visible_columns=self.visible_columns
+                )
+                # --- KONIEC POPRAWKI ---
+
+                debug_print(
+                    f"Zapisano ustawienia: import_grupa={self.user_settings.get('import_grupa')}, import_funkcja={self.user_settings.get('import_funkcja')}")
+            else:
+                debug_print("Opcja 'Zapamiętaj ustawienia' nie zaznaczona, pominięto zapis do bazy.")
+
             self.refresh_data()
 
     def _update_model_with_new_symbols(self, updated_symbols, year, month):
