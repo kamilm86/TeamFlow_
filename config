@@ -43,4 +43,4 @@ except configparser.NoSectionError:
     log_error("Błąd krytyczny: Sekcja [sql_objects] nie została znaleziona w pliku config.ini.")
     SQL_OBJECTS = {}
 
-APP_VERSION = "1.0.0"
+APP_VERSION = "1.0.4"
