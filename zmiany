@@ -1,59 +1,47 @@
 @echo off
 setlocal
 
-:: ------------------- KONFIGURACJA -------------------
+:: ==================================================================
+::                       KONFIGURACJA
+:: ==================================================================
+::
+:: ---> WPISZ TUTAJ wymaganą wersję aplikacji <---
+set "REQUIRED_VER=1.0.5"
+::
+:: Nazwa aplikacji i folderu
 set "APP_NAME=TeamFlowApp.exe"
 set "APP_FOLDER=TeamFlowApp"
+::
+:: Szablon ścieżki sieciowej. Zmienna %VERSION% zostanie zastąpiona numerem wersji podanym wyżej.
+set "NET_PATH_TEMPLATE=\\mbank.pl\zasoby.Z-DBZ_APLIKACJE\USER_APP\TeamFlowApp\wersja_%VERSION%\%APP_NAME%"
+::
+:: ==================================================================
 
-:: 1. Zaktualizuj ścieżkę bazową do GŁÓWNEGO folderu aplikacji na serwerze.
-set "NET_BASE_PATH=\\mbank.pl\zasoby.Z-DBZ_APLIKACJE\USER_APP\TeamFlowApp"
 
-:: 2. Nazwa pliku tekstowego, w którym zapisany jest numer wersji.
-set "NET_VERSION_FILE_NAME=version.txt"
-:: ----------------------------------------------------
-
-:: --- Zmienne dynamiczne (nie edytuj) ---
+:: --- Sekcja automatyczna (nie edytuj) ---
 set "LOCAL_DIR=%TEMP%\%APP_FOLDER%"
 set "LOCAL_EXE=%LOCAL_DIR%\%APP_NAME%"
-set "NET_VERSION_FILE_PATH=%NET_BASE_PATH%\%NET_VERSION_FILE_NAME%"
+set "NET_PATH=%NET_PATH_TEMPLATE:%VERSION%=%REQUIRED_VER%%"
 
-echo.[INFO] Sprawdzanie najnowszej wersji z pliku: %NET_VERSION_FILE_PATH%
+echo.[INFO] Wymagana wersja aplikacji: %REQUIRED_VER%
+echo.[INFO] Lokalizacja lokalna: %LOCAL_EXE%
+echo.[INFO] Lokalizacja sieciowa: %NET_PATH%
 
-:: Krok 1: Odczytanie wymaganej wersji z pliku sieciowego
-for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command "Get-Content -Path '%NET_VERSION_FILE_PATH%' | Select-Object -First 1"`) do set "REQUIRED_VER=%%i"
-
-if not defined REQUIRED_VER (
-    echo.[BŁĄD] Nie udało się odczytać numeru wersji z pliku %NET_VERSION_FILE_PATH%.
-    echo.[INFO] Upewnij się, że plik istnieje, masz do niego dostęp i nie jest pusty.
-    pause
-    goto :eof
-)
-
-:: Usunięcie ewentualnych białych znaków na końcu linii
-for /f "tokens=* delims=" %%a in ("%REQUIRED_VER%") do set "REQUIRED_VER=%%a"
-
-:: Krok 2: Zbudowanie pełnej ścieżki do pliku .exe na podstawie odczytanej wersji
-set "NET_EXE_PATH=%NET_BASE_PATH%\wersja_%REQUIRED_VER%\%APP_NAME%"
-
-echo.[INFO] Wymagana wersja z pliku: %REQUIRED_VER%
-echo.[INFO] Pełna ścieżka sieciowa do aplikacji: %NET_EXE_PATH%
-echo.[INFO] Lokalizacja docelowa: %LOCAL_EXE%
-
-:: Krok 3: Utworzenie folderu lokalnego, jeśli nie istnieje
+:: Utworzenie folderu lokalnego, jeśli nie istnieje
 if not exist "%LOCAL_DIR%" mkdir "%LOCAL_DIR%" >nul
 
-:: Krok 4: Sprawdzenie wersji lokalnej i pobranie pliku za pomocą PowerShell
+:: Sprawdzenie wersji i pobranie pliku za pomocą PowerShell
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     $ErrorActionPreference = 'Stop'; ^
     $localExe = '%LOCAL_EXE%'; ^
-    $netPath = '%NET_EXE_PATH%'; ^
+    $netPath = '%NET_PATH%'; ^
     $requiredVerString = '%REQUIRED_VER%'; ^
     $needsDownload = $false; ^
     try { ^
         if (Test-Path $localExe -PathType Leaf) { ^
             $localVersionString = (Get-Item $localExe).VersionInfo.FileVersion; ^
             if ([version]$localVersionString -ne [version]$requiredVerString) { ^
-                Write-Host ('Lokalna wersja (' + $localVersionString + ') jest inna niż wymagana (' + $requiredVerString + '). Rozpoczynam pobieranie...'); ^
+                Write-Host ('Lokalna wersja (' + $localVersionString + ') jest inna niz wymagana (' + $requiredVerString + '). Rozpoczynam pobieranie...'); ^
                 $needsDownload = $true; ^
             } else { ^
                 Write-Host ('Lokalna wersja (' + $localVersionString + ') jest aktualna. Pomijam pobieranie.'); ^
@@ -67,21 +55,21 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
             $tmpFile = Join-Path -Path '%LOCAL_DIR%' -ChildPath ([guid]::NewGuid().ToString() + '.tmp'); ^
             Start-BitsTransfer -Source $netPath -Destination $tmpFile; ^
             Move-Item -Path $tmpFile -Destination $localExe -Force; ^
-            Write-Host 'Pobieranie zakończone pomyślnie.'; ^
+            Write-Host 'Pobieranie zakonczone pomyslnie.'; ^
         } ^
     } catch { ^
-        Write-Host ('[BŁĄD] Wystąpił krytyczny problem: ' + $_.Exception.Message) -ForegroundColor Red; ^
+        Write-Host ('[BŁĄD] Wystapil krytyczny problem: ' + $_.Exception.Message) -ForegroundColor Red; ^
         exit 1; ^
     }
 
-:: Krok 5: Sprawdzenie, czy PowerShell zakończył się błędem
+:: Sprawdzenie, czy PowerShell zakończył się błędem
 if %errorlevel% neq 0 (
-    echo.[BŁĄD] Nie udało się zweryfikować lub pobrać aplikacji. Sprawdź komunikat powyżej.
+    echo.[BŁĄD] Nie udalo sie zweryfikowac lub pobrac aplikacji. Sprawdz komunikat powyzej.
     pause
     goto :eof
 )
 
-:: Krok 6: Uruchomienie aplikacji
+:: Uruchomienie aplikacji
 echo.[INFO] Uruchamianie aplikacji...
 start "Uruchamianie %APP_NAME%" "%LOCAL_EXE%"
 
