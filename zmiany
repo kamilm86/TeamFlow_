@@ -1,39 +1,52 @@
 @echo off
-setlocal enabledelayedexpansion
+setlocal
 
 :: ------------------- KONFIGURACJA -------------------
 set "APP_NAME=TeamFlowApp.exe"
 set "APP_FOLDER=TeamFlowApp"
-:: Zaktualizuj szablon ścieżki sieciowej. %1 zostanie zastąpione numerem wersji podanym w parametrze.
-set "NET_PATH_TEMPLATE=\\mbank.pl\zasoby.Z-DBZ_APLIKACJE\USER_APP\TeamFlowApp\wersja_%1\%APP_NAME%"
+
+:: 1. Zaktualizuj ścieżkę bazową do GŁÓWNEGO folderu aplikacji na serwerze.
+set "NET_BASE_PATH=\\mbank.pl\zasoby.Z-DBZ_APLIKACJE\USER_APP\TeamFlowApp"
+
+:: 2. Nazwa pliku tekstowego, w którym zapisany jest numer wersji.
+set "NET_VERSION_FILE_NAME=version.txt"
 :: ----------------------------------------------------
 
 :: --- Zmienne dynamiczne (nie edytuj) ---
 set "LOCAL_DIR=%TEMP%\%APP_FOLDER%"
 set "LOCAL_EXE=%LOCAL_DIR%\%APP_NAME%"
+set "NET_VERSION_FILE_PATH=%NET_BASE_PATH%\%NET_VERSION_FILE_NAME%"
 
-:: 1. Sprawdzenie, czy podano parametr z numerem wersji
-if "%~1"=="" (
-    echo.[BŁĄD] Nie podano wymaganego numeru wersji jako parametru.
-    echo.[INFO] Przykład użycia: %~n0 1.0.5
+echo.[INFO] Sprawdzanie najnowszej wersji z pliku: %NET_VERSION_FILE_PATH%
+
+:: Krok 1: Odczytanie wymaganej wersji z pliku sieciowego
+for /f "usebackq delims=" %%i in (`powershell -NoProfile -Command "Get-Content -Path '%NET_VERSION_FILE_PATH%' | Select-Object -First 1"`) do set "REQUIRED_VER=%%i"
+
+if not defined REQUIRED_VER (
+    echo.[BŁĄD] Nie udało się odczytać numeru wersji z pliku %NET_VERSION_FILE_PATH%.
+    echo.[INFO] Upewnij się, że plik istnieje, masz do niego dostęp i nie jest pusty.
     pause
     goto :eof
 )
-set "REQUIRED_VER=%1"
-set "NET_PATH=!NET_PATH_TEMPLATE:%1=%REQUIRED_VER%!"
 
-echo.[INFO] Wymagana wersja aplikacji: %REQUIRED_VER%
-echo.[INFO] Lokalizacja lokalna: %LOCAL_EXE%
-echo.[INFO] Lokalizacja sieciowa: %NET_PATH%
+:: Usunięcie ewentualnych białych znaków na końcu linii
+for /f "tokens=* delims=" %%a in ("%REQUIRED_VER%") do set "REQUIRED_VER=%%a"
 
-:: 2. Utworzenie folderu lokalnego, jeśli nie istnieje
+:: Krok 2: Zbudowanie pełnej ścieżki do pliku .exe na podstawie odczytanej wersji
+set "NET_EXE_PATH=%NET_BASE_PATH%\wersja_%REQUIRED_VER%\%APP_NAME%"
+
+echo.[INFO] Wymagana wersja z pliku: %REQUIRED_VER%
+echo.[INFO] Pełna ścieżka sieciowa do aplikacji: %NET_EXE_PATH%
+echo.[INFO] Lokalizacja docelowa: %LOCAL_EXE%
+
+:: Krok 3: Utworzenie folderu lokalnego, jeśli nie istnieje
 if not exist "%LOCAL_DIR%" mkdir "%LOCAL_DIR%" >nul
 
-:: 3. Sprawdzenie wersji i pobranie pliku za pomocą PowerShell
+:: Krok 4: Sprawdzenie wersji lokalnej i pobranie pliku za pomocą PowerShell
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     $ErrorActionPreference = 'Stop'; ^
     $localExe = '%LOCAL_EXE%'; ^
-    $netPath = '%NET_PATH%'; ^
+    $netPath = '%NET_EXE_PATH%'; ^
     $requiredVerString = '%REQUIRED_VER%'; ^
     $needsDownload = $false; ^
     try { ^
@@ -61,14 +74,14 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
         exit 1; ^
     }
 
-:: 4. Sprawdzenie, czy PowerShell zakończył się błędem
+:: Krok 5: Sprawdzenie, czy PowerShell zakończył się błędem
 if %errorlevel% neq 0 (
     echo.[BŁĄD] Nie udało się zweryfikować lub pobrać aplikacji. Sprawdź komunikat powyżej.
     pause
     goto :eof
 )
 
-:: 5. Uruchomienie aplikacji
+:: Krok 6: Uruchomienie aplikacji
 echo.[INFO] Uruchamianie aplikacji...
 start "Uruchamianie %APP_NAME%" "%LOCAL_EXE%"
 
