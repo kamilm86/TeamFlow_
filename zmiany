@@ -1,52 +1,75 @@
-# Plik: db_connector.py
+@echo off
+setlocal enabledelayedexpansion
 
-    @staticmethod
-    def get_connection():
-        """
-        Zwraca połączenie do bazy danych, automatycznie testując listę sterowników
-        z pliku config.ini, aż znajdzie działający.
-        """
-        db_config = DATABASE_CONFIG
-        
-        if db_config.get('engine') != 'mssql':
-            raise ValueError(f"Nieobsługiwany silnik bazy danych: {db_config.get('engine')}")
+:: ------------------- KONFIGURACJA -------------------
+set "APP_NAME=TeamFlowApp.exe"
+set "APP_FOLDER=TeamFlowApp"
+:: Zaktualizuj szablon ścieżki sieciowej. %1 zostanie zastąpione numerem wersji podanym w parametrze.
+set "NET_PATH_TEMPLATE=\\mbank.pl\zasoby.Z-DBZ_APLIKACJE\USER_APP\TeamFlowApp\wersja_%1\%APP_NAME%"
+:: ----------------------------------------------------
 
-        # Pobierz listę sterowników z konfiguracji
-        drivers_to_try = [driver.strip() for driver in db_config.get('driver_fallbacks', '').split(',')]
-        if not drivers_to_try:
-            raise ValueError("Brak zdefiniowanych sterowników w 'driver_fallbacks' w pliku config.ini.")
-            
-        base_connection_string = f"SERVER={db_config.get('server')};DATABASE={db_config.get('database')};"
+:: --- Zmienne dynamiczne (nie edytuj) ---
+set "LOCAL_DIR=%TEMP%\%APP_FOLDER%"
+set "LOCAL_EXE=%LOCAL_DIR%\%APP_NAME%"
 
-        # Dodaj informacje o uwierzytelnianiu
-        if db_config.get('trusted_connection', 'no').lower() == 'yes':
-            base_connection_string += "Trusted_Connection=yes;"
-        else:
-            user = db_config.get('user')
-            password = db_config.get('password')
-            if user and password:
-                base_connection_string += f"UID={user};PWD={password};"
-            else:
-                raise ValueError("Konfiguracja wymaga 'trusted_connection=yes' albo podania 'user' i 'password' w config.ini.")
+:: 1. Sprawdzenie, czy podano parametr z numerem wersji
+if "%~1"=="" (
+    echo.[BŁĄD] Nie podano wymaganego numeru wersji jako parametru.
+    echo.[INFO] Przykład użycia: %~n0 1.0.5
+    pause
+    goto :eof
+)
+set "REQUIRED_VER=%1"
+set "NET_PATH=!NET_PATH_TEMPLATE:%1=%REQUIRED_VER%!"
 
-        last_error = None
-        # Pętla próbująca połączyć się z każdym sterownikiem z listy
-        for driver in drivers_to_try:
-            try:
-                connection_string = f"DRIVER={{{driver}}};{base_connection_string}"
-                debug_print(f"Próba połączenia z użyciem sterownika: {driver}")
-                conn = pyodbc.connect(connection_string, timeout=5)
-                debug_print(f"Połączenie udane! Użyty sterownik: {driver}")
-                return conn # Jeśli połączenie się powiedzie, zwracamy je i kończymy funkcję
-            except pyodbc.InterfaceError as e:
-                last_error = e
-                debug_print(f"Nie udało się połączyć używając '{driver}': {e}")
-                continue # Jeśli sterownik nie pasuje, przejdź do następnego
+echo.[INFO] Wymagana wersja aplikacji: %REQUIRED_VER%
+echo.[INFO] Lokalizacja lokalna: %LOCAL_EXE%
+echo.[INFO] Lokalizacja sieciowa: %NET_PATH%
 
-        # Jeśli pętla zakończyła się i żadne połączenie się nie udało
-        log_error("Nie udało się nawiązać połączenia z bazą danych przy użyciu żadnego z dostępnych sterowników.", exception=last_error)
-        raise ConnectionError(
-            f"Nie można połączyć się z bazą danych. Sprawdź konfigurację w pliku config.ini "
-            f"oraz upewnij się, że przynajmniej jeden ze sterowników jest zainstalowany.\n\n"
-            f"Ostatni błąd: {last_error}"
-        ) from last_error
+:: 2. Utworzenie folderu lokalnego, jeśli nie istnieje
+if not exist "%LOCAL_DIR%" mkdir "%LOCAL_DIR%" >nul
+
+:: 3. Sprawdzenie wersji i pobranie pliku za pomocą PowerShell
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    $ErrorActionPreference = 'Stop'; ^
+    $localExe = '%LOCAL_EXE%'; ^
+    $netPath = '%NET_PATH%'; ^
+    $requiredVerString = '%REQUIRED_VER%'; ^
+    $needsDownload = $false; ^
+    try { ^
+        if (Test-Path $localExe -PathType Leaf) { ^
+            $localVersionString = (Get-Item $localExe).VersionInfo.FileVersion; ^
+            if ([version]$localVersionString -ne [version]$requiredVerString) { ^
+                Write-Host ('Lokalna wersja (' + $localVersionString + ') jest inna niż wymagana (' + $requiredVerString + '). Rozpoczynam pobieranie...'); ^
+                $needsDownload = $true; ^
+            } else { ^
+                Write-Host ('Lokalna wersja (' + $localVersionString + ') jest aktualna. Pomijam pobieranie.'); ^
+            } ^
+        } else { ^
+            Write-Host 'Aplikacja nie istnieje lokalnie. Rozpoczynam pobieranie...'; ^
+            $needsDownload = $true; ^
+        } ^
+        if ($needsDownload) { ^
+            Write-Host ('Pobieranie pliku z: ' + $netPath); ^
+            $tmpFile = Join-Path -Path '%LOCAL_DIR%' -ChildPath ([guid]::NewGuid().ToString() + '.tmp'); ^
+            Start-BitsTransfer -Source $netPath -Destination $tmpFile; ^
+            Move-Item -Path $tmpFile -Destination $localExe -Force; ^
+            Write-Host 'Pobieranie zakończone pomyślnie.'; ^
+        } ^
+    } catch { ^
+        Write-Host ('[BŁĄD] Wystąpił krytyczny problem: ' + $_.Exception.Message) -ForegroundColor Red; ^
+        exit 1; ^
+    }
+
+:: 4. Sprawdzenie, czy PowerShell zakończył się błędem
+if %errorlevel% neq 0 (
+    echo.[BŁĄD] Nie udało się zweryfikować lub pobrać aplikacji. Sprawdź komunikat powyżej.
+    pause
+    goto :eof
+)
+
+:: 5. Uruchomienie aplikacji
+echo.[INFO] Uruchamianie aplikacji...
+start "Uruchamianie %APP_NAME%" "%LOCAL_EXE%"
+
+endlocal
