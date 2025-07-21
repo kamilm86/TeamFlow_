@@ -250,7 +250,7 @@ class EventsTableModel(QAbstractTableModel):
         self._filtered_data = filtered_data.copy() if filtered_data else []
         self.endResetModel()
 
-        print(
+        debug_print(
             f"Model zdarzeń zaktualizowany (tylko filtrowane dane): {len(self._data)} zdarzeń w modelu, {len(self._filtered_data)} widocznych")
 
     def sort(self, column, order):
@@ -408,7 +408,7 @@ class EventsTableModel(QAbstractTableModel):
                         self.layoutChanged.emit()
 
         except Exception as e:
-            print(f"Błąd w filter_data: {e}")
+            log_error(f"Błąd w filter_data: {e}")
             import traceback
             traceback.print_exc()
 
