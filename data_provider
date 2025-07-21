@@ -1,10 +1,10 @@
-# data_provider_v2.py - ZMODYFIKOWANA WERSJA z dynamicznymi ikonami
+# data_provider.py
 
 from PySide6.QtCore import QObject, Signal
 from db_connector import DatabaseConnector
 from datetime import datetime, timedelta
 import time
-from business_rules import BusinessRules
+from app_settings import app_settings # ZMIANA
 from debug_utils import debug_print, log_warning, log_error
 from dataclasses import dataclass, field
 from typing import Dict, List, Tuple, Optional, Any
@@ -40,10 +40,41 @@ class DataProvider(QObject):
         self.forecast_cache: Dict[Tuple[int, int], List[Dict]] = {}
         self.audit_cache: Dict[Tuple[int, int], List[Dict]] = {}
         self._icons_cache_by_month: Dict[Tuple[int, int], Dict[Tuple[int, str], Dict]] = {}
+        self.publish_status_cache = {}  # Pamięć podręczna dla statusu publikacji
         from column_mapper import ColumnMapper
         self.column_mapper = ColumnMapper()
         self._current_year: Optional[int] = None
         self._current_month: Optional[int] = None
+
+    def is_schedule_published(self, year: int, month: int) -> bool:
+        """Sprawdza, czy grafik na dany miesiąc jest opublikowany. Używa prostej pamięci podręcznej."""
+        cache_key = (year, month)
+        if cache_key in self.publish_status_cache:
+            return self.publish_status_cache[cache_key]
+
+        try:
+            conn = self.db_connector.get_connection()
+            cursor = conn.cursor()
+            query = f"SELECT TOP 1 1 FROM {SQL_OBJECTS['datypublikacjigrafiku']} WHERE Rok=? AND Miesiac=? AND Status=1"
+            cursor.execute(query, (year, month))
+            result = cursor.fetchone()
+            conn.close()
+
+            is_published = result is not None
+            self.publish_status_cache[cache_key] = is_published
+            debug_print(f"Sprawdzono status publikacji dla {year}-{month}: {is_published}")
+            return is_published
+        except Exception as e:
+            log_error(f"Błąd podczas sprawdzania statusu publikacji dla {year}-{month}: {e}", exception=e)
+            # W przypadku błędu, dla bezpieczeństwa załóż, że jest opublikowany (wymagaj potwierdzeń)
+            return True
+
+    def clear_publish_status_cache(self, year: int, month: int):
+        """Czyści pamięć podręczną statusu publikacji dla konkretnego miesiąca."""
+        cache_key = (year, month)
+        if cache_key in self.publish_status_cache:
+            del self.publish_status_cache[cache_key]
+            debug_print(f"Wyczyszczono cache statusu publikacji dla {year}-{month}")
 
     def get_schedule_audit_data(self, year: int, month: int, limit: Optional[int] = None) -> List[Dict]:
         """
@@ -310,10 +341,9 @@ class DataProvider(QObject):
     def get_department_to_group_mapping(self):
         """
         Zwraca słownik mapujący zagregowane grupy na zbiory wydziałów (WydzialGrafik).
-        Centralizuje logikę biznesową dotyczącą przynależności do grup.
         """
-        # Logika została przeniesiona do centralnego pliku business_rules.py
-        return BusinessRules.GROUP_MAPPING
+        # ZMIANA: Logika została przeniesiona do centralnego obiektu app_settings
+        return app_settings.get_group_mapping()
 
     def refresh_data(self, year: int, month: int, grupa: int, funkcja: int):
         """
