@@ -7,6 +7,8 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                                QTableWidget, QTableWidgetItem, QHeaderView)
 from PySide6.QtCore import Qt, Signal, QTimer
 from PySide6.QtGui import QFont, QColor
+
+from app_settings import app_settings
 from styles import AppStyles  # Dodano import AppStyles
 from debug_utils import debug_print, log_error
 
@@ -292,13 +294,12 @@ class InsertSymbolDialog(QDialog):
         main_layout = QVBoxLayout(self)
 
         self.instruction_label = QLabel("Wpisz symbol lub wybierz z poniższych zakładek")
-        self.instruction_label.setStyleSheet(
-            "color: gray; font-style: italic;")  # Ten styl może być nadpisany przez apply_dialog_theme
+        self.instruction_label.setStyleSheet("color: gray; font-style: italic;")
         self.instruction_label.setFont(self.parent_font)
         main_layout.addWidget(self.instruction_label)
 
         input_layout = QHBoxLayout()
-        self.input_label = QLabel("Symbol:")  # Zapisz referencję
+        self.input_label = QLabel("Symbol:")
         self.input_label.setFont(self.parent_font)
 
         self.symbol_input = QLineEdit()
@@ -316,109 +317,24 @@ class InsertSymbolDialog(QDialog):
         self.tabs = QTabWidget()
         self.tabs.setFont(self.parent_font)
 
-        # Definicje symboli w kategoriach
-        popularne_symbole = [
-            ("UZ", "Urlop na żądanie"),
-            ("CO", "Zwolnienie lekarskie"),
-            ("CR", "Zwolnienie lekarskie na inną osobę we wspólnym gospodarstwie")
-        ]
-        urlopy_symbole = [
-            ("U", "Urlop wypoczynkowy"),
-            ("UB", "Urlop bezpłatny"),
-            ("UD", "Urlop dodatkowy z tytułu niepełnosprawności"),
-            ("UM", "Urlop macierzyński (20 tyg., Dodatkowy 6 tyg., Rodzicielski 26 tyg.)"),
-            ("UO", "Urlop okolicznościowy"),
-            ("UOD", "Opieka nad dzieckiem do lat 14"),
-            ("US", "Urlop szkolny"),
-            ("UT", "Urlop ojcowski"),
-            ("UW", "Urlop wychowawczy"),
-            ("UZ", "Urlop na żądanie"),
-            ("UOP", "5 dni opieki na dziecko lub członka rodziny - urlop opiekuńczy")
-        ]
-        zwolnienia_symbole = [
-            ("CO", "Zwolnienie lekarskie"),
-            ("CR", "Zwolnienie lekarskie na inną osobę we wspólnym gospodarstwie"),
-            ("CRW", "Zwolnienie lekarskie na opiekę (sytuacja wyjątkowa)"),
-            ("CSR", "Świadczenie rehabilitacyjne"),
-            ("ZO", "Zwolnienie z obowiązku świadczenia pracy"),
-            ("ZS", "Zwolnienie z obowiązku świadczenia pracy (sytuacja wyjątkowa)")
-        ]
-        delegacje_symbole = [
-            ("DK", "Podróż służbowa krajowa"),
-            ("DZ", "Podróż służbowa zagraniczna"),
-            ("HO", "Home Office"),
-            ("P", "Czasowe oddelegowanie"),
-            ("PD", "Prace dodatkowe")
-        ]
-        inne_symbole = [
-            ("BC", "Doradca w backup"),
-            ("BK", "Badanie kontrolne"),
-            ("BO", "Badanie okresowe"),
-            ("CW", "Ćwiczenia wojskowe"),
-            ("DYS", "Realizacja dyspozycji"),
-            ("MW", "mWolne"),
-            ("NN", "Nieobecność nieusprawiedliwiona"),
-            ("NU", "Nieobecność usprawiedliwiona"),
-            ("NW", "Nieobecność do wyjaśnienia"),
-            ("O", "Nieobecność usprawiedliwiona z tytułu odbioru godzin"),
-            ("OS", "Odbiór dnia wolnego za święto przypadające w sobotę"),
-            ("S", "Szkolenie po programie adaptacyjnym"),
-            ("T", "Testy"),
-            ("USW", "2 dni wolne na zwolnienie od pracy z powodu siły wyższej"),
-            ("Z", "Rozwiązanie umowy")
-        ]
+        # Dynamiczne tworzenie zakładek na podstawie ustawień z bazy
+        self.valid_symbols.clear()
+        symbol_categories = app_settings.SYMBOL_CATEGORIES
 
-        # Zbierz wszystkie dostępne symbole
-        # all_symbol_lists = [popularne_symbole, urlopy_symbole, zwolnienia_symbole, delegacje_symbole, inne_symbole]
-        # for symbol_list in all_symbol_lists:
-        #     for symbol, _ in symbol_list:
-        #         self.valid_symbols.add(symbol)
-        #
-        # # Dodanie zakładek w zależności od roli
-        # if self.user_role == "Lider":
-        #     # Lider widzi tylko Zwolnienia i Popularne symbole
-        #     # self.add_tab_with_symbols(popularne_symbole, "Popularne symbole")
-        #     self.add_tab_with_symbols(zwolnienia_symbole, "Zwolnienia")
-        # elif self.user_role == "Pracownik WPR":
-        #     # Menadżer widzi wszystko
-        #     # self.add_tab_with_symbols(popularne_symbole, "Popularne symbole")
-        #     # self.add_tab_with_symbols(urlopy_symbole, "Urlopy")
-        #     self.add_tab_with_symbols(zwolnienia_symbole, "Zwolnienia")
-        #     # self.add_tab_with_symbols(delegacje_symbole, "Delegacje i praca zdalna")
-        #     # self.add_tab_with_symbols(inne_symbole, "Inne")
-        # else:
-        #     pass
-        #     # # Domyślnie - użytkownik standardowy widzi wszystkie zakładki
-        #     # self.add_tab_with_symbols(popularne_symbole, "Popularne symbole")
-        #     # self.add_tab_with_symbols(urlopy_symbole, "Urlopy")
-        #     # self.add_tab_with_symbols(zwolnienia_symbole, "Zwolnienia")
-        #     # self.add_tab_with_symbols(delegacje_symbole, "Delegacje i praca zdalna")
-        #     # self.add_tab_with_symbols(inne_symbole, "Inne")
-        all_symbol_lists = {"Popularne": popularne_symbole, "Urlopy": urlopy_symbole,
-                            "Zwolnienia": zwolnienia_symbole}  # Skrócono dla przykładu
-
-        self.valid_symbols.clear()  # Wyczyść przed ponownym wypełnieniem
-        for cat_name, symbol_list in all_symbol_lists.items():
-            # Logika widoczności zakładek na podstawie roli
-            if (self.user_role == "Lider" and cat_name not in ["Popularne", "Zwolnienia"]) or \
-                    (self.user_role == "Pracownik WPR" and cat_name not in ["Zwolnienia"]):  # Przykład ograniczeń
-                if self.user_role == "Lider" and cat_name == "Zwolnienia":  # Lider widzi zwolnienia
-                    pass  # Dodaj zakładkę
-                elif self.user_role == "Pracownik WPR" and cat_name == "Zwolnienia":  # WPR widzi zwolnienia
-                    pass
-                else:
-                    continue  # Pomiń dodawanie tej zakładki dla danej roli
-
-            self.add_tab_with_symbols(symbol_list, cat_name)  # Dodaj zakładkę
-            for symbol, _ in symbol_list:
-                self.valid_symbols.add(symbol)
+        # Tworzy wszystkie zakładki, a uprawnienia są sprawdzane dla każdego przycisku osobno
+        for category_name, symbols_dict in symbol_categories.items():
+            symbols_list = list(symbols_dict.items())
+            self.add_tab_with_symbols(symbols_list, category_name)
+            # Dodaje wszystkie symbole do listy walidacji (dla wpisywania ręcznego)
+            for symbol_key in symbols_dict.keys():
+                self.valid_symbols.add(symbol_key)
 
         buttons_layout = QHBoxLayout()
-        self.cancel_button = QPushButton("Anuluj")  # Zapisz referencję
+        self.cancel_button = QPushButton("Anuluj")
         self.cancel_button.setFont(self.parent_font)
         self.cancel_button.clicked.connect(self.reject)
 
-        self.validation_label = QLabel("")  # Zapisz referencję
+        self.validation_label = QLabel("")
         self.validation_label.setFont(self.parent_font)
 
         buttons_layout.addWidget(self.validation_label)
@@ -430,7 +346,7 @@ class InsertSymbolDialog(QDialog):
         self.symbol_input.setFocus()
 
     def add_tab_with_symbols(self, symbols, tab_name):
-        """Dodaje zakładkę z symbolami do tabwidget"""
+        """Dodaje zakładkę z symbolami, uwzględniając uprawnienia do przycisków."""
         tab = QWidget()
         tab_layout = QGridLayout(tab)
         tab_layout.setSpacing(5)
@@ -438,10 +354,19 @@ class InsertSymbolDialog(QDialog):
         for idx, (symbol, desc) in enumerate(symbols):
             button = QPushButton(symbol)
             button.setFont(self.parent_font)
-            button.setToolTip(desc)
             button.setProperty("symbol", symbol)
-            button.setFocusPolicy(Qt.NoFocus)  # Wyłącz fokus dla przycisku
+            button.setFocusPolicy(Qt.NoFocus)
             button.clicked.connect(self.on_symbol_button_clicked)
+
+            # --- POCZĄTEK ZMIANY: Sprawdzanie uprawnień do symbolu ---
+            if app_settings.has_symbol_permission(self.user_role, symbol):
+                button.setEnabled(True)
+                button.setToolTip(desc)
+            else:
+                button.setEnabled(False)
+                button.setToolTip(f"{desc}\n(Brak uprawnień dla Twojej roli)")
+            # --- KONIEC ZMIANY ---
+
             row = idx // 4
             col = idx % 4
             tab_layout.addWidget(button, row, col)
@@ -498,25 +423,22 @@ class InsertSymbolDialog(QDialog):
         self.check_and_accept()
 
     def check_and_accept(self):
+        """Sprawdza symbol i uprawnienia przed zamknięciem okna."""
+        # --- POCZĄTEK ZMIANY: Dodatkowa walidacja uprawnień ---
         if self.selected_symbol and self.selected_symbol in self.valid_symbols:
-            super().accept()
+            if app_settings.has_symbol_permission(self.user_role, self.selected_symbol):
+                super().accept()
+            else:
+                QMessageBox.warning(self, "Brak uprawnień",
+                                    f"Twoja rola ('{self.user_role}') nie ma uprawnień do użycia symbolu '{self.selected_symbol}'.",
+                                    QMessageBox.Ok)
+        # --- KONIEC ZMIANY ---
         elif self.selected_symbol:
-            QMessageBox.warning(
-                self,
-                "Nieprawidłowy symbol",
-                f"Symbol '{self.selected_symbol}' nie znajduje się na liście dostępnych symboli.",
-                QMessageBox.Ok
-            )
-            self.selected_symbol = ""
-            self.symbol_input.setText("")
-            self.symbol_input.setFocus()
+            QMessageBox.warning(self, "Nieprawidłowy symbol",
+                                f"Symbol '{self.selected_symbol}' nie jest poprawnym symbolem.", QMessageBox.Ok)
         else:
-            QMessageBox.warning(
-                self,
-                "Brak symbolu",
-                "Proszę wpisać lub wybrać symbol.",
-                QMessageBox.Ok
-            )
+            QMessageBox.warning(self, "Brak symbolu", "Proszę wpisać lub wybrać symbol.", QMessageBox.Ok)
+
             self.selected_symbol = ""
             self.symbol_input.setText("")
             self.symbol_input.setFocus()
