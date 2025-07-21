@@ -22,49 +22,31 @@ class SettingsDatabase:
     def save_settings(self, theme, font_family, font_size, load_all_events=True, visible_columns=None,
                       show_schedule_comment=False, login_windows=None, import_grupa=3, import_funkcja=1,
                       show_special_symbol=True, show_location_symbol=True,
-                      special_symbol_position='top_left', location_symbol_position='bottom_left',
-                      log_to_file=True, log_to_console=False):
+                      special_symbol_position='top_left', location_symbol_position='bottom_left'):
         if login_windows is None:
             login_windows = self.get_current_login_windows()
-
         try:
             conn = DatabaseConnector.get_connection()
             cursor = conn.cursor()
             columns_str = ','.join(visible_columns) if visible_columns else None
 
+            # Usunięto parametry logowania z listy
             params_to_save = (
-                login_windows,
-                theme,
-                font_family,
-                font_size,
-                load_all_events,
-                columns_str,
-                show_schedule_comment,
-                import_grupa,
-                import_funkcja,
-                show_special_symbol,
-                show_location_symbol,
-                special_symbol_position,
-                location_symbol_position,
-                log_to_file,
-                log_to_console
+                login_windows, theme, font_family, font_size, load_all_events,
+                columns_str, show_schedule_comment, import_grupa, import_funkcja,
+                show_special_symbol, show_location_symbol, special_symbol_position,
+                location_symbol_position
             )
-
+            # Zaktualizowano procedurę, aby nie przyjmowała parametrów logowania
             sql_query = f"""
                 EXEC {SQL_OBJECTS['p_saveusersettings']}
                     @login_windows=?, @theme=?, @font_family=?, @font_size=?,
                     @load_all_events=?, @visible_columns=?, @show_schedule_comment=?,
                     @import_grupa=?, @import_funkcja=?,
                     @show_special_symbol=?, @show_location_symbol=?,
-                    @special_symbol_position=?, @location_symbol_position=?, 
-                    @log_to_file=?, @log_to_console=?
+                    @special_symbol_position=?, @location_symbol_position=?
             """
-
-            debug_print(f"SQL do wykonania: {sql_query.strip()}")
-            debug_print(f"Parametry do SQL: {params_to_save}")
-
             cursor.execute(sql_query, params_to_save)
-
             conn.commit()
             conn.close()
             debug_print(f"Ustawienia zapisane dla {login_windows}")
@@ -74,20 +56,17 @@ class SettingsDatabase:
             return False
 
     def load_settings(self, login_windows=None):
-        """Ładuje ustawienia użytkownika, w tym parametry importu, wyglądu ikon oraz debugowania."""
-        from debug_utils import log_error, debug_print  # Dodatkowy import
-
+        """Ładuje ustawienia użytkownika, już bez parametrów logowania."""
         if login_windows is None:
             login_windows = self.get_current_login_windows()
 
+        # --- ZMIANA: Usunięto 'log_to_file' i 'log_to_console' z wartości domyślnych ---
         defaults = {
             'theme': 'dark', 'font_family': 'Arial', 'font_size': 9,
             'load_all_events': True, 'visible_columns': None, 'show_schedule_comment': False,
             'import_grupa': 3, 'import_funkcja': 1,
             'show_special_symbol': True, 'show_location_symbol': True,
-            'special_symbol_position': 'top_left', 'location_symbol_position': 'top_right',
-            'log_to_file': True,
-            'log_to_console': False
+            'special_symbol_position': 'top_left', 'location_symbol_position': 'top_right'
         }
 
         try:
@@ -99,6 +78,7 @@ class SettingsDatabase:
 
             if result:
                 settings = defaults.copy()
+                # --- ZMIANA: Usunięto parsowanie wyników dla logowania ---
                 settings.update({
                     'theme': result[0], 'font_family': result[1], 'font_size': result[2],
                     'load_all_events': result[3],
@@ -107,15 +87,10 @@ class SettingsDatabase:
                     'import_grupa': int(result[6]), 'import_funkcja': int(result[7]),
                     'show_special_symbol': bool(result[8]), 'show_location_symbol': bool(result[9]),
                     'special_symbol_position': str(result[10]), 'location_symbol_position': str(result[11]),
-                    'log_to_file': bool(result[12]), 'log_to_console': bool(result[13])
                 })
                 return settings
             else:
-                debug_print("Nie znaleziono ustawień dla użytkownika w bazie. Używam ustawień domyślnych.")
                 return defaults
         except Exception as e:
-            log_error(
-                f"Błąd podczas ładowania ustawień dla '{login_windows}'. Sprawdź, czy procedura zwraca 14 kolumn. Używam ustawień domyślnych.",
-                exception=e)
-            debug_print(f"Użyte ustawienia domyślne z powodu błędu: {defaults}")
+            log_error(f"Błąd podczas ładowania ustawień dla '{login_windows}'. Używam ustawień domyślnych.", exception=e)
             return defaults
