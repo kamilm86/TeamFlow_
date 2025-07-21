@@ -2,7 +2,7 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushB
                                QListWidget, QListWidgetItem, QAbstractItemView, QCheckBox, QFrame)
 from PySide6.QtCore import Qt
 from styles import AppStyles
-from business_rules import BusinessRules  # ZMIANA: Dodano import
+from app_settings import app_settings # ZMIANA
 
 
 class ColumnSelectDialog(QDialog):
@@ -102,8 +102,7 @@ class ColumnSelectDialog(QDialog):
 
         self.komentarz_checkbox = QCheckBox("Pokaż kolumnę 'Komentarz do Grafiku'")
         self.komentarz_checkbox.setChecked(is_comment_checked)
-        # ZMIANA: Sprawdzanie uprawnień za pomocą BusinessRules
-        self.komentarz_checkbox.setVisible(BusinessRules.has_permission(self.user_role, 'view_schedule_comment_column'))
+        self.komentarz_checkbox.setVisible(app_settings.has_permission(self.user_role, 'view_schedule_comment_column'))
         main_layout.addWidget(self.komentarz_checkbox)
 
         buttons_layout = QHBoxLayout()
