@@ -1,0 +1,117 @@
+# compare_json.py
+import json
+import sys
+from typing import Any, List
+
+# Lista do przechowywania znalezionych różnic w czytelnej formie
+differences = []
+
+def find_diff(data1: Any, data2: Any, path: str = "root"):
+    """
+    Rekursywna funkcja do porównywania dwóch obiektów danych (zdekodowanych z JSON).
+    Ignoruje kolejność elementów w listach.
+
+    Args:
+        data1: Pierwszy obiekt do porównania.
+        data2: Drugi obiekt do porównania.
+        path: Ścieżka do bieżącego elementu, używana w raportowaniu różnic.
+    """
+    # 1. Porównanie typów
+    if type(data1) is not type(data2):
+        differences.append(
+            f"Różnica w ścieżce '{path}': inne typy danych "
+            f"({type(data1).__name__} vs {type(data2).__name__})"
+        )
+        return
+
+    # 2. Porównanie słowników (obiektów JSON)
+    if isinstance(data1, dict):
+        keys1 = set(data1.keys())
+        keys2 = set(data2.keys())
+
+        common_keys = keys1.intersection(keys2)
+        added_keys = keys2 - keys1
+        removed_keys = keys1 - keys2
+
+        for key in added_keys:
+            differences.append(f"W ścieżce '{path}' dodano klucz: '{key}'")
+        for key in removed_keys:
+            differences.append(f"W ścieżce '{path}' brakuje klucza: '{key}'")
+
+        # Rekursywne porównanie wartości dla wspólnych kluczy
+        for key in common_keys:
+            find_diff(data1[key], data2[key], path=f"{path}.{key}")
+
+    # 3. Porównanie list (tablic JSON) - ignorowanie kolejności
+    elif isinstance(data1, list):
+        # Tworzymy kopie list, aby można było z nich bezpiecznie usuwać elementy
+        list1_copy = [item for item in data1]
+        list2_copy = [item for item in data2]
+        
+        # Iterujemy po elementach pierwszej listy i próbujemy znaleźć i usunąć
+        # pasujący element z kopii drugiej listy
+        for item1 in data1:
+            try:
+                # Szukamy identycznego elementu w drugiej liście
+                # Jeśli się uda, usuwamy go, aby oznaczyć jako "dopasowany"
+                list2_copy.remove(item1)
+            except ValueError:
+                # Jeśli elementu nie ma w drugiej liście, to jest to różnica
+                differences.append(
+                    f"W liście '{path}' brakuje elementu: {json.dumps(item1, ensure_ascii=False)}"
+                )
+
+        # Wszystkie elementy, które pozostały w list2_copy, są "dodatkowymi"
+        # elementami w drugiej liście
+        for item2 in list2_copy:
+            differences.append(
+                f"W liście '{path}' dodano element: {json.dumps(item2, ensure_ascii=False)}"
+            )
+
+    # 4. Porównanie wartości prostych (string, number, boolean, null)
+    else:
+        if data1 != data2:
+            val1_str = json.dumps(data1, ensure_ascii=False)
+            val2_str = json.dumps(data2, ensure_ascii=False)
+            differences.append(f"Różnica w ścieżce '{path}': {val1_str} vs {val2_str}")
+
+def load_json_file(filepath: str) -> Any:
+    """Wczytuje i dekoduje plik JSON, obsługując błędy."""
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        print(f"BŁĄD: Nie znaleziono pliku: {filepath}")
+        sys.exit(1)
+    except json.JSONDecodeError as e:
+        print(f"BŁĄD: Plik '{filepath}' nie jest poprawnym plikiem JSON. {e}")
+        sys.exit(1)
+
+def main():
+    """Główna funkcja programu."""
+    if len(sys.argv) != 3:
+        print("Użycie: python compare_json.py <plik1.json> <plik2.json>")
+        sys.exit(1)
+
+    file1_path = sys.argv[1]
+    file2_path = sys.argv[2]
+
+    print(f"--- Porównywanie plików JSON ---")
+    print(f"Plik 1: {file1_path}")
+    print(f"Plik 2: {file2_path}")
+    print("-" * 30)
+
+    json1 = load_json_file(file1_path)
+    json2 = load_json_file(file2_path)
+
+    find_diff(json1, json2)
+
+    if not differences:
+        print("✅ Pliki są semantycznie identyczne.")
+    else:
+        print(f"🔥 Znaleziono {len(differences)} różnic:\n")
+        for diff in differences:
+            print(f"- {diff}")
+
+if __name__ == "__main__":
+    main()
