@@ -203,7 +203,6 @@ class AppStyles:
                    }}
                    QHeaderView::section {{
                        background-color: {header_bg}; /* <--- TA LINIA MUSI BYĆ PRZYWRÓCONA */
-                       color: {text};
                        border: 1px solid {grid};
                        padding: 4px;
                    }}
