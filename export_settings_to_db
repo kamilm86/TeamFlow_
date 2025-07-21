@@ -1,0 +1,177 @@
+import json
+from collections import OrderedDict
+from db_connector import DatabaseConnector, SQL_OBJECTS
+from config import APP_VERSION
+
+
+def get_config_as_json(data, ensure_ascii=False, indent=4):
+    """Konwertuje obiekt Python do sformatowanego stringa JSON."""
+    return json.dumps(data, ensure_ascii=ensure_ascii, indent=indent)
+
+
+def export_settings():
+    """Główna funkcja eksportująca wszystkie ustawienia aplikacji do bazy danych."""
+
+    # ========================================================================
+    #           DEFINICJE UPRAWNIEŃ (PERMISSIONS) Z OPISAMI
+    # ========================================================================
+    permissions = {
+        # Klucz: 'app_access'
+        # Opis: Ogólny dostęp do uruchomienia i korzystania z aplikacji. Role niewymienione tutaj nie będą mogły otworzyć programu.
+        'app_access': ['Pracownik WPR', 'Lider', 'Menadżer', 'Lider OUT'],
+
+        # Klucz: 'schedule_keyboard_edit'
+        # Opis: Zezwala na edycję komórek grafiku z klawiatury (wpisywanie godzin, symboli, modyfikacja godzin klawiszami +/-).
+        'schedule_keyboard_edit': ['Pracownik WPR', 'Lider OUT', 'Lider'],
+
+        # Klucz: 'schedule_cell_actions'
+        # Opis: Dostęp do głównych przycisków akcji modyfikujących grafik, czyli "Wstaw zmianę" i "Wstaw nieobecność".
+        'schedule_cell_actions': ['Pracownik WPR', 'Lider OUT','Lider'],
+
+        # Klucz: 'button_add_overtime'
+        # Opis: Kontroluje widoczność przycisku "Dodaj nadgodziny".
+        'button_add_overtime': ['Pracownik WPR'],
+
+        # Klucz: 'button_staffing_details'
+        # Opis: Kontroluje widoczność przycisku "Obsada", który otwiera okno szczegółowych analiz.
+        'button_staffing_details': ['Pracownik WPR'],
+
+        # Klucz: 'button_show_audit'
+        # Opis: Kontroluje widoczność przycisku "Historia Zmian".
+        'button_show_audit': ['Pracownik WPR', 'Lider OUT', 'Lider'],
+
+        # Klucz: 'button_schedule_control'
+        # Opis: Kontroluje widoczność przycisku "Zarządzaj Grafikiem", który pozwala na blokowanie i publikację grafiku.
+        'button_schedule_control': ['Pracownik WPR', 'Lider OUT'],
+
+        # Klucz: 'action_delete_symbol'
+        # Opis: Zezwala na usuwanie symboli z komórek za pomocą klawiszy Delete lub Backspace.
+        'action_delete_symbol': ['Pracownik WPR', 'Lider OUT'],
+
+        # Klucz: 'view_schedule_comment_column'
+        # Opis: Sprawia, że w oknie wyboru kolumn pojawia się opcja włączenia kolumny "Komentarz do Grafiku".
+        'view_schedule_comment_column': ['Pracownik WPR'],
+
+        # Klucz: 'action_clear_special_symbol'
+        # Opis: Zezwala na użycie funkcji (domyślnie F12) do usunięcia tylko symbolu specjalnego (np. urlopu) bez usuwania godzin pracy.
+        'action_clear_special_symbol': ['Pracownik WPR', 'Lider OUT', 'Lider']
+    }
+
+    # Definicja symboli, które oznaczają świadczenie pracy (nie absencję)
+    work_like_symbols = ["DYS", "T", "BC", "S", "P", "PR", "PD", "HO", "DK", "DZ", "BK", "BO", "CW", "MW"]
+
+
+    # 2. Definicje symboli
+    symbol_categories = OrderedDict([
+        ("Urlopy", {
+            "U": "Urlop wypoczynkowy", "UZ": "Urlop na żądanie", "UB": "Urlop bezpłatny", "UM": "Urlop macierzyński",
+            "UO": "Urlop okolicznościowy", "UOD": "Opieka nad dzieckiem", "US": "Urlop szkolny", "UT": "Urlop ojcowski",
+            "UW": "Urlop wychowawczy", "UOP": "Urlop opiekuńczy (5 dni)"
+        }),
+        ("Zwolnienia", {
+            "CO": "Zwolnienie lekarskie", "CR": "Zwolnienie na inną osobę", "CRW": "Zwolnienie na opiekę (wyjątkowe)",
+            "CSR": "Świadczenie rehabilitacyjne", "ZO": "Zwolnienie z obowiązku świadczenia pracy",
+            "ZS": "Zwolnienie z obowiązku świadczenia pracy (wyjątkowe)"
+        }),
+        ("Delegacje i Inne", {
+            "DK": "Delegacja krajowa", "DZ": "Delegacja zagraniczna", "HO": "Home Office", "P": "Czasowe oddelegowanie",
+            "PD": "Prace dodatkowe", "BC": "Backup", "BK": "Badanie kontrolne", "BO": "Badanie okresowe",
+            "CW": "Ćwiczenia wojskowe", "DYS": "Dyspozycja", "MW": "mWolne",
+            "NN": "Nieobecność nieusprawiedliwiona", "NU": "Nieobecność usprawiedliwiona",
+            "NW": "Nieobecność do wyjaśnienia", "O": "Odbiór godzin",
+            "OS": "Odbiór dnia wolnego za święto", "S": "Szkolenie", "T": "Testy",
+            "USW": "Zwolnienie z powodu siły wyższej (2 dni)", "Z": "Rozwiązanie umowy"
+        })
+    ])
+
+    # --- NOWA SEKCJA: Definicja uprawnień do poszczególnych symboli ---
+    symbol_permissions = {
+        # Urlopy - dostępne tylko dla WPR
+        "U": ["Pracownik WPR", "Lider OUT"], "UZ": ["Pracownik WPR", "Lider OUT", "Lider"], "UB": ["Pracownik WPR", "Lider OUT", "Lider"], "UM": ["Pracownik WPR", "Lider OUT", "Lider"],
+        "UO": ["Pracownik WPR", "Lider OUT", "Lider"], "UOD": ["Pracownik WPR", "Lider OUT", "Lider"], "US": ["Pracownik WPR", "Lider OUT", "Lider"], "UT": ["Pracownik WPR", "Lider OUT", "Lider"],
+        "UW": ["Pracownik WPR", "Lider OUT", "Lider"], "UOP": ["Pracownik WPR", "Lider OUT", "Lider"],
+        # Zwolnienia - dostępne dla WPR i Liderów
+        "CO": ["Pracownik WPR", "Lider", "Lider OUT"], "CR": ["Pracownik WPR", "Lider", "Lider OUT"],
+        "CRW": ["Pracownik WPR", "Lider", "Lider OUT"], "CSR": ["Pracownik WPR", "Lider OUT", "Lider"],
+        "ZO": ["Pracownik WPR", "Lider OUT", "Lider"], "ZS": ["Pracownik WPR", "Lider OUT", "Lider"],
+        # Inne - dostępne tylko dla WPR
+        "DK": ["Pracownik WPR", "Lider OUT", "Lider"], "DZ": ["Pracownik WPR", "Lider OUT", "Lider"], "HO": ["Pracownik WPR", "Lider OUT", "Lider"], "P": ["Pracownik WPR", "Lider OUT", "Lider"],
+        "PD": ["Pracownik WPR", "Lider OUT", "Lider"], "BC": ["Pracownik WPR", "Lider OUT", "Lider"], "BK": ["Pracownik WPR", "Lider OUT", "Lider"], "BO": ["Pracownik WPR", "Lider OUT", "Lider"],
+        "CW": ["Pracownik WPR", "Lider OUT", "Lider"], "DYS": ["Pracownik WPR", "Lider OUT", "Lider"], "MW": ["Pracownik WPR", "Lider OUT", "Lider"], "NN": ["Pracownik WPR", "Lider OUT", "Lider"],
+        "NU": ["Pracownik WPR", "Lider OUT", "Lider"], "NW": ["Pracownik WPR", "Lider OUT", "Lider"], "O": ["Pracownik WPR", "Lider OUT", "Lider"], "OS": ["Pracownik WPR", "Lider OUT", "Lider"],
+        "S": ["Pracownik WPR", "Lider OUT", "Lider"], "T": ["Pracownik WPR", "Lider OUT", "Lider"], "USW": ["Pracownik WPR", "Lider OUT", "Lider"], "Z": ["Pracownik WPR", "Lider OUT", "Lider"]
+    }
+
+    # 3. Definicje logiki biznesowej (wcześniej w BusinessRules)
+    absence_symbols = [
+        'U', 'UZ', 'UOP', 'CO', 'CR', 'UB', 'UM', 'UO', 'UOD', 'US', 'UT', 'UW',
+        'CRW', 'CSR', 'ZO', 'ZS', 'NN', 'NU', 'NW', 'O', 'OS', 'USW', 'Z'
+    ]
+
+    group_mapping = {
+        "TOTAL VOICE": ['WNT', 'WZK1v', 'WZK2v', 'WZK3v', 'WZK3w', 'WZFv'],
+        "MASS+WELCAMER+GOLD": ['WZKv', 'WZK3w', 'WNT', 'WZK1v', 'WZK2v', 'WZK3v'],
+        "NUMEN+FIRMA": ['WZFv', 'WZFc'],
+        "CZAT": ['WZFv', 'WZK3v', 'WZK3w', 'WZK1c', 'WZK2c', 'WZK3c', 'WZFc', 'OBDc'],
+        "WELCOMER": ['WZK3v', 'WZK3c', 'WZK3w'],
+        "GOLD": ['WZK2v', 'WZK2c'],
+        "NUMEN+FIRMA_VOICE": ['WZFv'],
+        "WELCOMER VOICE": ['WZK3v', 'WZK3w']
+    }
+
+    # 4. Inne ustawienia
+    shift_color_map = {
+        5: "#CCFFFF", 6: "#CCFFFF", 7: "#00FFFF", 8: "#00CCFF", 9: "#00FF00", 10: "#99CC00",
+        11: "#CCFFCC", 12: "#FFFF99", 13: "#FFCC99", 14: "#FF9900", 15: "#FF00FF", 16: "#CC0000",
+        17: "#969696", 18: "#969696", 19: "#969696", 20: "#969696", 21: "#969696",
+        22: "#1E1E1E", 23: "#1E1E1E", 0: "#1E1E1E", 1: "#1E1E1E", 2: "#1E1E1E", 3: "#1E1E1E", 4: "#1E1E1E"
+    }
+
+    # Zdefiniuj listy użytkowników Windows, dla których logowanie ma być aktywne.
+    # Jeśli lista jest pusta, logowanie będzie wyłączone.
+    logging_users_for_file = ["", ""]  # <-- ZMIEŃ NA LISTĘ LOGINÓW
+    logging_users_for_console = [""]  # <-- ZMIEŃ NA LISTĘ LOGINÓW
+
+    # 5. Finalny słownik do eksportu
+    settings_to_export = {
+        "current_version": APP_VERSION,
+        "force_update": "false",
+        "LoggingUserFile": ",".join(logging_users_for_file),
+        "LoggingUserConsole": ",".join(logging_users_for_console),
+        "AppPermissions": get_config_as_json(permissions),
+        "SymbolCategoriesDialog": get_config_as_json(symbol_categories),
+        "AbsenceSymbolsLogic": get_config_as_json(absence_symbols),
+        "GroupMapping": get_config_as_json(group_mapping),
+        "ShiftColorMap": get_config_as_json(shift_color_map),
+        "SymbolPermissions": get_config_as_json(symbol_permissions),
+        "WorkLikeSymbols": get_config_as_json(work_like_symbols)
+
+    }
+
+    print("--- Rozpoczynam eksport ustawień do bazy danych ---")
+    try:
+        conn = DatabaseConnector.get_connection()
+        cursor = conn.cursor()
+        table_name = SQL_OBJECTS['appsettings']
+
+        for key, value in settings_to_export.items():
+            print(f"Przetwarzanie klucza: '{key}'...")
+            sql = f"""
+            MERGE {table_name} AS target
+            USING (SELECT ? AS SettingKey, ? AS SettingValue) AS source
+            ON (target.SettingKey = source.SettingKey)
+            WHEN MATCHED THEN UPDATE SET target.SettingValue = source.SettingValue
+            WHEN NOT MATCHED THEN INSERT (SettingKey, SettingValue) VALUES (source.SettingKey, source.SettingValue);
+            """
+            cursor.execute(sql, (key, value))
+            print(f" -> Zakończono.")
+
+        conn.commit()
+        conn.close()
+        print("\n--- Eksport zakończony sukcesem! ---")
+    except Exception as e:
+        print(f"\n--- WYSTĄPIŁ BŁĄD PODCZAS EKSPORTU ---\n{e}")
+
+
+if __name__ == "__main__":
+    export_settings()
