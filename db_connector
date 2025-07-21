@@ -1,156 +1,61 @@
 from config import APP_VERSION
 import pyodbc
 from config import DATABASE_CONFIG
-from datetime import datetime, timedelta, time
 import getpass
 from debug_utils import debug_print, log_warning, log_error
 from config import SQL_OBJECTS
-
+from app_settings import app_settings
 
 class DatabaseConnector:
-    """
-    Klasa odpowiedzialna za połączenie z bazą danych
-    """
-
     @staticmethod
     def get_connection():
-        """
-        Zwraca połączenie do bazy danych na podstawie konfiguracji z pliku config.ini
-        """
         db_config = DATABASE_CONFIG
-
         if db_config.get('engine') == 'mssql':
-            connection_string = (
-                f"DRIVER={{{db_config.get('driver')}}};"
-                f"SERVER={db_config.get('server')};"
-                f"DATABASE={db_config.get('database')};"
-            )
-
-            # Sprawdź, jakiego uwierzytelniania użyć
+            cs = (f"DRIVER={{{db_config.get('driver')}}};"
+                  f"SERVER={db_config.get('server')};"
+                  f"DATABASE={db_config.get('database')};")
             if db_config.get('trusted_connection', 'no').lower() == 'yes':
-                connection_string += "Trusted_Connection=yes;"
+                cs += "Trusted_Connection=yes;"
             else:
-                user = db_config.get('user')
-                password = db_config.get('password')
-                if user and password:
-                    connection_string += f"UID={user};PWD={password};"
-                else:
-                    raise ValueError(
-                        "Konfiguracja bazy danych wymaga 'trusted_connection=yes' albo podania 'user' i 'password' w pliku config.ini.")
-
-            conn = pyodbc.connect(connection_string)
-            return conn
-        else:
-            raise ValueError(f"Nieobsługiwany silnik bazy danych: {db_config.get('engine')}")
-
-    @staticmethod
-    def execute_query(query, params=None, fetch_all=True):
-        """
-        Wykonuje zapytanie SQL i zwraca wyniki
-
-        Args:
-            query (str): Zapytanie SQL
-            params (tuple): Parametry zapytania
-            fetch_all (bool): Czy pobrać wszystkie wyniki (True) czy tylko jeden (False)
-
-        Returns:
-            list/tuple: Wyniki zapytania
-        """
-
-        conn = DatabaseConnector.get_connection()
-        cursor = conn.cursor()
-
-        start_time = time.time()
-        try:
-            if params:
-                cursor.execute(query, params)
-            else:
-                cursor.execute(query)
-
-            if fetch_all:
-                result = cursor.fetchall()
-            else:
-                result = cursor.fetchone()
-
-            end_time = time.time()
-            execution_time = end_time - start_time
-
-            # Loguj zapytanie SQL
-            debug_print(query, params, execution_time)
-
-            conn.commit()
-            conn.close()
-
-            return result
-        except Exception as e:
-            end_time = time.time()
-            execution_time = end_time - start_time
-
-            # Loguj błąd zapytania
-            log_error(query, params, str(e))
-
-            # Zamknij połączenie
-            try:
-                conn.close()
-            except:
-                pass
-
-            # Ponownie zgłoś wyjątek
-            raise
-
+                user, pwd = db_config.get('user'), db_config.get('password')
+                if user and pwd: cs += f"UID={user};PWD={pwd};"
+                else: raise ValueError("Konfiguracja wymaga 'trusted_connection=yes' lub 'user' i 'password'.")
+            return pyodbc.connect(cs)
+        raise ValueError(f"Nieobsługiwany silnik bazy: {db_config.get('engine')}")
 
 def get_modifier_id():
-    """
-    Pobiera informacje o zalogowanym użytkowniku, w tym jego wydział.
-    Returns:
-        tuple: (user_id, user_app_id, user_app_role, visible_next_month, user_department)
-    """
     username = getpass.getuser()
-
     try:
         conn = DatabaseConnector.get_connection()
         cursor = conn.cursor()
-
-        query = f"SELECT * FROM {SQL_OBJECTS['fn_getuserappinfo']}(?)"
-
-        cursor.execute(query, (username,))
-        result = cursor.fetchone()
+        cursor.execute(f"SELECT * FROM {SQL_OBJECTS['fn_getuserappinfo']}(?)", username)
+        res = cursor.fetchone()
         conn.close()
-
-        if result and len(result) >= 5: # Sprawdź, czy zwrócono wystarczająco dużo kolumn
-            user_id = result[0]
-            user_app_id = result[1]
-            user_app_role = result[2]
-            visible_next_month = result[3]
-            user_department = result[4] # NOWA, PIĄTA WARTOŚĆ
-
-            return user_id, user_app_id, user_app_role, bool(visible_next_month), user_department
-
-        # Wartości domyślne, gdy nie znaleziono użytkownika lub struktura jest niepoprawna
-        return "System", username, "Użytkownik", False, None
-
+        return (res[0], res[1], res[2], bool(res[3]), res[4]) if res and len(res) >= 5 else ("System", username, "Użytkownik", False, None)
     except Exception as e:
-        log_error(f"Błąd podczas pobierania informacji o użytkowniku ({username}): {e}", exception=e)
-        # Wartości domyślne w przypadku błędu
+        log_error(f"Błąd pobierania info o użytkowniku ({username}): {e}", exception=e)
         return "System", username, "Użytkownik", False, None
 
-
-def check_application_version():
-    """Pobiera wymaganą wersję aplikacji i flagę wymuszenia z bazy danych."""
+def load_all_app_settings():
+    """Ładuje wszystkie ustawienia z tabeli appsettings i zapisuje w globalnym obiekcie."""
     try:
         conn = DatabaseConnector.get_connection()
         cursor = conn.cursor()
-        cursor.execute(
-            f"SELECT SettingKey, SettingValue FROM {SQL_OBJECTS['appsettings']} WHERE SettingKey IN ('current_version', 'force_update')")
+        cursor.execute(f"SELECT SettingKey, SettingValue FROM {SQL_OBJECTS['appsettings']}")
         results = cursor.fetchall()
         conn.close()
-
-        settings = {row.SettingKey: row.SettingValue for row in results}
-        return {
-            'required_version': settings.get('current_version', '0.0.0'),
-            'force_update': settings.get('force_update', 'false').lower() == 'true'
-        }
+        if not results:
+            log_error("Błąd krytyczny: Tabela [appsettings] jest pusta lub nie istnieje.")
+            return False
+        for row in results:
+            if row.SettingKey and row.SettingValue:
+                app_settings.parse_and_apply(row.SettingKey, row.SettingValue)
+        debug_print("Pomyślnie załadowano ustawienia aplikacji z bazy danych.")
+        return True
     except Exception as e:
-        # W razie błędu zwracamy bezpieczne wartości, aby nie blokować aplikacji
-        log_error(f"Błąd podczas sprawdzania wersji aplikacji: {e}", exception=e)
-        return {'required_version': APP_VERSION, 'force_update': False}
+        log_error(f"Błąd krytyczny podczas ładowania ustawień aplikacji: {e}", exception=e)
+        return False
+
+def check_application_version():
+    """Zwraca załadowane wartości dla kompatybilności."""
+    return {'required_version': app_settings.REQUIRED_VERSION, 'force_update': app_settings.FORCE_UPDATE}
