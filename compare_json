@@ -1,79 +1,46 @@
-# compare_json.py
+# compare_to_file.py
 import json
 import sys
-from typing import Any, List
+from typing import Any
 
-# Lista do przechowywania znalezionych różnic w czytelnej formie
-differences = []
+# Globalne listy do przechowywania zagregowanych różnic
+g_added = []
+g_changed = []
+g_removed = []
 
 def find_diff(data1: Any, data2: Any, path: str = "root"):
     """
-    Rekursywna funkcja do porównywania dwóch obiektów danych (zdekodowanych z JSON).
-    Ignoruje kolejność elementów w listach.
-
-    Args:
-        data1: Pierwszy obiekt do porównania.
-        data2: Drugi obiekt do porównania.
-        path: Ścieżka do bieżącego elementu, używana w raportowaniu różnic.
+    Rekursywna funkcja do porównywania danych, która kategoryzuje różnice.
     """
-    # 1. Porównanie typów
     if type(data1) is not type(data2):
-        differences.append(
-            f"Różnica w ścieżce '{path}': inne typy danych "
-            f"({type(data1).__name__} vs {type(data2).__name__})"
+        g_changed.append(
+            f"Ścieżka '{path}': typ zmieniono z `{type(data1).__name__}` na `{type(data2).__name__}`"
         )
         return
 
-    # 2. Porównanie słowników (obiektów JSON)
     if isinstance(data1, dict):
-        keys1 = set(data1.keys())
-        keys2 = set(data2.keys())
-
-        common_keys = keys1.intersection(keys2)
-        added_keys = keys2 - keys1
-        removed_keys = keys1 - keys2
-
-        for key in added_keys:
-            differences.append(f"W ścieżce '{path}' dodano klucz: '{key}'")
-        for key in removed_keys:
-            differences.append(f"W ścieżce '{path}' brakuje klucza: '{key}'")
-
-        # Rekursywne porównanie wartości dla wspólnych kluczy
-        for key in common_keys:
+        keys1, keys2 = set(data1.keys()), set(data2.keys())
+        for key in keys2 - keys1:
+            g_added.append(f"Klucz `{key}` w ścieżce '{path}'")
+        for key in keys1 - keys2:
+            g_removed.append(f"Klucz `{key}` w ścieżce '{path}'")
+        for key in keys1.intersection(keys2):
             find_diff(data1[key], data2[key], path=f"{path}.{key}")
 
-    # 3. Porównanie list (tablic JSON) - ignorowanie kolejności
     elif isinstance(data1, list):
-        # Tworzymy kopie list, aby można było z nich bezpiecznie usuwać elementy
-        list1_copy = [item for item in data1]
-        list2_copy = [item for item in data2]
-        
-        # Iterujemy po elementach pierwszej listy i próbujemy znaleźć i usunąć
-        # pasujący element z kopii drugiej listy
+        list1_copy, list2_copy = list(data1), list(data2)
         for item1 in data1:
             try:
-                # Szukamy identycznego elementu w drugiej liście
-                # Jeśli się uda, usuwamy go, aby oznaczyć jako "dopasowany"
                 list2_copy.remove(item1)
             except ValueError:
-                # Jeśli elementu nie ma w drugiej liście, to jest to różnica
-                differences.append(
-                    f"W liście '{path}' brakuje elementu: {json.dumps(item1, ensure_ascii=False)}"
-                )
-
-        # Wszystkie elementy, które pozostały w list2_copy, są "dodatkowymi"
-        # elementami w drugiej liście
+                g_removed.append(f"Element w liście '{path}': {json.dumps(item1, ensure_ascii=False)}")
         for item2 in list2_copy:
-            differences.append(
-                f"W liście '{path}' dodano element: {json.dumps(item2, ensure_ascii=False)}"
-            )
+            g_added.append(f"Element w liście '{path}': {json.dumps(item2, ensure_ascii=False)}")
 
-    # 4. Porównanie wartości prostych (string, number, boolean, null)
     else:
         if data1 != data2:
-            val1_str = json.dumps(data1, ensure_ascii=False)
-            val2_str = json.dumps(data2, ensure_ascii=False)
-            differences.append(f"Różnica w ścieżce '{path}': {val1_str} vs {val2_str}")
+            val1, val2 = json.dumps(data1, ensure_ascii=False), json.dumps(data2, ensure_ascii=False)
+            g_changed.append(f"Wartość w '{path}': z {val1} na {val2}")
 
 def load_json_file(filepath: str) -> Any:
     """Wczytuje i dekoduje plik JSON, obsługując błędy."""
@@ -89,29 +56,50 @@ def load_json_file(filepath: str) -> Any:
 
 def main():
     """Główna funkcja programu."""
-    if len(sys.argv) != 3:
-        print("Użycie: python compare_json.py <plik1.json> <plik2.json>")
+    if len(sys.argv) != 4:
+        print("Użycie: python compare_to_file.py <plik1.json> <plik2.json> <plik_wynikowy.txt>")
         sys.exit(1)
 
-    file1_path = sys.argv[1]
-    file2_path = sys.argv[2]
-
-    print(f"--- Porównywanie plików JSON ---")
-    print(f"Plik 1: {file1_path}")
-    print(f"Plik 2: {file2_path}")
-    print("-" * 30)
+    file1_path, file2_path, output_path = sys.argv[1], sys.argv[2], sys.argv[3]
 
     json1 = load_json_file(file1_path)
     json2 = load_json_file(file2_path)
 
     find_diff(json1, json2)
 
-    if not differences:
-        print("✅ Pliki są semantycznie identyczne.")
-    else:
-        print(f"🔥 Znaleziono {len(differences)} różnic:\n")
-        for diff in differences:
-            print(f"- {diff}")
+    try:
+        with open(output_path, 'w', encoding='utf-8') as f:
+            print("--- Porównywanie plików JSON (Plik 1 -> Plik 2) ---", file=f)
+            print(f"Plik bazowy (stary): {file1_path}", file=f)
+            print(f"Plik do porównania (nowy): {file2_path}", file=f)
+            print("-" * 50, file=f)
+            f.write("\n")
+
+            if not g_added and not g_changed and not g_removed:
+                print("✅ Pliki są semantycznie identyczne.", file=f)
+            else:
+                print("🔥 Znaleziono różnice. Podsumowanie:\n", file=f)
+                if g_added:
+                    print("--- 🟢 DODANO W NOWYM PLIKU ---", file=f)
+                    for item in g_added:
+                        print(f"- {item}", file=f)
+                    f.write("\n")
+                if g_changed:
+                    print("--- 🟡 ZMIENIONO ---", file=f)
+                    for item in g_changed:
+                        print(f"- {item}", file=f)
+                    f.write("\n")
+                if g_removed:
+                    print("--- 🔴 USUNIĘTO (BRAKUJE W NOWYM PLIKU) ---", file=f)
+                    for item in g_removed:
+                        print(f"- {item}", file=f)
+                    f.write("\n")
+        
+        print(f"✅ Wyniki porównania zostały zapisane do pliku: {output_path}")
+
+    except IOError as e:
+        print(f"BŁĄD: Nie można zapisać do pliku {output_path}. {e}")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
