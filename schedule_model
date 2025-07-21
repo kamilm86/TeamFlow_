@@ -2,10 +2,10 @@
 from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QDate
 from PySide6.QtGui import QColor, QBrush, QFont
 from debug_utils import debug_print, log_warning, log_error
-from symbol_parser import parse_symbol, get_symbol_description
-from business_rules import BusinessRules
-from config import SQL_OBJECTS
 from styles import AppStyles
+from symbol_parser import parse_symbol, get_symbol_description
+from app_settings import app_settings  # ZMIANA: Poprawiono import
+from config import SQL_OBJECTS
 
 # Definicje ról danych
 ROLE_DATA = Qt.UserRole
@@ -16,9 +16,8 @@ ROLE_HAS_OVERTIME = Qt.UserRole + 4
 ROLE_SPECIAL_SYMBOL = Qt.UserRole + 5
 ROLE_LOCATION_SYMBOL = Qt.UserRole + 6
 ROLE_ICON_COLOR = Qt.UserRole + 7
+ROLE_HEADER_TYPE = Qt.UserRole + 10
 
-
-# Usunięto niepotrzebną już rolę ROLE_HEADER_TYPE
 
 class ScheduleTableModel(QAbstractTableModel):
     """
@@ -32,6 +31,7 @@ class ScheduleTableModel(QAbstractTableModel):
     ROLE_SPECIAL_SYMBOL = Qt.UserRole + 5
     ROLE_LOCATION_SYMBOL = Qt.UserRole + 6
     ROLE_ICON_COLOR = Qt.UserRole + 7
+    ROLE_HEADER_TYPE = Qt.UserRole + 10
 
     def __init__(self, parent=None, user_role=None):
         super().__init__(parent)
@@ -51,8 +51,10 @@ class ScheduleTableModel(QAbstractTableModel):
         self._working_days = 0
         self._is_dark_theme = False
         self._data_provider = None
+
         self.user_role = user_role
         self.keyboard_edit_roles = ["Pracownik WPR", "Lider OUT"]
+
         from column_definitions import ColumnDefinitions
         self.column_definitions = ColumnDefinitions()
         self._visible_columns = self.column_definitions.DEFAULT_VISIBLE_COLUMNS.copy()
@@ -64,12 +66,16 @@ class ScheduleTableModel(QAbstractTableModel):
     def data(self, index, role=Qt.DisplayRole):
         if not index.isValid():
             return None
+
         row, col = index.row(), index.column()
+
         if not (0 <= row < self._row_count and 0 <= col < self._column_count and row < len(self._keys)):
             return None
+
         key = self._keys[row]
         row_data = self._processed_data.get(key, {})
         is_employee_column = col < len(self._visible_columns)
+
         full_symbol_text = ""
         if not is_employee_column:
             schedule_col_check = col - len(self._visible_columns)
@@ -82,11 +88,14 @@ class ScheduleTableModel(QAbstractTableModel):
                 if schedule_col < self._days_in_month and full_symbol_text:
                     parsed_symbol = parse_symbol(full_symbol_text)
                     special_symbol = parsed_symbol.get('special_symbol')
+
                     if special_symbol:
                         if special_symbol in ["OS", "U"]:
                             return QBrush(QColor(Qt.GlobalColor.black))
-                        elif special_symbol in BusinessRules.ABSENCE_SYMBOLS:
+                        # ZMIANA: Odwołanie do app_settings zamiast BusinessRules
+                        elif special_symbol in app_settings.get_absence_symbols():
                             return QBrush(QColor(Qt.GlobalColor.white))
+
                     start_hour = parsed_symbol.get('start_hour')
                     if start_hour is not None:
                         if 5 <= start_hour <= 14:
@@ -98,14 +107,17 @@ class ScheduleTableModel(QAbstractTableModel):
             if full_symbol_text:
                 return parse_symbol(full_symbol_text).get('special_symbol')
             return None
+
         if role == ROLE_LOCATION_SYMBOL:
             if full_symbol_text:
                 return parse_symbol(full_symbol_text).get('location')
             return None
+
         if role == ROLE_ICON_COLOR:
             if not is_employee_column:
                 return self._get_foreground_color(row_data, key, col, is_employee_column)
             return None
+
         if role == Qt.DisplayRole:
             if is_employee_column:
                 col_id = self._visible_columns[col]
@@ -182,7 +194,8 @@ class ScheduleTableModel(QAbstractTableModel):
                         if special_symbol:
                             if special_symbol in ["OS", "U"]:
                                 return QBrush(QColor(255, 180, 0))
-                            elif special_symbol in BusinessRules.ABSENCE_SYMBOLS:
+                            # ZMIANA: Odwołanie do app_settings zamiast BusinessRules
+                            elif special_symbol in app_settings.get_absence_symbols():
                                 return QBrush(QColor("#9370DB") if not self._is_dark_theme else QColor("#9370DB"))
                         if parsed_symbol.get('start_hour') is not None:
                             return QBrush(self._get_color_by_start_hour(parsed_symbol['start_hour']))
@@ -197,24 +210,31 @@ class ScheduleTableModel(QAbstractTableModel):
                 if section < len(self._column_headers):
                     return self._column_headers[section]
 
-            # --- START NOWEJ LOGIKI DLA KOLORU TEKSTU ---
-            elif role == Qt.ForegroundRole:
+            elif role == ROLE_HEADER_TYPE:
                 visible_columns_count = len(self._visible_columns)
                 if section >= visible_columns_count:
-                    schedule_column = section - visible_columns_count
+                    schedule_column = section - len(self._visible_columns)
                     day = schedule_column + 1
 
                     if self._year and self._month and QDate.isValid(self._year, self._month, day):
                         current_date = QDate(self._year, self._month, day)
+                        if current_date == QDate.currentDate():
+                            return "today"
+                        if schedule_column in self._weekend_columns:
+                            return "weekend"
+                return "normal"
 
-                        # Priorytet 1: Dzisiejszy dzień
+            elif role == Qt.ForegroundRole:
+                visible_columns_count = len(self._visible_columns)
+                if section >= visible_columns_count:
+                    schedule_column = section - len(self._visible_columns)
+                    day = schedule_column + 1
+                    if self._year and self._month and QDate.isValid(self._year, self._month, day):
+                        current_date = QDate(self._year, self._month, day)
                         if current_date == QDate.currentDate():
                             return QBrush(QColor(AppStyles.ACCENT_COLOR_DARK))
-
-                        # Priorytet 2: Weekend
                         if schedule_column in self._weekend_columns:
-                            return QBrush(QColor("#E74C3C"))  # Wyraźny czerwony
-            # --- KONIEC NOWEJ LOGIKI ---
+                            return QBrush(QColor("#E74C3C"))
 
             elif role == Qt.TextAlignmentRole:
                 return Qt.AlignCenter
@@ -231,7 +251,6 @@ class ScheduleTableModel(QAbstractTableModel):
             if self._column_count > 0:
                 self.headerDataChanged.emit(Qt.Horizontal, 0, self._column_count - 1)
 
-    # ... (reszta metod bez zmian) ...
     def _get_user_data(self, row_data, key, col, is_employee_column):
         if is_employee_column:
             return {
@@ -470,14 +489,11 @@ class ScheduleTableModel(QAbstractTableModel):
         return flags
 
     def _get_color_by_start_hour(self, hour):
-        if hour is None or not (0 <= hour <= 23): return QColor(255, 255, 255, 0)
-        colors = {5: (204, 255, 255), 6: (204, 255, 255), 7: (0, 255, 255), 8: (0, 204, 255), 9: (0, 255, 0),
-                  10: (153, 204, 0), 11: (204, 255, 204), 12: (255, 255, 153), 13: (255, 204, 153), 14: (255, 153, 0),
-                  15: (255, 0, 255), 16: (204, 0, 0)}
-        if hour in colors: return QColor(*colors[hour])
-        if 17 <= hour <= 21: return QColor(150, 150, 150)
-        if hour >= 22 or hour <= 4: return QColor(30, 30, 30)
-        return QColor(255, 255, 255, 0)
+        """Zwraca kolor dla danej godziny rozpoczęcia z centralnych ustawień."""
+        if hour is None or not (0 <= hour <= 23):
+            return QColor(255, 255, 255, 0)
+        color_hex = app_settings.SHIFT_COLOR_MAP.get(hour, "#FFFFFF")
+        return QColor(color_hex)
 
     def set_employee_columns(self, columns, visible_columns=None):
         self._employee_columns = [c for c in columns if isinstance(c, tuple) and len(c) == 3] if isinstance(columns,
