@@ -17,6 +17,7 @@ class ScheduleControlDialog(QDialog):
         self.month = month
         self.is_dark_theme = getattr(parent, 'is_dark_theme', False)
         self.login_windows, _, _, _, _= get_modifier_id() # Pobierz nazwę użytkownika Windows
+        self.data_provider = parent.data_provider  # Przechowujemy referencję do data_provider
 
         self.setWindowTitle("Sugestie i blokowanie grafiku")
         self.setMinimumWidth(450)
@@ -196,6 +197,9 @@ class ScheduleControlDialog(QDialog):
         if self._execute_procedure(sql):
             QMessageBox.information(self, "Sukces", "Grafik został opublikowany.")
             self.load_initial_status()
+            # --- POCZĄTEK ZMIANY ---
+            self.data_provider.clear_publish_status_cache(self.year, self.month)
+            # --- KONIEC ZMIANY ---
             self.data_refresh_needed.emit()
 
     def unpublish_schedule(self):
@@ -203,6 +207,9 @@ class ScheduleControlDialog(QDialog):
         if self._execute_procedure(sql):
             QMessageBox.information(self, "Sukces", "Publikacja grafiku została cofnięta.")
             self.load_initial_status()
+            # --- POCZĄTEK ZMIANY ---
+            self.data_provider.clear_publish_status_cache(self.year, self.month)
+            # --- KONIEC ZMIANY ---
             self.data_refresh_needed.emit()
 
     def get_suggestions(self):
