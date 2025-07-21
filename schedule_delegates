@@ -1,9 +1,8 @@
 from PySide6.QtWidgets import QStyledItemDelegate, QStyle, QStyleOptionViewItem
 from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QPolygon, QFont
 from PySide6.QtCore import Qt, QRect, QPoint
-from schedule_model import ROLE_HAS_MEETING, ROLE_HAS_OVERTIME, ROLE_SPECIAL_SYMBOL, ROLE_LOCATION_SYMBOL, \
-    ROLE_ICON_COLOR
-
+from schedule_model import ROLE_HAS_MEETING, ROLE_HAS_OVERTIME, ROLE_SPECIAL_SYMBOL, ROLE_LOCATION_SYMBOL, ROLE_ICON_COLOR
+from debug_utils import log_error
 
 class OvertimeItemDelegate(QStyledItemDelegate):
     """
@@ -64,7 +63,7 @@ class OvertimeItemDelegate(QStyledItemDelegate):
 
             painter.restore()
         except Exception as e:
-            print(f"Błąd podczas rysowania delegata: {e}")
+            log_error(f"Błąd podczas rysowania delegata: {e}")
 
     def _draw_text_with_background(self, painter: QPainter, option: QStyleOptionViewItem, text: str, position: str):
         """
