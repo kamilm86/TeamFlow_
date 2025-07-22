@@ -426,7 +426,7 @@ class UpdateRequiredDialog(QDialog):
         info_label = QLabel(
             "<b>Dostępna jest nowa wersja aplikacji.</b><br><br>"
             "Aby zapewnić spójność danych i dostęp do nowych funkcji, dalsza praca na tej wersji nie jest możliwa.<br>"
-            "Zapisz swoją pracę."
+
         )
         info_label.setAlignment(Qt.AlignCenter)
         layout.addWidget(info_label)
@@ -453,31 +453,22 @@ class WorkScheduleWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        # --- POCZĄTEK NOWEJ LOGIKI STARTOWEJ ---
-        # Krok 1: Załaduj globalne ustawienia aplikacji jako pierwszą czynność.
-        if not load_all_app_settings():
-            QMessageBox.critical(None, "Błąd krytyczny",
-                                 "Nie udało się załadować konfiguracji aplikacji z serwera. Aplikacja zostanie zamknięta.")
-            QTimer.singleShot(10, QApplication.instance().quit)
-            return
+        # --- ZMIANA: Inicjalizacja przeniesiona do sekwencji startowej w `if __name__ == "__main__"` ---
+        # Tutaj wykonujemy tylko te operacje, które zakładają, że wszystkie testy startowe przeszły pomyślnie.
 
-        # Krok 2: Pobierz bieżącego użytkownika Windows
         try:
-            current_windows_user = getpass.getuser().lower()  # Od razu konwertujemy na małe litery
+            current_windows_user = getpass.getuser().lower()
         except Exception:
             current_windows_user = "unknown_user"
 
-        # Krok 3: Sprawdzamy, czy bieżący użytkownik jest na liście uprawnionych do logowania
-        log_to_file = current_windows_user in app_settings.LOGGING_USERS_FILE
-        log_to_console = current_windows_user in app_settings.LOGGING_USERS_CONSOLE
+        # Ustawienia logowania są już zainicjowane, ale tutaj możemy je zalogować
+        debug_print(
+            f"Logowanie dla użytkownika {current_windows_user}: plik={app_settings.LOGGING_USERS_FILE}, konsola={app_settings.LOGGING_USERS_CONSOLE}")
 
-        # Krok 4: Zainicjuj system logowania
-        setup_logging(log_to_file=log_to_file, log_to_console=log_to_console)
-        # --- KONIEC NOWEJ LOGIKI STARTOWEJ ---
+        self.settings_db = SettingsDatabase()
+        self.user_settings = self.settings_db.load_settings(login_windows=current_windows_user)
 
         self.staffing_details_win = None
-        self.settings_db = SettingsDatabase()
-        self.user_settings = self.settings_db.load_settings()
 
         debug_print(f"ZAŁADOWANE USTAWIENIA PRZY STARCIE: {self.user_settings}")
 
@@ -557,19 +548,16 @@ class WorkScheduleWindow(QMainWindow):
             self.date_combo.setEnabled(enabled)
 
     def start_full_initialization(self):
-        """"Uruchamia pełną inicjalizację aplikacji."""
-        # --- ZMIANA: Usunięto ładowanie ustawień, bo odbywa się w __init__ ---
+        """Uruchamia pełną inicjalizację po sprawdzeniu wersji i uprawnień."""
+        # --- ZMIANA: Usunięto sprawdzanie wersji, bo odbywa się ono PRZED stworzeniem okna ---
 
         self.load_data_button.setText("Sprawdzanie uprawnień...")
         self.load_data_button.setEnabled(False)
         QApplication.processEvents()
 
-        if self.check_if_update_is_required(): # check_if_update_is_required odczytuje dane z app_settings
-            self.close()
-            return
-
         if not self.check_user_permissions():
-            self.close()
+            # Jeśli użytkownik nie ma uprawnień, zamknij aplikację
+            QTimer.singleShot(10, self.close)
             return
 
         self.manage_ui_state(enabled=True)
@@ -589,12 +577,8 @@ class WorkScheduleWindow(QMainWindow):
 
     def check_if_update_is_required(self) -> bool:
         """Sprawdza wersję aplikacji na podstawie załadowanych ustawień."""
-        if parse_version(APP_VERSION) < parse_version(app_settings.REQUIRED_VERSION):
-            dialog = UpdateRequiredDialog(self)
-            dialog.exec()
-            sys.exit()
-            return True
-        return False
+        # Porównujemy wersje. Funkcja zwraca tylko wynik, nie zamyka już aplikacji.
+        return parse_version(APP_VERSION) != parse_version(app_settings.REQUIRED_VERSION)
 
     def show_staffing_details_window(self):
         from staffing_details_window import StaffingDetailsWindow
@@ -3027,7 +3011,9 @@ class WorkScheduleWindow(QMainWindow):
         filtered_data = {}
         for key, data in self.processed_data.items():
             wydzial, przelozony, uzytkownik_dane, _ = key
-
+            # Jeśli filtr "w pracy" jest aktywny, od razu pomijaj osoby na DTN
+            if show_only_at_work and data.get('dtn', 0) == 1:
+                continue
             # --- Krok 1: Sprawdzenie standardowych filtrów ---
             passes_standard_filters = (
                     (not selected_locations or data.get('lokalizacja_domyslna') in selected_locations) and
@@ -6038,6 +6024,7 @@ class WorkScheduleWindow(QMainWindow):
         if hasattr(self, 'meetings_checkbox'): self.meetings_checkbox.setStyleSheet(checkbox_style)
         if hasattr(self, 'trainings_checkbox'): self.trainings_checkbox.setStyleSheet(checkbox_style)
         if hasattr(self, 'overtime_checkbox'): self.overtime_checkbox.setStyleSheet(checkbox_style)
+        if hasattr(self, 'at_work_today_checkbox'): self.at_work_today_checkbox.setStyleSheet(checkbox_style)
 
         # Aktualizacja modeli i tabel
         if hasattr(self, 'schedule_model'): self.schedule_model.set_theme(self.is_dark_theme)
@@ -6080,6 +6067,40 @@ class WorkScheduleWindow(QMainWindow):
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+
+    # --- NOWA, BEZPIECZNA SEKWENCJA STARTOWA ---
+
+    # Krok 1: Załaduj kluczowe ustawienia PRZED utworzeniem głównego okna
+    if not load_all_app_settings():
+        QMessageBox.critical(None, "Błąd Krytyczny",
+                             "Nie udało się załadować konfiguracji aplikacji z serwera.\n"
+                             "Sprawdź połączenie z bazą danych i plik config.ini.\n\n"
+                             "Aplikacja nie może zostać uruchomiona.")
+        sys.exit(1)
+
+    # Krok 2: Sprawdź wersję aplikacji PRZED utworzeniem głównego okna
+    if parse_version(APP_VERSION) != parse_version(app_settings.REQUIRED_VERSION):
+        # Inicjalizujemy logowanie z pustymi ustawieniami, aby ewentualne błędy mogły być zapisane
+        setup_logging()
+        log_error(
+            f"Wersja aplikacji jest przestarzała. Wymagana: {app_settings.REQUIRED_VERSION}, Obecna: {APP_VERSION}")
+
+        # Używamy QDialog bezpośrednio, bo główne okno jeszcze nie istnieje
+        dialog = UpdateRequiredDialog()
+        dialog.exec()
+        sys.exit(0)  # Zakończ normalnie po informacji dla użytkownika
+
+    # Krok 3: Zainicjuj logowanie (teraz, gdy wiemy, że aplikacja może wystartować)
+    try:
+        current_windows_user = getpass.getuser().lower()
+    except Exception:
+        current_windows_user = "unknown_user"
+
+    log_to_file = current_windows_user in app_settings.LOGGING_USERS_FILE
+    log_to_console = current_windows_user in app_settings.LOGGING_USERS_CONSOLE
+    setup_logging(log_to_file=log_to_file, log_to_console=log_to_console)
+
+    # Krok 4: Jeśli wszystko jest w porządku, utwórz i pokaż główne okno
     window = WorkScheduleWindow()
     window.showMaximized()
     sys.exit(app.exec())
