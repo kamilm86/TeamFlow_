@@ -1,76 +1,47 @@
-@echo off
-setlocal
+    def apply_theme_settings(self, theme, font_family, font_size):
+        """Stosuje wybrane ustawienia motywu z wykorzystaniem centralnych stylów"""
+        self.is_dark_theme = (theme == "dark")
+        self.current_font = font_family
+        self.current_font_size = font_size
+        font = QFont(font_family, font_size)
+        QApplication.setFont(font)
+        self.setStyleSheet(AppStyles.get_main_window_style(theme))
 
-:: ==================================================================
-::                       KONFIGURACJA
-:: ==================================================================
-::
-:: ---> WPISZ TUTAJ wymaganą wersję aplikacji <---
-set "REQUIRED_VER=1.0.5"
-::
-:: Nazwa aplikacji i folderu
-set "APP_NAME=TeamFlowApp.exe"
-set "APP_FOLDER=TeamFlowApp"
-::
-:: Szablon ścieżki sieciowej. Zmienna %VERSION% zostanie zastąpiona numerem wersji podanym wyżej.
-set "NET_PATH_TEMPLATE=\\mbank.pl\zasoby.Z-DBZ_APLIKACJE\USER_APP\TeamFlowApp\wersja_%VERSION%\%APP_NAME%"
-::
-:: ==================================================================
+        button_style = AppStyles.get_button_style(theme)
+        combo_style = AppStyles.get_combobox_style(theme)
+        line_edit_style = AppStyles.get_line_edit_style(theme)
+        list_style = AppStyles.get_list_style(theme)
+        date_edit_style = AppStyles.get_date_edit_style(theme)
+        checkbox_style = AppStyles.get_checkbox_style(theme)
+        table_style = AppStyles.get_table_style(theme)
+        left_panel_style = AppStyles.get_left_panel_style(theme)
 
+        # Przyciski
+        for btn in self.findChildren(QPushButton):
+            btn.setStyleSheet(button_style)
 
-:: --- Sekcja automatyczna (nie edytuj) ---
-set "LOCAL_DIR=%TEMP%\%APP_FOLDER%"
-set "LOCAL_EXE=%LOCAL_DIR%\%APP_NAME%"
-set "NET_PATH=%NET_PATH_TEMPLATE:%VERSION%=%REQUIRED_VER%%"
+        # Pola wyboru (ComboBox) i listy
+        if hasattr(self, 'date_combo'): self.date_combo.setStyleSheet(combo_style)
+        if hasattr(self, 'grupa_main_filter_combo'): self.grupa_main_filter_combo.setStyleSheet(combo_style)
+        if hasattr(self, 'wydzial_combo'): self.wydzial_combo.setStyleSheet(combo_style)
+        # ... (inne comboboxy)
+        if hasattr(self, 'przelozony_list'): self.przelozony_list.setStyleSheet(list_style)
+        if hasattr(self, 'uzytkownik_list'): self.uzytkownik_list.setStyleSheet(list_style)
 
-echo.[INFO] Wymagana wersja aplikacji: %REQUIRED_VER%
-echo.[INFO] Lokalizacja lokalna: %LOCAL_EXE%
-echo.[INFO] Lokalizacja sieciowa: %NET_PATH%
+        # Pola tekstowe i daty
+        if hasattr(self, 'przelozony_filter'): self.przelozony_filter.setStyleSheet(line_edit_style)
+        if hasattr(self, 'uzytkownik_filter'): self.uzytkownik_filter.setStyleSheet(line_edit_style)
+        # ... (inne lineedits)
+        if hasattr(self, 'date_from'): self.date_from.setStyleSheet(date_edit_style)
+        if hasattr(self, 'date_to'): self.date_to.setStyleSheet(date_edit_style)
 
-:: Utworzenie folderu lokalnego, jeśli nie istnieje
-if not exist "%LOCAL_DIR%" mkdir "%LOCAL_DIR%" >nul
+        # Checkboxy
+        if hasattr(self, 'meetings_checkbox'): self.meetings_checkbox.setStyleSheet(checkbox_style)
+        if hasattr(self, 'trainings_checkbox'): self.trainings_checkbox.setStyleSheet(checkbox_style)
+        if hasattr(self, 'overtime_checkbox'): self.overtime_checkbox.setStyleSheet(checkbox_style)
+        
+        # --- POCZĄTEK POPRAWKI ---
+        if hasattr(self, 'at_work_today_checkbox'): self.at_work_today_checkbox.setStyleSheet(checkbox_style)
+        # --- KONIEC POPRAWKI ---
 
-:: Sprawdzenie wersji i pobranie pliku za pomocą PowerShell
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-    $ErrorActionPreference = 'Stop'; ^
-    $localExe = '%LOCAL_EXE%'; ^
-    $netPath = '%NET_PATH%'; ^
-    $requiredVerString = '%REQUIRED_VER%'; ^
-    $needsDownload = $false; ^
-    try { ^
-        if (Test-Path $localExe -PathType Leaf) { ^
-            $localVersionString = (Get-Item $localExe).VersionInfo.FileVersion; ^
-            if ([version]$localVersionString -ne [version]$requiredVerString) { ^
-                Write-Host ('Lokalna wersja (' + $localVersionString + ') jest inna niz wymagana (' + $requiredVerString + '). Rozpoczynam pobieranie...'); ^
-                $needsDownload = $true; ^
-            } else { ^
-                Write-Host ('Lokalna wersja (' + $localVersionString + ') jest aktualna. Pomijam pobieranie.'); ^
-            } ^
-        } else { ^
-            Write-Host 'Aplikacja nie istnieje lokalnie. Rozpoczynam pobieranie...'; ^
-            $needsDownload = $true; ^
-        } ^
-        if ($needsDownload) { ^
-            Write-Host ('Pobieranie pliku z: ' + $netPath); ^
-            $tmpFile = Join-Path -Path '%LOCAL_DIR%' -ChildPath ([guid]::NewGuid().ToString() + '.tmp'); ^
-            Start-BitsTransfer -Source $netPath -Destination $tmpFile; ^
-            Move-Item -Path $tmpFile -Destination $localExe -Force; ^
-            Write-Host 'Pobieranie zakonczone pomyslnie.'; ^
-        } ^
-    } catch { ^
-        Write-Host ('[BŁĄD] Wystapil krytyczny problem: ' + $_.Exception.Message) -ForegroundColor Red; ^
-        exit 1; ^
-    }
-
-:: Sprawdzenie, czy PowerShell zakończył się błędem
-if %errorlevel% neq 0 (
-    echo.[BŁĄD] Nie udalo sie zweryfikowac lub pobrac aplikacji. Sprawdz komunikat powyzej.
-    pause
-    goto :eof
-)
-
-:: Uruchomienie aplikacji
-echo.[INFO] Uruchamianie aplikacji...
-start "Uruchamianie %APP_NAME%" "%LOCAL_EXE%"
-
-endlocal
+        # ... (reszta metody bez zmian)
