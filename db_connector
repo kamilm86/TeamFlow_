@@ -10,34 +10,61 @@ class DatabaseConnector:
     @staticmethod
     def get_connection():
         db_config = DATABASE_CONFIG
-        if db_config.get('engine') == 'mssql':
-            cs = (f"DRIVER={{{db_config.get('driver')}}};"
-                  f"SERVER={db_config.get('server')};"
-                  f"DATABASE={db_config.get('database')};")
-            if db_config.get('trusted_connection', 'no').lower() == 'yes':
-                cs += "Trusted_Connection=yes;"
+        if db_config.get('engine') != 'mssql':
+            raise ValueError(f"Nieobsługiwany silnik bazy danych: {db_config.get('engine')}")
+
+        drivers_str = db_config.get('driver', '')
+        drivers = [d.strip() for d in drivers_str.split(',') if d.strip()]
+
+        if not drivers:
+            raise ValueError("Brak zdefiniowanych sterowników w pliku config.ini w sekcji [database] pod kluczem 'driver'.")
+
+        base_connection_string = (
+            f"SERVER={db_config.get('server')};"
+            f"DATABASE={db_config.get('database')};"
+        )
+        if db_config.get('trusted_connection', 'no').lower() == 'yes':
+            base_connection_string += "Trusted_Connection=yes;"
+        else:
+            user, password = db_config.get('user'), db_config.get('password')
+            if user and password:
+                base_connection_string += f"UID={user};PWD={password};"
             else:
-                user, pwd = db_config.get('user'), db_config.get('password')
-                if user and pwd: cs += f"UID={user};PWD={pwd};"
-                else: raise ValueError("Konfiguracja wymaga 'trusted_connection=yes' lub 'user' i 'password'.")
-            return pyodbc.connect(cs)
-        raise ValueError(f"Nieobsługiwany silnik bazy: {db_config.get('engine')}")
+                raise ValueError("Konfiguracja wymaga 'trusted_connection=yes' albo podania 'user' i 'password'.")
+
+        last_error = None
+        for driver in drivers:
+            try:
+                connection_string = f"DRIVER={{{driver}}};{base_connection_string}"
+                debug_print(f"Próba połączenia ze sterownikiem: {driver}")
+                conn = pyodbc.connect(connection_string, timeout=5)
+                debug_print(f"Połączenie udane przy użyciu sterownika: {driver}")
+                return conn
+            except pyodbc.Error as e:
+                last_error = e
+                log_warning(f"Nie udało się połączyć przy użyciu sterownika '{driver}': {e}")
+                continue
+
+        raise ConnectionError(f"Nie udało się nawiązać połączenia z bazą danych przy użyciu żadnego z podanych sterowników: {drivers_str}. Ostatni błąd: {last_error}")
 
 def get_modifier_id():
     username = getpass.getuser()
     try:
         conn = DatabaseConnector.get_connection()
         cursor = conn.cursor()
-        cursor.execute(f"SELECT * FROM {SQL_OBJECTS['fn_getuserappinfo']}(?)", username)
-        res = cursor.fetchone()
+        query = f"SELECT * FROM {SQL_OBJECTS['fn_getuserappinfo']}(?)"
+        cursor.execute(query, (username,))
+        result = cursor.fetchone()
         conn.close()
-        return (res[0], res[1], res[2], bool(res[3]), res[4]) if res and len(res) >= 5 else ("System", username, "Użytkownik", False, None)
+        if result and len(result) >= 5:
+            return result[0], result[1], result[2], bool(result[3]), result[4]
+        return "System", username, "Użytkownik", False, None
     except Exception as e:
-        log_error(f"Błąd pobierania info o użytkowniku ({username}): {e}", exception=e)
+        log_error(f"Błąd podczas pobierania informacji o użytkowniku ({username}): {e}", exception=e)
         return "System", username, "Użytkownik", False, None
 
 def load_all_app_settings():
-    """Ładuje wszystkie ustawienia z tabeli appsettings i zapisuje w globalnym obiekcie."""
+    """Ładuje wszystkie ustawienia z tabeli appsettings i zapisuje je w globalnym obiekcie app_settings."""
     try:
         conn = DatabaseConnector.get_connection()
         cursor = conn.cursor()
@@ -50,66 +77,7 @@ def load_all_app_settings():
         for row in results:
             if row.SettingKey and row.SettingValue:
                 app_settings.parse_and_apply(row.SettingKey, row.SettingValue)
-        debug_print("Pomyślnie załadowano ustawienia aplikacji z bazy danych.")
         return True
     except Exception as e:
         log_error(f"Błąd krytyczny podczas ładowania ustawień aplikacji: {e}", exception=e)
         return False
-
-def check_application_version():
-    """Zwraca załadowane wartości dla kompatybilności."""
-    return {'required_version': app_settings.REQUIRED_VERSION, 'force_update': app_settings.FORCE_UPDATE}
-class DatabaseConnector:
-    """
-    Klasa odpowiedzialna za połączenie z bazą danych
-    """
-
-    @staticmethod
-    def get_connection():
-        """
-        Zwraca połączenie do bazy danych, próbując połączyć się przy użyciu
-        listy sterowników z pliku konfiguracyjnego.
-        """
-        db_config = DATABASE_CONFIG
-
-        if db_config.get('engine') != 'mssql':
-            raise ValueError(f"Nieobsługiwany silnik bazy danych: {db_config.get('engine')}")
-
-        # 1. Pobierz listę sterowników z config.ini i podziel ją na pojedyncze nazwy
-        drivers_str = db_config.get('driver', '')
-        drivers = [d.strip() for d in drivers_str.split(',') if d.strip()]
-
-        if not drivers:
-            raise ValueError("Brak zdefiniowanych sterowników w pliku config.ini w sekcji [database] pod kluczem 'driver'.")
-
-        # 2. Przygotuj stałą część connection stringa
-        base_connection_string = (
-            f"SERVER={db_config.get('server')};"
-            f"DATABASE={db_config.get('database')};"
-        )
-        if db_config.get('trusted_connection', 'no').lower() == 'yes':
-            base_connection_string += "Trusted_Connection=yes;"
-        else:
-            user = db_config.get('user')
-            password = db_config.get('password')
-            if user and password:
-                base_connection_string += f"UID={user};PWD={password};"
-            else:
-                raise ValueError("Konfiguracja wymaga 'trusted_connection=yes' albo podania 'user' i 'password'.")
-
-        # 3. Iteruj po sterownikach i próbuj się połączyć
-        last_error = None
-        for driver in drivers:
-            try:
-                connection_string = f"DRIVER={{{driver}}};{base_connection_string}"
-                debug_print(f"Próba połączenia ze sterownikiem: {driver}")
-                conn = pyodbc.connect(connection_string, timeout=5) # Dodano timeout dla szybszego sprawdzania
-                debug_print(f"Połączenie udane przy użyciu sterownika: {driver}")
-                return conn  # Zwróć pierwsze udane połączenie
-            except pyodbc.Error as e:
-                last_error = e
-                log_warning(f"Nie udało się połączyć przy użyciu sterownika '{driver}': {e}")
-                continue  # Przejdź do następnego sterownika
-
-        # 4. Jeśli pętla się zakończyła, żaden sterownik nie zadziałał
-        raise ConnectionError(f"Nie udało się nawiązać połączenia z bazą danych przy użyciu żadnego z podanych sterowników: {drivers_str}. Ostatni błąd: {last_error}")
