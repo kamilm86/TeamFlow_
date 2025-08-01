@@ -476,4 +476,32 @@ RETURN
 );
 GO
 
+------------------------------------------------------------------------------------------
+-- Usuń starą procedurę zapisu i odczytu, jeśli istnieją
+DROP PROCEDURE IF EXISTS p_SaveUserSettings;
+DROP PROCEDURE IF EXISTS p_GetUserSettings;
+-- Usuń starą tabelę, jeśli istnieje (zrób kopię zapasową!)
+-- DROP TABLE IF EXISTS UserSettings;
 
+-- Stwórz nową, elastyczną tabelę
+CREATE TABLE UserSettings (
+    LoginWindows NVARCHAR(255) PRIMARY KEY,
+    SettingsJSON NVARCHAR(MAX),
+    LastModified DATETIME DEFAULT GETDATE()
+);
+
+CREATE PROCEDURE p_SaveUserSettingsJSON
+    @login_windows NVARCHAR(255),
+    @settings_json NVARCHAR(MAX)
+AS
+BEGIN
+    SET NOCOUNT ON;
+    MERGE UserSettings AS target
+    USING (SELECT @login_windows, @settings_json) AS source (LoginWindows, SettingsJSON)
+    ON (target.LoginWindows = source.LoginWindows)
+    WHEN MATCHED THEN
+        UPDATE SET SettingsJSON = source.SettingsJSON, LastModified = GETDATE()
+    WHEN NOT MATCHED THEN
+        INSERT (LoginWindows, SettingsJSON, LastModified)
+        VALUES (source.LoginWindows, source.SettingsJSON, GETDATE());
+END
