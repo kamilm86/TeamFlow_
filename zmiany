@@ -1,47 +1,100 @@
-    def apply_theme_settings(self, theme, font_family, font_size):
-        """Stosuje wybrane ustawienia motywu z wykorzystaniem centralnych stylów"""
-        self.is_dark_theme = (theme == "dark")
-        self.current_font = font_family
-        self.current_font_size = font_size
-        font = QFont(font_family, font_size)
-        QApplication.setFont(font)
-        self.setStyleSheet(AppStyles.get_main_window_style(theme))
+# W pliku main.py, wewnątrz klasy WorkScheduleWindow
 
-        button_style = AppStyles.get_button_style(theme)
-        combo_style = AppStyles.get_combobox_style(theme)
-        line_edit_style = AppStyles.get_line_edit_style(theme)
-        list_style = AppStyles.get_list_style(theme)
-        date_edit_style = AppStyles.get_date_edit_style(theme)
-        checkbox_style = AppStyles.get_checkbox_style(theme)
-        table_style = AppStyles.get_table_style(theme)
-        left_panel_style = AppStyles.get_left_panel_style(theme)
+def apply_theme_settings(self, theme, font_family, font_size):
+    """Stosuje wybrane ustawienia motywu z wykorzystaniem centralnych stylów"""
+    self.is_dark_theme = (theme == "dark")
+    self.current_font = font_family
+    self.current_font_size = font_size
 
-        # Przyciski
-        for btn in self.findChildren(QPushButton):
-            btn.setStyleSheet(button_style)
+    font = QFont(font_family, font_size)
+    QApplication.setFont(font)
 
-        # Pola wyboru (ComboBox) i listy
-        if hasattr(self, 'date_combo'): self.date_combo.setStyleSheet(combo_style)
-        if hasattr(self, 'grupa_main_filter_combo'): self.grupa_main_filter_combo.setStyleSheet(combo_style)
-        if hasattr(self, 'wydzial_combo'): self.wydzial_combo.setStyleSheet(combo_style)
-        # ... (inne comboboxy)
-        if hasattr(self, 'przelozony_list'): self.przelozony_list.setStyleSheet(list_style)
-        if hasattr(self, 'uzytkownik_list'): self.uzytkownik_list.setStyleSheet(list_style)
+    self.setStyleSheet(AppStyles.get_main_window_style(theme))
 
-        # Pola tekstowe i daty
-        if hasattr(self, 'przelozony_filter'): self.przelozony_filter.setStyleSheet(line_edit_style)
-        if hasattr(self, 'uzytkownik_filter'): self.uzytkownik_filter.setStyleSheet(line_edit_style)
-        # ... (inne lineedits)
-        if hasattr(self, 'date_from'): self.date_from.setStyleSheet(date_edit_style)
-        if hasattr(self, 'date_to'): self.date_to.setStyleSheet(date_edit_style)
+    button_style = AppStyles.get_button_style(theme)
+    combo_style = AppStyles.get_combobox_style(theme)
+    line_edit_style = AppStyles.get_line_edit_style(theme)
+    list_style = AppStyles.get_list_style(theme)
+    date_edit_style = AppStyles.get_date_edit_style(theme)
+    checkbox_style = AppStyles.get_checkbox_style(theme)
+    table_style = AppStyles.get_table_style(theme)
+    left_panel_style = AppStyles.get_left_panel_style(theme)
 
-        # Checkboxy
-        if hasattr(self, 'meetings_checkbox'): self.meetings_checkbox.setStyleSheet(checkbox_style)
-        if hasattr(self, 'trainings_checkbox'): self.trainings_checkbox.setStyleSheet(checkbox_style)
-        if hasattr(self, 'overtime_checkbox'): self.overtime_checkbox.setStyleSheet(checkbox_style)
-        
-        # --- POCZĄTEK POPRAWKI ---
-        if hasattr(self, 'at_work_today_checkbox'): self.at_work_today_checkbox.setStyleSheet(checkbox_style)
-        # --- KONIEC POPRAWKI ---
+    # ... (style dla przycisków i starych kontrolek bez zmian)
 
-        # ... (reszta metody bez zmian)
+    # --- POCZĄTEK POPRAWKI ---
+    # Dodajemy aktualizację stylu dla nowych kontrolek w panelu filtrów
+    if hasattr(self, 'presence_date_edit'): self.presence_date_edit.setStyleSheet(date_edit_style)
+    if hasattr(self, 'presence_location_combo'): self.presence_location_combo.setStyleSheet(combo_style)
+    # --- KONIEC POPRAWKI ---
+
+    if hasattr(self, '_left_panel'): self._left_panel.setStyleSheet(left_panel_style)
+    
+    # ... (reszta metody bez zmian)
+
+# W pliku styles.py, wewnątrz klasy AppStyles
+
+@staticmethod
+def get_checkbox_style(theme="dark"):
+    if theme == "dark":
+        text_color = AppStyles.DARK_TEXT_PRIMARY
+        spacing = "5px"
+        padding = AppStyles.CONTROL_PADDING
+        bg = "transparent"
+        indicator_size = "14px"
+        radius = AppStyles.BORDER_RADIUS
+        unchecked_border = AppStyles.DARK_BORDER_PRIMARY
+        unchecked_bg = AppStyles.DARK_BACKGROUND_CONTROLS
+        unchecked_hover_border = AppStyles.ACCENT_COLOR_DARK
+        checked_border = AppStyles.ACCENT_COLOR_DARK
+        checked_bg = AppStyles.ACCENT_COLOR_DARK
+        checked_hover_bg = AppStyles.ACCENT_COLOR_DARK_HOVER
+        checked_hover_border = AppStyles.ACCENT_COLOR_DARK_HOVER
+    else: # light theme
+        text_color = AppStyles.LIGHT_TEXT_PRIMARY
+        spacing = "5px"
+        padding = AppStyles.CONTROL_PADDING
+        bg = "transparent"
+        indicator_size = "14px"
+        radius = AppStyles.BORDER_RADIUS
+        unchecked_border = AppStyles.LIGHT_BORDER_SECONDARY
+        unchecked_bg = AppStyles.LIGHT_BACKGROUND_CONTROLS
+        unchecked_hover_border = AppStyles.ACCENT_COLOR_LIGHT
+        checked_border = AppStyles.ACCENT_COLOR_LIGHT
+        checked_bg = AppStyles.ACCENT_COLOR_LIGHT
+        checked_hover_bg = AppStyles.ACCENT_COLOR_LIGHT_HOVER
+        checked_hover_border = AppStyles.ACCENT_COLOR_LIGHT_HOVER
+
+    return f"""
+        QCheckBox {{
+            color: {text_color};
+            spacing: {spacing};
+            padding: {padding};
+            background-color: {bg};
+        }}
+        QCheckBox::indicator, QGroupBox::indicator {{
+            width: {indicator_size};
+            height: {indicator_size};
+            border-radius: {radius};
+        }}
+        QCheckBox::indicator:unchecked, QGroupBox::indicator:unchecked {{
+            border: 1px solid {unchecked_border};
+            background: {unchecked_bg};
+        }}
+        QCheckBox::indicator:unchecked:hover, QGroupBox::indicator:unchecked:hover {{
+            border: 1px solid {unchecked_hover_border};
+        }}
+        QCheckBox::indicator:checked, QGroupBox::indicator:checked {{
+            border: 1px solid {checked_border};
+            background: {checked_bg};
+        }}
+        QCheckBox::indicator:checked:hover, QGroupBox::indicator:checked:hover {{
+            background: {checked_hover_bg};
+            border: 1px solid {checked_hover_border};
+        }}
+        /* --- NOWA REGUŁA --- */
+        QGroupBox::title {{
+            padding-left: 5px; /* Dodaje odstęp między checkboxem a tekstem */
+        }}
+    """
+
