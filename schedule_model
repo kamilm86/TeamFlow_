@@ -123,8 +123,8 @@ class ScheduleTableModel(QAbstractTableModel):
                 col_id = self._visible_columns[col]
                 if col_id == 'wydzial':
                     return key[0] or ""
-                elif col_id == 'przelozony_imie_nazwisko':
-                    return row_data.get('przelozony_imie_nazwisko', '')
+                elif col_id == 'przelozony_nazwisko_imie':
+                    return row_data.get('przelozony_nazwisko_imie', '')
                 elif col_id == 'uzytkownik_dane':
                     return key[2] or ""
                 else:
@@ -144,7 +144,7 @@ class ScheduleTableModel(QAbstractTableModel):
                     return str(row_data.get('total_hours', 0))
                 elif schedule_col == 31 + 1:
                     try:
-                        etat = float(row_data.get('etat', 8.0));
+                        etat = float(row_data.get('etat'));
                         total_hours = float(row_data.get('total_hours', 0));
                         working_days = self._working_days if hasattr(self,
                                                                      '_working_days') and self._working_days > 0 else 21
@@ -176,7 +176,7 @@ class ScheduleTableModel(QAbstractTableModel):
                 schedule_col = col - len(self._visible_columns)
                 if schedule_col == self._days_in_month + 1:
                     try:
-                        etat = float(row_data.get('etat', 8.0));
+                        etat = float(row_data.get('etat'));
                         total_hours = float(row_data.get('total_hours', 0));
                         working_days = self._working_days if hasattr(self,
                                                                      '_working_days') and self._working_days > 0 else 21
@@ -193,7 +193,7 @@ class ScheduleTableModel(QAbstractTableModel):
                         special_symbol = parsed_symbol.get('special_symbol')
                         if special_symbol:
                             if special_symbol in ["OS", "U"]:
-                                return QBrush(QColor(255, 180, 0))
+                                return QBrush(QColor(255, 255, 0))
                             # ZMIANA: Odwołanie do app_settings zamiast BusinessRules
                             elif special_symbol in app_settings.get_absence_symbols():
                                 return QBrush(QColor("#9370DB") if not self._is_dark_theme else QColor("#9370DB"))
@@ -252,11 +252,16 @@ class ScheduleTableModel(QAbstractTableModel):
                 self.headerDataChanged.emit(Qt.Horizontal, 0, self._column_count - 1)
 
     def _get_user_data(self, row_data, key, col, is_employee_column):
-        if is_employee_column:
-            return {
-                'wydzial': key[0] or '',
+        """
+        Zwraca dane użytkownika dla danej komórki. Zapewnia, że wszystkie potrzebne
+        pola (wydzial, rola_nazwa) są zawsze obecne.
+        """
+        # Tworzymy słownik bazowy, który zawsze zawiera kluczowe dane o pracowniku
+        base_data = {
+            'wydzial': key[0] or '',
                 'przelozony': key[1] or '',
-                'przelozony_imie_nazwisko': row_data.get('przelozony_imie_nazwisko', ''),
+                'przelozony_nazwisko_imie': row_data.get('przelozony_nazwisko_imie', ''),
+                'nazwisko_imie': row_data.get('nazwisko_imie',''),
                 'uzytkownik_dane': key[2] or '',
                 'uzytkownik_id': key[3] or 0,
                 'nr_kadrowy': row_data.get('nr_kadrowy', ''),
@@ -271,6 +276,9 @@ class ScheduleTableModel(QAbstractTableModel):
                 'system_czasu_pracy': row_data.get('system_czasu_pracy', ''),
                 'column_type': 'employee'
             }
+        if is_employee_column:
+            base_data['column_type'] = 'employee'
+            return base_data
         else:
             schedule_col = col - len(self._visible_columns)
             if schedule_col < self._days_in_month:
@@ -278,42 +286,35 @@ class ScheduleTableModel(QAbstractTableModel):
                 days_data = row_data.get('days', {})
                 day_data = days_data.get(day, {})
                 date_str = f"{self._year}-{self._month:02d}-{day:02d}" if self._year and self._month else ''
-                return {
-                    'wydzial': key[0] or '',
-                    'przelozony': key[1] or '',
-                    'przelozony_imie_nazwisko': row_data.get('przelozony_imie_nazwisko', ''),
-                    'uzytkownik_dane': key[2] or '',
-                    'uzytkownik_id': key[3] or 0,
-                    'nr_kadrowy': row_data.get('nr_kadrowy', ''),
-                    'etat': row_data.get('etat', 8.0),
-                    'lokalizacja_domyslna': row_data.get('lokalizacja_domyslna'),
-                    'system_czasu_pracy': row_data.get('system_czasu_pracy'),
+
+                # Do danych bazowych dołączamy informacje specyficzne dla komórki dnia
+                day_specific_data = {
                     'date_str': date_str,
                     'day': day,
                     'symbol': day_data.get('symbol', ''),
                     'hours': day_data.get('hours', 0),
-                    'id': day_data.get('id', ''),
                     'start_hour': day_data.get('start_hour'),
                     'has_meeting': day_data.get('spotkania', 0) > 0,
                     'has_training': day_data.get('szkolenia', 0) > 0,
                     'has_overtime': day_data.get('nadgodziny', 0) > 0,
                     'events': day_data.get('events', []),
-                    'komentarz_grafik': row_data.get('komentarz_grafik', ''),
                     'column_type': 'schedule'
                 }
+                base_data.update(day_specific_data)
+                return base_data
+
+            # Logika dla kolumn sumujących (bez zmian)
             elif schedule_col == self._days_in_month:
-                return {'uzytkownik_id': key[3] or 0, 'uzytkownik_dane': key[2] or '',
-                        'total_hours': row_data.get('total_hours', 0), 'column_type': 'suma_rbh'}
+                base_data.update({'total_hours': row_data.get('total_hours', 0), 'column_type': 'suma_rbh'})
             elif schedule_col == self._days_in_month + 1:
                 etat = float(row_data.get('etat', 0) or 0)
                 total_hours = row_data.get('total_hours', 0) or 0
                 expected_hours = etat * self._working_days if hasattr(self, '_working_days') else 0
                 balance = expected_hours - total_hours
-                return {'uzytkownik_id': key[3] or 0, 'uzytkownik_dane': key[2] or '', 'etat': etat,
-                        'total_hours': total_hours, 'expected_hours': expected_hours, 'balance': balance,
-                        'column_type': 'bilans_rbh'}
+                base_data.update({'total_hours': total_hours, 'expected_hours': expected_hours, 'balance': balance,
+                                  'column_type': 'bilans_rbh'})
 
-            return {'uzytkownik_id': key[3] or 0, 'uzytkownik_dane': key[2] or '', 'column_type': 'unknown'}
+            return base_data
 
     def _get_dynamic_meeting_icon(self, key, col, is_employee_column):
         if is_employee_column:
@@ -533,13 +534,13 @@ class ScheduleTableModel(QAbstractTableModel):
         try:
             conn = DatabaseConnector.get_connection()
             cursor = conn.cursor()
-            query = f"SELECT iloscDniPracujacych FROM {SQL_OBJECTS['dnipracujace']} WHERE ROK = ? AND Miesiąc = ?"
+            query = f"SELECT iloscDniPracujacych FROM {SQL_OBJECTS['dnipracujace']} WHERE ROK = ? AND Miesiac = ?"
             result = cursor.execute(query, (year, month)).fetchone()
             conn.close()
-            return result[0] if result and result[0] else 21
+            return result[0]
         except Exception as e:
             log_error(f"Błąd pobierania dni pracujących: {e}", exception=e)
-            return 21
+
 
     def _update_column_structure(self):
         visible_map = {cid: name for cid, name, _ in self._employee_columns}
