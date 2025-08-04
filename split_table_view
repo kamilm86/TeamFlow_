@@ -316,3 +316,15 @@ class SplitTableView(QWidget):
         if schedule_hbar:
             schedule_hbar.rangeChanged.connect(lambda: QTimer.singleShot(10, sync_visibility))
         sync_visibility()
+
+    def get_column_widths(self) -> dict:
+        """Zwraca słownik z aktualnymi szerokościami widocznych kolumn pracowników."""
+        if not self._model:
+            return {}
+
+        widths = {}
+        visible_columns_ids = self._model.get_visible_columns()
+        for i, col_id in enumerate(visible_columns_ids):
+            widths[col_id] = self.employees_view.columnWidth(i)
+
+        return widths
