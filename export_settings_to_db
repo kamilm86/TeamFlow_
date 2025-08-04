@@ -46,7 +46,7 @@ def export_settings():
 
         # Klucz: 'action_delete_symbol'
         # Opis: Zezwala na usuwanie symboli z komórek za pomocą klawiszy Delete lub Backspace.
-        'action_delete_symbol': ['Pracownik WPR', 'Lider OUT'],
+        'action_delete_symbol': ['Pracownik WPR', 'Lider OUT','Lider'],
 
         # Klucz: 'view_schedule_comment_column'
         # Opis: Sprawia, że w oknie wyboru kolumn pojawia się opcja włączenia kolumny "Komentarz do Grafiku".
@@ -130,7 +130,7 @@ def export_settings():
     # Zdefiniuj listy użytkowników Windows, dla których logowanie ma być aktywne.
     # Jeśli lista jest pusta, logowanie będzie wyłączone.
     logging_users_for_file = ["", ""]  # <-- ZMIEŃ NA LISTĘ LOGINÓW
-    logging_users_for_console = [""]  # <-- ZMIEŃ NA LISTĘ LOGINÓW
+    logging_users_for_console = ["kamil"]  # <-- ZMIEŃ NA LISTĘ LOGINÓW
 
     # 5. Finalny słownik do eksportu
     settings_to_export = {
