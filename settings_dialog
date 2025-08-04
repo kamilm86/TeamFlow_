@@ -4,31 +4,29 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                                QPushButton, QComboBox, QGroupBox, QRadioButton,
                                QFontComboBox, QSpinBox, QCheckBox, QGridLayout, QFormLayout)
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QFont
 from styles import AppStyles
-
+from debug_utils import debug_print
 
 class AppSettingsDialog(QDialog):
     """Dialog do konfiguracji ustawień aplikacji, w tym motywu i importu."""
     live_theme_changed = Signal(str, str, int)
+    # --- NOWY SYGNAŁ ---
+    import_requested = Signal(int, int) # Sygnał emitowany z (grupa, funkcja)
 
     def __init__(self, parent=None, settings=None):
         super().__init__(parent)
         self.parent_widget = parent
         self.current_settings = settings if settings else {}
-
         self.setWindowTitle("Ustawienia")
         self.setMinimumWidth(450)
-
         self.setup_ui()
         self.apply_dialog_theme()
         self.connect_signals()
 
     def setup_ui(self):
-        """Tworzy i układa wszystkie elementy interfejsu w dialogu."""
         main_layout = QVBoxLayout(self)
-
         theme_group = self._create_theme_group()
+        # --- PRZYWRÓCONO SEKCJĘ IMPORTU ---
         import_group = self._create_import_group()
         display_options_group = self._create_display_options_group()
 
@@ -43,7 +41,7 @@ class AppSettingsDialog(QDialog):
         buttons_layout.addWidget(self.cancel_button)
 
         main_layout.addWidget(theme_group)
-        main_layout.addWidget(import_group)
+        main_layout.addWidget(import_group) # <-- Przywrócono
         main_layout.addWidget(display_options_group)
         main_layout.addLayout(buttons_layout)
         main_layout.addWidget(self.save_settings_checkbox, 0, Qt.AlignRight)
@@ -79,13 +77,17 @@ class AppSettingsDialog(QDialog):
     def _create_import_group(self):
         """Tworzy grupę kontrolek dla parametrów importu grafiku."""
         group = QGroupBox("Ustawienia Importu Grafiku")
-        layout = QFormLayout()
+        layout = QGridLayout()
 
+        # Etykiety i ComboBoxy
+        layout.addWidget(QLabel("Importuj grupę:"), 0, 0)
         self.grupa_combo = QComboBox()
         self.grupa_combo.addItem("INBOUND", 1)
         self.grupa_combo.addItem("OUTBOUND", 2)
         self.grupa_combo.addItem("WSZYSCY", 3)
+        layout.addWidget(self.grupa_combo, 0, 1)
 
+        layout.addWidget(QLabel("Importuj funkcję:"), 1, 0)
         self.funkcja_combo = QComboBox()
         self.funkcja_combo.addItem("wszyscy", 1)
         self.funkcja_combo.addItem("tylko konsultanci", 2)
@@ -93,9 +95,12 @@ class AppSettingsDialog(QDialog):
         self.funkcja_combo.addItem("grupa WZK2h", 4)
         self.funkcja_combo.addItem("cały DBZ", 5)
         self.funkcja_combo.addItem("inne wydziały wsparcia", 6)
+        layout.addWidget(self.funkcja_combo, 1, 1)
 
-        layout.addRow("Importuj grupę:", self.grupa_combo)
-        layout.addRow("Importuj funkcję:", self.funkcja_combo)
+        # Nowy przycisk "Importuj teraz"
+        self.import_now_button = QPushButton("Importuj teraz")
+        layout.addWidget(self.import_now_button, 2, 0, 1, 2)  # Rozciągnięty na dwie kolumny
+
         group.setLayout(layout)
         return group
 
@@ -124,38 +129,29 @@ class AppSettingsDialog(QDialog):
         return group
 
     def _load_settings_to_widgets(self):
-        """Wczytuje zapisane ustawienia i ustawia stan kontrolek w UI."""
-        # Motyw i czcionka
+        # Przywrócono wczytywanie ustawień importu
         if self.current_settings.get('theme', 'dark') == 'dark':
             self.dark_theme_radio.setChecked(True)
         else:
             self.light_theme_radio.setChecked(True)
-
-        # Domyślną czcionką jest teraz 'Segoe UI', standardowa dla nowoczesnych interfejsów
         default_font = self.current_settings.get('font_family', 'Segoe UI')
         self.font_combo.setCurrentText(default_font)
-
         self.font_size_spin.setValue(self.current_settings.get('font_size', 9))
 
-        # Ustawienia importu
         index_g = self.grupa_combo.findData(self.current_settings.get('import_grupa', 3))
         if index_g != -1: self.grupa_combo.setCurrentIndex(index_g)
-
         index_f = self.funkcja_combo.findData(self.current_settings.get('import_funkcja', 1))
         if index_f != -1: self.funkcja_combo.setCurrentIndex(index_f)
 
-        # Ustawienia wyglądu ikon
         self.show_special_symbol_check.setChecked(self.current_settings.get('show_special_symbol', True))
         self.show_location_symbol_check.setChecked(self.current_settings.get('show_location_symbol', True))
-
         special_pos = self.current_settings.get('special_symbol_position', 'top_left')
         self.special_symbol_pos_combo.setCurrentIndex(1 if special_pos == 'top_right' else 0)
-
         location_pos = self.current_settings.get('location_symbol_position', 'top_right')
         self.location_symbol_pos_combo.setCurrentIndex(1 if location_pos == 'top_right' else 0)
 
     def get_current_settings(self):
-        """Zbiera wszystkie ustawienia z dialogu i zwraca jako słownik."""
+        # Przywrócono zwracanie ustawień importu
         font_family = self.font_combo.currentText()
         return {
             'theme': 'dark' if self.dark_theme_radio.isChecked() else 'light',
@@ -171,13 +167,34 @@ class AppSettingsDialog(QDialog):
         }
 
     def connect_signals(self):
-        """Łączy sygnały kontrolek z odpowiednimi metodami."""
         self.ok_button.clicked.connect(self.accept)
         self.cancel_button.clicked.connect(self.reject)
-
         self.dark_theme_radio.toggled.connect(self._emit_live_preview_changes)
         self.font_combo.currentTextChanged.connect(self._emit_live_preview_changes)
         self.font_size_spin.valueChanged.connect(self._emit_live_preview_changes)
+        # --- PODŁĄCZENIE NOWEGO PRZYCISKU ---
+        self.import_now_button.clicked.connect(self._on_import_now_clicked)
+
+    def _on_import_now_clicked(self):
+        # Krok 1: Zapisz aktualne ustawienia (tak jakbyś kliknął OK)
+        new_settings = self.get_current_settings()
+        should_save = new_settings.pop('save_to_db', False)
+
+        # Zaktualizuj słownik w oknie głównym
+        self.parent_widget.user_settings.update(new_settings)
+
+        # Zapisz do bazy, jeśli zaznaczone
+        if should_save:
+            self.parent_widget.settings_db.save_settings(self.parent_widget.user_settings)
+            debug_print("Zapisano ustawienia przed importem.")
+
+        # Krok 2: Wyemituj sygnał z prośbą o import
+        grupa = self.grupa_combo.currentData()
+        funkcja = self.funkcja_combo.currentData()
+        self.import_requested.emit(grupa, funkcja)
+
+        # Krok 3: Zamknij okno dialogowe
+        self.accept()
 
     def _emit_live_preview_changes(self):
         """Emituje sygnał ze zmianami motywu, aby główne okno mogło je pokazać na żywo."""
