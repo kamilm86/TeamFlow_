@@ -97,3 +97,70 @@ def apply_theme_settings(self, theme, font_family, font_size):
 
     if hasattr(self, 'table'):
         self._apply_dynamic_sizes()
+
+# W pliku styles.py, wewnątrz klasy AppStyles
+
+@staticmethod
+def get_checkbox_style(theme="dark"):
+    if theme == "dark":
+        text_color = AppStyles.DARK_TEXT_PRIMARY
+        spacing = "5px"
+        padding = AppStyles.CONTROL_PADDING
+        bg = "transparent"
+        indicator_size = "14px"
+        radius = AppStyles.BORDER_RADIUS
+        unchecked_border = AppStyles.DARK_BORDER_PRIMARY
+        unchecked_bg = AppStyles.DARK_BACKGROUND_CONTROLS
+        unchecked_hover_border = AppStyles.ACCENT_COLOR_DARK
+        checked_border = AppStyles.ACCENT_COLOR_DARK
+        checked_bg = AppStyles.ACCENT_COLOR_DARK
+        checked_hover_bg = AppStyles.ACCENT_COLOR_DARK_HOVER
+        checked_hover_border = AppStyles.ACCENT_COLOR_DARK_HOVER
+    else: # light theme
+        text_color = AppStyles.LIGHT_TEXT_PRIMARY
+        spacing = "5px"
+        padding = AppStyles.CONTROL_PADDING
+        bg = "transparent"
+        indicator_size = "14px"
+        radius = AppStyles.BORDER_RADIUS
+        unchecked_border = AppStyles.LIGHT_BORDER_SECONDARY
+        unchecked_bg = AppStyles.LIGHT_BACKGROUND_CONTROLS
+        unchecked_hover_border = AppStyles.ACCENT_COLOR_LIGHT
+        checked_border = AppStyles.ACCENT_COLOR_LIGHT
+        checked_bg = AppStyles.ACCENT_COLOR_LIGHT
+        checked_hover_bg = AppStyles.ACCENT_COLOR_LIGHT_HOVER
+        checked_hover_border = AppStyles.ACCENT_COLOR_LIGHT_HOVER
+
+    return f"""
+        QCheckBox {{
+            color: {text_color};
+            spacing: {spacing};
+            padding: {padding};
+            background-color: {bg};
+        }}
+        QCheckBox::indicator, QGroupBox::indicator {{
+            width: {indicator_size};
+            height: {indicator_size};
+            border-radius: {radius};
+        }}
+        QCheckBox::indicator:unchecked, QGroupBox::indicator:unchecked {{
+            border: 1px solid {unchecked_border};
+            background: {unchecked_bg};
+        }}
+        QCheckBox::indicator:unchecked:hover, QGroupBox::indicator:unchecked:hover {{
+            border: 1px solid {unchecked_hover_border};
+        }}
+        QCheckBox::indicator:checked, QGroupBox::indicator:checked {{
+            border: 1px solid {checked_border};
+            background: {checked_bg};
+        }}
+        QCheckBox::indicator:checked:hover, QGroupBox::indicator:checked:hover {{
+            background: {checked_hover_bg};
+            border: 1px solid {checked_hover_border};
+        }}
+        /* --- NOWA REGUŁA --- */
+        QGroupBox::title {{
+            padding-left: 5px; /* Dodaje odstęp między checkboxem a tekstem */
+        }}
+    """
+
