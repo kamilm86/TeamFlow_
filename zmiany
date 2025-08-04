@@ -1,166 +1,43 @@
-# W pliku main.py, wewnątrz klasy WorkScheduleWindow
+# W pliku schedule_edit_dialogs.py, wewnątrz klasy ScheduleChangeDialog
 
-def apply_theme_settings(self, theme, font_family, font_size):
-    """Stosuje wybrane ustawienia motywu z wykorzystaniem centralnych stylów"""
-    self.is_dark_theme = (theme == "dark")
-    self.current_font = font_family
-    self.current_font_size = font_size
-
-    font = QFont(font_family, font_size)
-    QApplication.setFont(font)
-
-    self.setStyleSheet(AppStyles.get_main_window_style(theme))
-
-    button_style = AppStyles.get_button_style(theme)
-    combo_style = AppStyles.get_combobox_style(theme)
-    line_edit_style = AppStyles.get_line_edit_style(theme)
-    list_style = AppStyles.get_list_style(theme)
-    date_edit_style = AppStyles.get_date_edit_style(theme)
-    checkbox_style = AppStyles.get_checkbox_style(theme)
-    table_style = AppStyles.get_table_style(theme)
-    left_panel_style = AppStyles.get_left_panel_style(theme)
-
-    # Zastosuj style do poszczególnych widgetów
-    # (ta część pozostaje bez zmian)
-    if hasattr(self, 'settings_button'): self.settings_button.setStyleSheet(button_style)
-    # ... (i tak dalej dla wszystkich istniejących widgetów)
+def apply_dialog_theme(self):
+    actual_theme = self.determined_theme
+    self.setStyleSheet(AppStyles.get_dialog_style(actual_theme))
     
-    # Przyciski
-    if hasattr(self, 'settings_button'): self.settings_button.setStyleSheet(button_style)
-    if hasattr(self, 'refresh_button'): self.refresh_button.setStyleSheet(button_style)
-    if hasattr(self, 'toggle_menu_button'): self.toggle_menu_button.setStyleSheet(button_style)
-    if hasattr(self, 'staffing_details_button'): self.staffing_details_button.setStyleSheet(button_style)
-    if hasattr(self, 'show_audit_button'): self.show_audit_button.setStyleSheet(button_style)
-    if hasattr(self, 'schedule_control_button'): self.schedule_control_button.setStyleSheet(button_style)
-    if hasattr(self, 'clear_filters_button'): self.clear_filters_button.setStyleSheet(button_style)
-    if hasattr(self, 'manage_columns_button'): self.manage_columns_button.setStyleSheet(button_style)
-    if hasattr(self, 'toggle_events_panel_button'): self.toggle_events_panel_button.setStyleSheet(button_style)
-    if hasattr(self, 'insert_change_button'): self.insert_change_button.setStyleSheet(button_style)
-    if hasattr(self, 'insert_symbol_button'): self.insert_symbol_button.setStyleSheet(button_style)
-    if hasattr(self, 'cancel_delegation_button'): self.cancel_delegation_button.setStyleSheet(button_style)
-    if hasattr(self, 'add_overtime_button'): self.add_overtime_button.setStyleSheet(button_style)
+    # Pobierz style z centralnej klasy
+    button_style = AppStyles.get_button_style(actual_theme)
+    combobox_style = AppStyles.get_combobox_style(actual_theme)
+    checkbox_style = AppStyles.get_checkbox_style(actual_theme) # Pobierz styl dla checkboxów
 
-    # Pola wyboru (ComboBox)
-    if hasattr(self, 'date_combo'): self.date_combo.setStyleSheet(combo_style)
-    if hasattr(self, 'grupa_main_filter_combo'): self.grupa_main_filter_combo.setStyleSheet(combo_style)
-    if hasattr(self, 'wydzial_combo'): self.wydzial_combo.setStyleSheet(combo_style)
-    if hasattr(self, 'default_location_combo'): self.default_location_combo.setStyleSheet(combo_style)
-    if hasattr(self, 'system_czasu_pracy_combo'): self.system_czasu_pracy_combo.setStyleSheet(combo_style)
-    if hasattr(self, 'rola_combo'): self.rola_combo.setStyleSheet(combo_style)
-    if hasattr(self, 'jezyk_combo'): self.jezyk_combo.setStyleSheet(combo_style)
-    if hasattr(self, 'etat_combo'): self.etat_combo.setStyleSheet(combo_style)
-    if hasattr(self, 'dtn_combo'): self.dtn_combo.setStyleSheet(combo_style)
+    # Styl dla panelu "Zastosuj dla wszystkich"
+    if hasattr(self, 'all_time_button'):
+        self.all_time_button.setStyleSheet(button_style)
+        self.all_hours_button.setStyleSheet(button_style)
+        self.all_location_combo.setStyleSheet(combobox_style)
+        
+        # --- POCZĄTEK POPRAWKI ---
+        # Zastosuj styl do checkboxów w tym panelu
+        self.apply_location_check.setStyleSheet(checkbox_style)
+        self.apply_time_check.setStyleSheet(checkbox_style)
+        self.apply_hours_check.setStyleSheet(checkbox_style)
+        # --- KONIEC POPRAWKI ---
 
-    # Inne kontrolki
-    if hasattr(self, 'przelozony_filter'): self.przelozony_filter.setStyleSheet(line_edit_style)
-    if hasattr(self, 'uzytkownik_filter'): self.uzytkownik_filter.setStyleSheet(line_edit_style)
-    if hasattr(self, 'topic_filter'): self.topic_filter.setStyleSheet(line_edit_style)
-    if hasattr(self, 'name_filter'): self.name_filter.setStyleSheet(line_edit_style)
-    if hasattr(self, 'przelozony_list'): self.przelozony_list.setStyleSheet(list_style)
-    if hasattr(self, 'uzytkownik_list'): self.uzytkownik_list.setStyleSheet(list_style)
-    if hasattr(self, 'date_from'): self.date_from.setStyleSheet(date_edit_style)
-    if hasattr(self, 'date_to'): self.date_to.setStyleSheet(date_edit_style)
-    if hasattr(self, 'meetings_checkbox'): self.meetings_checkbox.setStyleSheet(checkbox_style)
-    if hasattr(self, 'trainings_checkbox'): self.trainings_checkbox.setStyleSheet(checkbox_style)
-    if hasattr(self, 'overtime_checkbox'): self.overtime_checkbox.setStyleSheet(checkbox_style)
-    
-    # --- POCZĄTEK POPRAWKI ---
-    # Zastosuj styl checkboxa do checkable QGroupBox oraz jego wewnętrznych kontrolek
-    if hasattr(self, 'filter_by_presence_check'): 
-        self.filter_by_presence_check.setStyleSheet(checkbox_style)
-    if hasattr(self, 'presence_date_edit'): 
-        self.presence_date_edit.setStyleSheet(date_edit_style)
-    if hasattr(self, 'presence_location_combo'): 
-        self.presence_location_combo.setStyleSheet(combo_style)
-    # --- KONIEC POPRAWKI ---
+        # Znajdź przycisk "Zastosuj dla wszystkich" wewnątrz grupy i zastosuj styl
+        apply_all_button = self.findChild(QGroupBox).findChild(QPushButton)
+        if apply_all_button:
+            apply_all_button.setStyleSheet(button_style)
 
-    # Aktualizacja modeli i tabel
-    if hasattr(self, '_left_panel'): self._left_panel.setStyleSheet(left_panel_style)
-    if hasattr(self, 'schedule_model'): self.schedule_model.set_theme(self.is_dark_theme)
-    if hasattr(self, 'events_model'): self.events_model.set_theme(self.is_dark_theme)
-    if hasattr(self, 'table'):
-        if hasattr(self.table, 'employees_view'): self.table.employees_view.setStyleSheet(table_style)
-        if hasattr(self.table, 'schedule_view'): self.table.schedule_view.setStyleSheet(table_style)
-    if hasattr(self, 'events_table'): self.events_table.setStyleSheet(table_style)
-
-    if hasattr(self, '_left_panel'):
-        title_style = AppStyles.get_label_style(theme, is_title=True)
-        regular_label_style = AppStyles.get_label_style(theme, is_title=False)
-        for label in self._left_panel.findChildren(QLabel):
-            if label.text() == "Filtry":
-                label.setStyleSheet(title_style)
-            else:
-                label.setStyleSheet(regular_label_style)
-
-    if self.staffing_details_win and not self.staffing_details_win.isHidden():
-        self.staffing_details_win.set_current_theme(self.is_dark_theme)
-
-    if hasattr(self, 'table'):
-        self._apply_dynamic_sizes()
-
-# W pliku styles.py, wewnątrz klasy AppStyles
-
-@staticmethod
-def get_checkbox_style(theme="dark"):
-    if theme == "dark":
-        text_color = AppStyles.DARK_TEXT_PRIMARY
-        spacing = "5px"
-        padding = AppStyles.CONTROL_PADDING
-        bg = "transparent"
-        indicator_size = "14px"
-        radius = AppStyles.BORDER_RADIUS
-        unchecked_border = AppStyles.DARK_BORDER_PRIMARY
-        unchecked_bg = AppStyles.DARK_BACKGROUND_CONTROLS
-        unchecked_hover_border = AppStyles.ACCENT_COLOR_DARK
-        checked_border = AppStyles.ACCENT_COLOR_DARK
-        checked_bg = AppStyles.ACCENT_COLOR_DARK
-        checked_hover_bg = AppStyles.ACCENT_COLOR_DARK_HOVER
-        checked_hover_border = AppStyles.ACCENT_COLOR_DARK_HOVER
-    else: # light theme
-        text_color = AppStyles.LIGHT_TEXT_PRIMARY
-        spacing = "5px"
-        padding = AppStyles.CONTROL_PADDING
-        bg = "transparent"
-        indicator_size = "14px"
-        radius = AppStyles.BORDER_RADIUS
-        unchecked_border = AppStyles.LIGHT_BORDER_SECONDARY
-        unchecked_bg = AppStyles.LIGHT_BACKGROUND_CONTROLS
-        unchecked_hover_border = AppStyles.ACCENT_COLOR_LIGHT
-        checked_border = AppStyles.ACCENT_COLOR_LIGHT
-        checked_bg = AppStyles.ACCENT_COLOR_LIGHT
-        checked_hover_bg = AppStyles.ACCENT_COLOR_LIGHT_HOVER
-        checked_hover_border = AppStyles.ACCENT_COLOR_LIGHT_HOVER
-
-    return f"""
-        QCheckBox {{
-            color: {text_color};
-            spacing: {spacing};
-            padding: {padding};
-            background-color: {bg};
-        }}
-        QCheckBox::indicator, QGroupBox::indicator {{
-            width: {indicator_size};
-            height: {indicator_size};
-            border-radius: {radius};
-        }}
-        QCheckBox::indicator:unchecked, QGroupBox::indicator:unchecked {{
-            border: 1px solid {unchecked_border};
-            background: {unchecked_bg};
-        }}
-        QCheckBox::indicator:unchecked:hover, QGroupBox::indicator:unchecked:hover {{
-            border: 1px solid {unchecked_hover_border};
-        }}
-        QCheckBox::indicator:checked, QGroupBox::indicator:checked {{
-            border: 1px solid {checked_border};
-            background: {checked_bg};
-        }}
-        QCheckBox::indicator:checked:hover, QGroupBox::indicator:checked:hover {{
-            background: {checked_hover_bg};
-            border: 1px solid {checked_hover_border};
-        }}
-        /* --- NOWA REGUŁA --- */
-        QGroupBox::title {{
-            padding-left: 5px; /* Dodaje odstęp między checkboxem a tekstem */
-        }}
-    """
-
+    # Styl dla przycisku "Zamknij"
+    if hasattr(self, 'close_button'):
+        self.close_button.setStyleSheet(button_style)
+        
+    # Style dla kontrolek w tabeli
+    if hasattr(self, 'cells_table'):
+        self.cells_table.setStyleSheet(AppStyles.get_tablewidget_style(actual_theme))
+        for row in range(self.cells_table.rowCount()):
+            for col_idx in [4, 5, 6, 7]: 
+                widget = self.cells_table.cellWidget(row, col_idx)
+                if isinstance(widget, QComboBox):
+                    widget.setStyleSheet(combobox_style)
+                elif isinstance(widget, QPushButton):
+                    widget.setStyleSheet(button_style)
