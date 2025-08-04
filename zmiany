@@ -1,48 +1,9 @@
-# W pliku main.py, wewnątrz klasy WorkScheduleWindow
-
-def apply_theme_settings(self, theme, font_family, font_size):
-    """Stosuje wybrane ustawienia motywu z wykorzystaniem centralnych stylów"""
-    self.is_dark_theme = (theme == "dark")
-    self.current_font = font_family
-    self.current_font_size = font_size
-
-    font = QFont(font_family, font_size)
-    QApplication.setFont(font)
-
-    self.setStyleSheet(AppStyles.get_main_window_style(theme))
-
-    button_style = AppStyles.get_button_style(theme)
-    combo_style = AppStyles.get_combobox_style(theme)
-    line_edit_style = AppStyles.get_line_edit_style(theme)
-    list_style = AppStyles.get_list_style(theme)
-    date_edit_style = AppStyles.get_date_edit_style(theme)
-    checkbox_style = AppStyles.get_checkbox_style(theme)
-    table_style = AppStyles.get_table_style(theme)
-    left_panel_style = AppStyles.get_left_panel_style(theme)
-
-    # ... (style dla przycisków i starych kontrolek bez zmian)
-
-    # --- POCZĄTEK POPRAWKI ---
-    # Dodajemy aktualizację stylu dla nowych kontrolek w panelu filtrów
-    if hasattr(self, 'presence_date_edit'): self.presence_date_edit.setStyleSheet(date_edit_style)
-    if hasattr(self, 'presence_location_combo'): self.presence_location_combo.setStyleSheet(combo_style)
-    # --- KONIEC POPRAWKI ---
-
-    if hasattr(self, '_left_panel'): self._left_panel.setStyleSheet(left_panel_style)
-    
-    # ... (reszta metody bez zmian)
-
 # W pliku styles.py, wewnątrz klasy AppStyles
 
 @staticmethod
 def get_checkbox_style(theme="dark"):
     if theme == "dark":
         text_color = AppStyles.DARK_TEXT_PRIMARY
-        spacing = "5px"
-        padding = AppStyles.CONTROL_PADDING
-        bg = "transparent"
-        indicator_size = "14px"
-        radius = AppStyles.BORDER_RADIUS
         unchecked_border = AppStyles.DARK_BORDER_PRIMARY
         unchecked_bg = AppStyles.DARK_BACKGROUND_CONTROLS
         unchecked_hover_border = AppStyles.ACCENT_COLOR_DARK
@@ -52,11 +13,6 @@ def get_checkbox_style(theme="dark"):
         checked_hover_border = AppStyles.ACCENT_COLOR_DARK_HOVER
     else: # light theme
         text_color = AppStyles.LIGHT_TEXT_PRIMARY
-        spacing = "5px"
-        padding = AppStyles.CONTROL_PADDING
-        bg = "transparent"
-        indicator_size = "14px"
-        radius = AppStyles.BORDER_RADIUS
         unchecked_border = AppStyles.LIGHT_BORDER_SECONDARY
         unchecked_bg = AppStyles.LIGHT_BACKGROUND_CONTROLS
         unchecked_hover_border = AppStyles.ACCENT_COLOR_LIGHT
@@ -65,36 +21,45 @@ def get_checkbox_style(theme="dark"):
         checked_hover_bg = AppStyles.ACCENT_COLOR_LIGHT_HOVER
         checked_hover_border = AppStyles.ACCENT_COLOR_LIGHT_HOVER
 
-    return f"""
+    # --- POCZĄTEK ZMIANY: Dodanie ikony "ptaszka" ---
+    # Wektorowa ikona zakodowana jako data URI
+    checkmark_icon_light = "url(\"data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'%3e%3cpath fill='%23fff' d='M6.564.75l-3.59 3.612-1.538-1.55L0 4.26 2.974 7.25 8 2.193z'/%3e%3c/svg%3e\")"
+    checkmark_icon_dark = "url(\"data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 8 8'%3e%3cpath fill='%23fff' d='M6.564.75l-3.59 3.612-1.538-1.55L0 4.26 2.974 7.25 8 2.193z'/%3e%3c/svg%3e\")"
+    
+    checkmark_icon = checkmark_icon_dark if theme == "dark" else checkmark_icon_light
+    # --- KONIEC ZMIANY ---
+    
+    return f\"\"\"
         QCheckBox {{
             color: {text_color};
-            spacing: {spacing};
-            padding: {padding};
-            background-color: {bg};
+            spacing: 5px;
+            padding: {AppStyles.CONTROL_PADDING};
+            background-color: transparent;
         }}
         QCheckBox::indicator, QGroupBox::indicator {{
-            width: {indicator_size};
-            height: {indicator_size};
-            border-radius: {radius};
+            width: 14px;
+            height: 14px;
+            border-radius: {AppStyles.BORDER_RADIUS};
         }}
         QCheckBox::indicator:unchecked, QGroupBox::indicator:unchecked {{
             border: 1px solid {unchecked_border};
             background: {unchecked_bg};
+            image: none; /* Upewnij się, że nie ma ikony w stanie odznaczonym */
         }}
         QCheckBox::indicator:unchecked:hover, QGroupBox::indicator:unchecked:hover {{
             border: 1px solid {unchecked_hover_border};
         }}
         QCheckBox::indicator:checked, QGroupBox::indicator:checked {{
             border: 1px solid {checked_border};
-            background: {checked_bg};
+            background-color: {checked_bg};
+            image: {checkmark_icon}; /* <-- DODANA IKONA */
         }}
         QCheckBox::indicator:checked:hover, QGroupBox::indicator:checked:hover {{
-            background: {checked_hover_bg};
+            background-color: {checked_hover_bg};
             border: 1px solid {checked_hover_border};
         }}
-        /* --- NOWA REGUŁA --- */
         QGroupBox::title {{
-            padding-left: 5px; /* Dodaje odstęp między checkboxem a tekstem */
+            padding-left: 5px;
+            padding-top: 1px; /* Drobna korekta pionowego ułożenia tekstu */
         }}
-    """
-
+    \"\"\"
