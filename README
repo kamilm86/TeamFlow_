@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Instrukcja Obsługi - TeamFlowApp</title>
+    <style>
+        :root {
+            --primary-color: #007bff;
+            --secondary-color: #6c757d;
+            --light-bg: #f8f9fa;
+            --dark-text: #343a40;
+            --light-text: #f8f9fa;
+            --border-color: #dee2e6;
+            --shadow: 0 4px 8px rgba(0,0,0,0.1);
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+            line-height: 1.7;
+            margin: 0;
+            padding: 0;
+            background-color: var(--light-bg);
+            color: var(--dark-text);
+        }
+        .container {
+            width: 90%;
+            max-width: 1024px;
+            margin: 20px auto;
+            background-color: #ffffff;
+            border-radius: 8px;
+            box-shadow: var(--shadow);
+        }
+        header, footer {
+            background: var(--primary-color);
+            color: var(--light-text);
+            padding: 1.5rem;
+            text-align: center;
+        }
+        header { border-radius: 8px 8px 0 0; }
+        footer { border-radius: 0 0 8px 8px; margin-top: 2rem; }
+        header h1 { color: var(--light-text); border: none; margin: 0; }
+        header p { opacity: 0.9; margin: 5px 0 0; }
+        main {
+            padding: 2rem;
+        }
+        h2, h3, h4 {
+            color: var(--dark-text);
+            padding-bottom: 10px;
+        }
+        h2 { 
+            border-bottom: 3px solid var(--primary-color); 
+            font-size: 2em;
+            margin-top: 2.5em;
+        }
+        h3 { 
+            border-bottom: 1px solid var(--border-color);
+            font-size: 1.5em;
+            margin-top: 2em;
+        }
+        nav#spis-tresci {
+            background: #eef5ff;
+            padding: 20px;
+            margin-bottom: 30px;
+            border-left: 5px solid var(--primary-color);
+            border-radius: 5px;
+        }
+        nav#spis-tresci h2 {
+            margin-top: 0;
+            border-bottom: 1px solid #cce0ff;
+        }
+        nav#spis-tresci ul { padding-left: 20px; }
+        nav#spis-tresci ul li { margin-bottom: 8px; }
+        nav#spis-tresci a { text-decoration: none; color: #0056b3; font-weight: 500; }
+        nav#spis-tresci a:hover { text-decoration: underline; }
+        .klawisz {
+            display: inline-block;
+            background-color: #f0f0f0;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            padding: 3px 8px;
+            font-family: "Consolas", "Courier New", monospace;
+            font-size: 0.9em;
+            font-weight: 600;
+            box-shadow: 0 2px 0 #bbb;
+            position: relative;
+            top: -1px;
+        }
+        .uwaga, .wskazowka {
+            padding: 1.25rem;
+            margin: 1.5rem 0;
+            border-radius: 5px;
+            border-left-width: 5px;
+            border-left-style: solid;
+        }
+        .uwaga {
+            background-color: #fff3cd;
+            border-color: #ffc107;
+            color: #856404;
+        }
+        .wskazowka {
+            background-color: #d1ecf1;
+            border-color: #bee5eb;
+            color: #0c5460;
+        }
+        strong { color: var(--primary-color); }
+        code {
+            background-color: #e9ecef;
+            padding: 2px 5px;
+            border-radius: 4px;
+            font-family: "Consolas", "Courier New", monospace;
+        }
+        ol li {
+            margin-bottom: 10px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        th, td {
+            padding: 12px;
+            text-align: left;
+            border-bottom: 1px solid var(--border-color);
+        }
+        th {
+            background-color: var(--light-bg);
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <header>
+            <h1>Instrukcja Obsługi Aplikacji TeamFlowApp</h1>
+            <p>Wersja 1.0 (sierpień 2025)</p>
+        </header>
+
+        <main>
+            <nav id="spis-tresci">
+                <h2>Spis Treści</h2>
+                <ul>
+                    <li><a href="#wstep">1. Wprowadzenie</a></li>
+                    <li><a href="#start">2. Pierwsze Kroki (Quick Start)</a></li>
+                    <li><a href="#glowne-okno">3. Główne Okno Aplikacji</a></li>
+                    <li><a href="#podstawy">4. Podstawowe Operacje</a></li>
+                    <li><a href="#edycja">5. Edycja Grafiku</a></li>
+                    <li><a href="#zaawansowane">6. Zaawansowane Funkcje</a></li>
+                    <li><a href="#ustawienia">7. Ustawienia Aplikacji</a></li>
+                    <li><a href="#skroty">8. Skróty Klawiszowe</a></li>
+                </ul>
+            </nav>
+            
+            <section id="wstep">
+                <h2>1. Wprowadzenie</h2>
+                <p>Aplikacja <strong>TeamFlowApp</strong> to zaawansowane narzędzie do zarządzania grafikiem pracy. Pozwala na centralne planowanie, edycję i analizę harmonogramów pracy w czasie rzeczywistym, łącząc się bezpośrednio z firmową bazą danych.</p>
+                <div class="uwaga">
+                    <p><strong>Uprawnienia:</strong> Dostępność funkcji zależy od Twojej roli (Pracownik WPR, Lider, Lider OUT). Niektóre opcje mogą być niewidoczne, a edycja danych ograniczona.</p>
+                </div>
+            </section>
+
+            <section id="start">
+                <h2>2. Pierwsze Kroki (Quick Start)</h2>
+                <ol>
+                    <li><strong>Uruchomienie:</strong> Po uruchomieniu aplikacja automatycznie załaduje grafik na bieżący miesiąc.</li>
+                    <li><strong>Filtrowanie:</strong> Użyj panelu po lewej stronie, aby zawęzić listę pracowników. Wybierz np. swój wydział z listy "Wydział".</li>
+                    <li><strong>Zaznaczenie komórki:</strong> Kliknij na dowolną komórkę w siatce grafiku, aby ją zaznaczyć. W dolnym panelu pojawią się ewentualne zdarzenia (spotkania, nadgodziny) przypisane do tej osoby w danym dniu.</li>
+                </ol>
+            </section>
+            
+            <section id="glowne-okno">
+                <h2>3. Główne Okno Aplikacji</h2>
+                <p>Interfejs aplikacji został zaprojektowany z myślą o maksymalnej wydajności i czytelności. Składa się z czterech głównych stref:</p>
+                <ul>
+                    <li><strong>Górny Pasek Narzędzi:</strong> Centrum dowodzenia. Znajdziesz tu wybór miesiąca oraz przyciski do najważniejszych akcji: <strong>"Ustawienia"</strong>, <strong>"Odśwież"</strong>, <strong>"Historia Zmian"</strong>, <strong>"Obsada"</strong> i <strong>"Zarządzaj Grafikiem"</strong>.</li>
+                    <li><strong>Panel Filtrów (po lewej):</strong> Twoje narzędzie do precyzyjnego wyszukiwania. Pozwala filtrować pracowników według wielu kryteriów. Można go ukryć/pokazać klawiszem <span class="klawisz">F1</span>.</li>
+                    <li><strong>Główny Widok Grafiku (centrum):</strong> Podzielony jest na dwie części: zamrożoną listę pracowników oraz przewijaną w poziomie siatkę z dniami miesiąca. Kolory komórek oznaczają godzinę rozpoczęcia zmiany.</li>
+                    <li><strong>Panel Zdarzeń (na dole):</strong> Po zaznaczeniu komórki w grafiku, ten panel wyświetli listę powiązanych zdarzeń (spotkania, szkolenia, nadgodziny).</li>
+                </ul>
+            </section>
+
+            <section id="podstawy">
+                <h2>4. Podstawowe Operacje</h2>
+                <p>Poniżej opisano podstawowe czynności wykonywane w aplikacji.</p>
+                
+                <h3>Filtrowanie grafiku</h3>
+                <p>Panel filtrów pozwala błyskawicznie znaleźć potrzebne informacje.</p>
+                <ol>
+                    <li>Wybierz interesujący Cię filtr, np. "Wydział".</li>
+                    <li>Rozwiń listę i zaznacz jedną lub więcej wartości.</li>
+                    <li>Widok grafiku automatycznie się zaktualizuje.</li>
+                </ol>
+                <div class="wskazowka">
+                    <p>💡 <strong>Wskazówka:</strong> W panelu "Obecni w pracy w dniu:" możesz dynamicznie sprawdzić, kto pracował w wybranym dniu i w konkretnej lokalizacji (lub bez przypisanej lokalizacji).</p>
+                </div>
+            </section>
+
+            <section id="edycja">
+                <h2>5. Edycja Grafiku</h2>
+                <p>Edycja jest możliwa na kilka sposobów, w zależności od potrzeb i posiadanych uprawnień.</p>
+
+                <h3>5.1. Edycja z klawiatury</h3>
+                <p>Najszybszy sposób na drobne korekty. Po zaznaczeniu komórek:</p>
+                <ul>
+                    <li><strong>Wpisz cyfrę (np. <span class="klawisz">8</span>):</strong> Ustawia godzinę rozpoczęcia pracy na 8:00.</li>
+                    <li><strong>Użyj <span class="klawisz">+</span> / <span class="klawisz">-</span>:</strong> Zmienia liczbę godzin pracy (głównie w systemie równoważnym).</li>
+                    <li><strong>Wpisz tekst (np. <span class="klawisz">C</span><span class="klawisz">O</span>):</strong> Wstawia symbol specjalny.</li>
+                    <li><strong>Użyj <span class="klawisz">Delete</span> lub <span class="klawisz">Backspace</span>:</strong> Czyści całą komórkę.</li>
+                </ul>
+
+                <h3>5.2. Wstawianie zmiany (Dialog)</h3>
+                <p>Idealne do hurtowej edycji. Po zaznaczeniu komórek i kliknięciu <strong>"Wstaw zmianę"</strong>:</p>
+                <ul>
+                    <li><strong>Sortuj listę:</strong> Kliknij na nagłówek "Data" lub "Dzień tyg.", aby posortować listę.</li>
+                    <li><strong>Edytuj pojedynczo:</strong> Zmień wartości w wierszu i kliknij "Zastosuj".</li>
+                    <li><strong>Zastosuj dla wszystkich:</strong> Zaznacz checkboxy w górnym panelu (np. przy "Lokalizacja"), wybierz nową wartość i kliknij "Zastosuj dla wszystkich". Zmiana zostanie wprowadzona we wszystkich wierszach, do których masz uprawnienia.</li>
+                </ul>
+                
+                <h3>5.3. Wstawianie nieobecności (Dialog)</h3>
+                <p>Przycisk <strong>"Wstaw nieobecność"</strong> otwiera okno z symbolami. Wybierz odpowiedni symbol z zakładek, a zostanie on wstawiony do zaznaczonych komórek.</p>
+                <div class="uwaga">
+                    <p><strong>Specjalna reguła:</strong> Edytując pracownika z wydziału <strong>DTN</strong>, Liderzy mogą wstawić wyłącznie symbol <strong>"CO"</strong>.</p>
+                </div>
+            </section>
+            
+            <section id="zaawansowane">
+                <h2>6. Zaawansowane Funkcje</h2>
+                <ul>
+                    <li><strong>Historia Zmian:</strong> Pokazuje szczegółowy rejestr kto, co i kiedy zmienił w grafiku.</li>
+                    <li><strong>Obsada:</strong> Otwiera potężne narzędzie analityczne z wykresami i tabelami, pokazujące m.in. obsadę godzinową, realizację prognozy, analizę absencji i wykorzystanie nadgodzin.</li>
+                    <li><strong>Zarządzaj Grafikiem:</strong> Umożliwia uprawnionym użytkownikom publikację, blokowanie i import sugestii do grafiku na przyszły miesiąc.</li>
+                </ul>
+            </section>
+            
+            <section id="ustawienia">
+                <h2>7. Ustawienia Aplikacji</h2>
+                <p>Kliknij <strong>"Ustawienia"</strong> na górnym pasku, aby spersonalizować aplikację.</p>
+                <ul>
+                    <li><strong>Wygląd:</strong> Zmień motyw na jasny/ciemny oraz dostosuj czcionkę i jej rozmiar.</li>
+                    <li><strong>Import Grafiku:</strong> Ustaw domyślne parametry dla ładowania danych. Aby załadować grafik z nowymi ustawieniami, użyj przycisku <strong>"Importuj teraz"</strong>. Kliknięcie "OK" tylko zapisze wybór na przyszłość.</li>
+                    <li><strong>Zapisywanie:</strong> Ustawienia wyglądu i importu zostaną zapisane w bazie, jeśli zaznaczysz "Zapamiętaj ustawienia...". Natomiast rozmiar okna, szerokości kolumn i aktywne filtry są **zawsze zapisywane automatycznie** przy zamykaniu aplikacji.</li>
+                </ul>
+            </section>
+
+            <section id="skroty">
+                <h2>8. Skróty Klawiszowe</h2>
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Klawisz</th>
+                            <th>Akcja</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><span class="klawisz">F1</span></td>
+                            <td>Pokaż / ukryj panel filtrów</td>
+                        </tr>
+                        <tr>
+                            <td><span class="klawisz">F2</span></td>
+                            <td>Pokaż / ukryj panel zdarzeń</td>
+                        </tr>
+                        <tr>
+                            <td><span class="klawisz">F3</span></td>
+                            <td>Otwórz okno "Wstaw zmianę"</td>
+                        </tr>
+                        <tr>
+                            <td><span class="klawisz">F4</span></td>
+                            <td>Otwórz okno "Wstaw nieobecność"</td>
+                        </tr>
+                        <tr>
+                            <td><span class="klawisz">Insert</span></td>
+                            <td>Otwórz okno "Dodaj nadgodziny"</td>
+                        </tr>
+                        <tr>
+                            <td><span class="klawisz">F12</span></td>
+                            <td>Usuń tylko symbol specjalny (pozostaw godziny)</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+        </main>
+
+        <footer>
+            <p>&copy; 2025 TeamFlowApp</p>
+        </footer>
+    </div>
+
+</body>
+</html>
