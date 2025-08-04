@@ -63,21 +63,41 @@ def get_modifier_id():
         log_error(f"Błąd podczas pobierania informacji o użytkowniku ({username}): {e}", exception=e)
         return "System", username, "Użytkownik", False, None
 
-def load_all_app_settings():
-    """Ładuje wszystkie ustawienia z tabeli appsettings i zapisuje je w globalnym obiekcie app_settings."""
+
+def load_all_app_settings(existing_conn=None):
+    """
+    Ładuje wszystkie ustawienia z tabeli appsettings.
+    Może użyć istniejącego połączenia lub stworzyć własne.
+    """
+    conn = existing_conn
     try:
-        conn = DatabaseConnector.get_connection()
+        # Jeśli nie przekazano istniejącego połączenia, stwórz nowe i zarządzaj nim
+        if not conn:
+            conn = DatabaseConnector.get_connection()
+
         cursor = conn.cursor()
         cursor.execute(f"SELECT SettingKey, SettingValue FROM {SQL_OBJECTS['appsettings']}")
         results = cursor.fetchall()
-        conn.close()
+
+        # Jeśli połączenie było stworzone tylko na potrzeby tej funkcji, zamknij je
+        if not existing_conn:
+            conn.close()
+
         if not results:
             log_error("Błąd krytyczny: Tabela [appsettings] jest pusta lub nie istnieje.")
             return False
+
         for row in results:
             if row.SettingKey and row.SettingValue:
                 app_settings.parse_and_apply(row.SettingKey, row.SettingValue)
+        # Nie logujemy tutaj sukcesu, aby uniknąć zaśmiecania logów co minutę
         return True
     except Exception as e:
+        # Jeśli połączenie było stworzone tutaj i wystąpił błąd, spróbuj je zamknąć
+        if not existing_conn and conn:
+            try:
+                conn.close()
+            except Exception:
+                pass
         log_error(f"Błąd krytyczny podczas ładowania ustawień aplikacji: {e}", exception=e)
         return False
