@@ -1,96 +1,73 @@
 # -*- coding: utf-8 -*-
 from db_connector import DatabaseConnector
-import os
 import getpass
+import json  # Import do obsługi JSON
 from debug_utils import debug_print, log_warning, log_error
 from config import SQL_OBJECTS
 
 
 class SettingsDatabase:
-    """Klasa do obsługi bazy danych ustawień użytkownika w SQL Server"""
-
-    def __init__(self):
-        pass
+    """Klasa do obsugi bazy danych ustawień użytkownika w formacie JSON."""
 
     def get_current_login_windows(self):
-        """Pobiera nazwę użytkownika Windows używając getpass"""
         try:
             return getpass.getuser()
         except Exception:
-            return os.environ.get('USERNAME') or 'unknown_user'
+            return 'unknown_user'
 
-    def save_settings(self, theme, font_family, font_size, load_all_events=True, visible_columns=None,
-                      show_schedule_comment=False, login_windows=None, import_grupa=3, import_funkcja=1,
-                      show_special_symbol=True, show_location_symbol=True,
-                      special_symbol_position='top_left', location_symbol_position='bottom_left'):
+    def save_settings(self, settings_dict: dict, login_windows: str = None):
+        """Zapisuje cały słownik ustawień jako JSON do bazy danych."""
         if login_windows is None:
             login_windows = self.get_current_login_windows()
+
         try:
+            # Serializuj słownik do stringa JSON
+            settings_json = json.dumps(settings_dict, indent=4)
+
             conn = DatabaseConnector.get_connection()
             cursor = conn.cursor()
-            columns_str = ','.join(visible_columns) if visible_columns else None
 
-            # Usunięto parametry logowania z listy
-            params_to_save = (
-                login_windows, theme, font_family, font_size, load_all_events,
-                columns_str, show_schedule_comment, import_grupa, import_funkcja,
-                show_special_symbol, show_location_symbol, special_symbol_position,
-                location_symbol_position
-            )
-            # Zaktualizowano procedurę, aby nie przyjmowała parametrów logowania
-            sql_query = f"""
-                EXEC {SQL_OBJECTS['p_saveusersettings']}
-                    @login_windows=?, @theme=?, @font_family=?, @font_size=?,
-                    @load_all_events=?, @visible_columns=?, @show_schedule_comment=?,
-                    @import_grupa=?, @import_funkcja=?,
-                    @show_special_symbol=?, @show_location_symbol=?,
-                    @special_symbol_position=?, @location_symbol_position=?
-            """
-            cursor.execute(sql_query, params_to_save)
+            # Wywołaj nową, uproszczoną procedurę
+            sql_query = f"EXEC {SQL_OBJECTS['p_saveusersettingsjson']} @login_windows=?, @settings_json=?"
+            cursor.execute(sql_query, (login_windows, settings_json))
             conn.commit()
             conn.close()
-            debug_print(f"Ustawienia zapisane dla {login_windows}")
+            debug_print(f"Ustawienia JSON zapisane dla {login_windows}")
             return True
         except Exception as e:
-            log_error(f"Błąd podczas zapisywania ustawień: {e}", exception=e)
+            log_error(f"Błąd podczas zapisywania ustawień JSON: {e}", exception=e)
             return False
 
-    def load_settings(self, login_windows=None):
-        """Ładuje ustawienia użytkownika, już bez parametrów logowania."""
+    def load_settings(self, login_windows: str = None) -> dict:
+        """Ładuje ustawienia z JSON i łączy je z domyślnymi wartościami."""
         if login_windows is None:
             login_windows = self.get_current_login_windows()
 
-        # --- ZMIANA: Usunięto 'log_to_file' i 'log_to_console' z wartości domyślnych ---
+        # Domyślne ustawienia, które zapewnią, że aplikacja zawsze ma potrzebne klucze
         defaults = {
-            'theme': 'dark', 'font_family': 'Arial', 'font_size': 9,
-            'load_all_events': True, 'visible_columns': None, 'show_schedule_comment': False,
-            'import_grupa': 3, 'import_funkcja': 1,
-            'show_special_symbol': True, 'show_location_symbol': True,
-            'special_symbol_position': 'top_left', 'location_symbol_position': 'top_right'
+            'theme': 'dark', 'font_family': 'Segoe UI', 'font_size': 9,
+            'visible_columns': ['wydzial', 'przelozony_nazwisko_imie', 'uzytkownik_dane'],
+            'show_schedule_comment': False, 'import_grupa': 3, 'import_funkcja': 1,
+            'is_maximized': True, 'window_size': (1600, 800),
+            'column_widths': {}, 'last_filters': {}
         }
 
         try:
             conn = DatabaseConnector.get_connection()
             cursor = conn.cursor()
-            cursor.execute(f"EXEC {SQL_OBJECTS['p_getusersettings']} @login_windows=?", (login_windows,))
+            # Proste zapytanie do odczytu pola JSON
+            cursor.execute(f"SELECT SettingsJSON FROM {SQL_OBJECTS['usersettings']} WHERE LoginWindows=?",
+                           (login_windows,))
             result = cursor.fetchone()
             conn.close()
 
-            if result:
-                settings = defaults.copy()
-                # --- ZMIANA: Usunięto parsowanie wyników dla logowania ---
-                settings.update({
-                    'theme': result[0], 'font_family': result[1], 'font_size': result[2],
-                    'load_all_events': result[3],
-                    'visible_columns': result[4].split(',') if result[4] else defaults['visible_columns'],
-                    'show_schedule_comment': bool(result[5]),
-                    'import_grupa': int(result[6]), 'import_funkcja': int(result[7]),
-                    'show_special_symbol': bool(result[8]), 'show_location_symbol': bool(result[9]),
-                    'special_symbol_position': str(result[10]), 'location_symbol_position': str(result[11]),
-                })
-                return settings
-            else:
-                return defaults
+            if result and result[0]:
+                # Deserializuj JSON i zaktualizuj domyślne wartości
+                loaded_settings = json.loads(result[0])
+                defaults.update(loaded_settings)
+
+            return defaults
         except Exception as e:
-            log_error(f"Błąd podczas ładowania ustawień dla '{login_windows}'. Używam ustawień domyślnych.", exception=e)
+            log_error(f"Błąd podczas ładowania ustawień JSON dla '{login_windows}'. Używam ustawień domyślnych.",
+                      exception=e)
             return defaults
