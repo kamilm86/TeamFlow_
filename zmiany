@@ -1,0 +1,311 @@
+import os
+import sys
+import configparser
+import pandas as pd
+import pypyodbc
+import logging
+from datetime import datetime
+from typing import Tuple, List, Dict
+import codecs
+import hashlib
+
+# --- Zależności z zewnętrznych modułów ---
+# Zakładamy, że te moduły istnieją i są dostępne w ścieżce projektu.
+# Wymagane jest odkomentowanie i dostosowanie ścieżek.
+#
+# # Dodanie ścieżki do modułów niestandardowych
+# sys.path.append(os.path.abspath(os.path.join(os.path.dirname('__file__'), '..', '..')))
+# from db_manager_temp.network_file_handler import NetworkFileHandler
+# from db_manager_temp.password_decryptor import PasswordDecryptor
+
+
+# --- Klasy narzędziowe i statystyczne ---
+
+class ProcessingStats:
+    """Klasa przechowująca statystyki całościowego przetwarzania."""
+    def __init__(self):
+        self.start_time = None
+        self.end_time = None
+        self.total_files = 0
+        self.processed_files = 0
+        self.total_records = 0
+        self.successful_records = 0
+        self.failed_records = 0
+
+    def get_summary(self) -> str:
+        """Zwraca podsumowanie w formie stringa."""
+        duration = self.end_time - self.start_time if self.end_time and self.start_time else 'N/A'
+        return (f"\n================ PODSUMOWANIE =================\n"
+                f" Czas trwania: {duration}\n"
+                f" Przetworzono plików: {self.processed_files}/{self.total_files}\n"
+                f" Przetworzono rekordów: {self.successful_records}/{self.total_records}\n"
+                f"==============================================")
+
+
+class IdentifierGenerator:
+    """Generuje anonimowe identyfikatory na podstawie hasha."""
+    def __init__(self, prefix: str = "ANM_"):
+        self.prefix = prefix
+        self._cache = {}
+
+    def generate_id(self, original_value: str) -> str:
+        if original_value in self._cache:
+            return self._cache[original_value]
+        value_to_hash = str(original_value).encode('utf-8')
+        hashed = hashlib.sha256(value_to_hash).hexdigest()
+        max_hash_length = 50 - len(self.prefix)
+        identifier = f"{self.prefix}{hashed[:max_hash_length]}"
+        self._cache[original_value] = identifier
+        return identifier
+
+
+# --- Główna klasa procesora ---
+
+class RetentionProcessor:
+    """Główna klasa orkiestrująca, operuje na danych w pamięci."""
+    def __init__(self, config: dict):
+        self.conn_str = config['connection_string']
+        self.output_folder = config['output_folder']
+        self.setup_logging()
+        self.stats = None
+        self.id_generator = IdentifierGenerator()
+
+    def setup_logging(self):
+        """Konfiguracja logowania do pliku i konsoli."""
+        log_file = f'retention_{datetime.now().strftime("%Y%m%d")}.log'
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            handlers=[
+                logging.FileHandler(log_file, encoding='utf-8'),
+                logging.StreamHandler(sys.stdout)
+            ]
+        )
+        self.logger = logging.getLogger('RetentionProcessor')
+
+    def parse_filename(self, filename: str) -> Tuple[str, datetime, str]:
+        """Wyciąga kraj, datę i typ pliku z jego nazwy."""
+        try:
+            country = filename[:2]
+            if 'PESEL' in filename:
+                file_type = 'PESEL'
+                date_str = filename[-12:-4]
+            else:
+                file_type = 'NORMAL'
+                date_str = filename[-12:-4]
+            file_date = datetime.strptime(date_str, '%Y%m%d')
+            if country not in ['PL', 'CZ', 'SK']:
+                raise ValueError(f"Nieprawidłowy kod kraju: {country}")
+            return country, file_date, file_type
+        except Exception as e:
+            raise ValueError(f"Nieprawidłowy format nazwy pliku: {filename}. {str(e)}")
+
+    def is_already_processed(self, filename: str) -> bool:
+        """Sprawdza w bazie danych, czy plik był już pomyślnie przetworzony."""
+        with pypyodbc.connect(self.conn_str) as conn:
+            cursor = conn.cursor()
+            cursor.execute("SELECT COUNT(*) FROM Korytko.dbo.A_ProcessedFiles WHERE FileName = ? AND Status = 'COMPLETED'", (filename,))
+            return cursor.fetchone()[0] > 0
+
+    def process_loaded_data(self, data_dict: Dict[str, pd.DataFrame]):
+        """Przetwarza dane z gotowego słownika {nazwa_pliku: dataframe}."""
+        self.stats = ProcessingStats()
+        self.stats.start_time = datetime.now()
+        self.logger.info("Rozpoczęcie przetwarzania załadowanych danych.")
+
+        try:
+            files_to_process = list(data_dict.keys())
+            if not files_to_process:
+                self.logger.info("Brak nowych danych do przetworzenia.")
+                return
+
+            self.stats.total_files = len(files_to_process)
+            
+            files_by_date = {}
+            for filename in files_to_process:
+                _, file_date, _ = self.parse_filename(filename)
+                if file_date not in files_by_date:
+                    files_by_date[file_date] = []
+                files_by_date[file_date].append(filename)
+
+            for filename, df in data_dict.items():
+                self.process_file(filename, df)
+
+            for file_date, files in files_by_date.items():
+                if files:
+                    self.generate_report(files[0], file_date)
+
+            self.stats.end_time = datetime.now()
+            self.logger.info(self.stats.get_summary())
+
+        except Exception as e:
+            self.logger.error(f"Wystąpił nieoczekiwany błąd główny: {e}", exc_info=True)
+            raise
+
+    def process_file(self, filename: str, df: pd.DataFrame):
+        """Przetwarza dane dla jednego pliku przekazane jako DataFrame."""
+        file_id = None
+        try:
+            file_stats = {'records': 0, 'successful': 0, 'failed': 0, 'start_time': datetime.now()}
+            self.logger.info(f"--- Przetwarzanie danych z pliku: {filename} ---")
+            
+            file_id = self.register_file(filename)
+            country, file_date, file_type = self.parse_filename(filename)
+
+            file_stats['records'] = len(df)
+            self.logger.info(f"Znaleziono {file_stats['records']} rekordów.")
+
+            if file_type == 'PESEL':
+                self.process_pesel_file(file_id, country, df, file_stats)
+            else:
+                self.process_normal_file(file_id, country, df, file_stats)
+            
+            self.update_file_status(file_id, 'COMPLETED')
+
+            self.stats.processed_files += 1
+            self.stats.total_records += file_stats['records']
+            self.stats.successful_records += file_stats['successful']
+            self.stats.failed_records += file_stats['failed']
+            
+        except Exception as e:
+            self.logger.error(f"Krytyczny błąd podczas przetwarzania danych z pliku {filename}: {e}", exc_info=True)
+            if file_id:
+                self.update_file_status(file_id, 'ERROR', str(e))
+
+    def register_file(self, filename: str) -> int:
+        with pypyodbc.connect(self.conn_str) as conn:
+            cursor = conn.cursor()
+            sql = "INSERT INTO Korytko.dbo.A_ProcessedFiles (FileName, Status, ProcessDate, ImportDate) OUTPUT INSERTED.FileID VALUES (?, 'PROCESSING', GETDATE(), GETDATE())"
+            cursor.execute(sql, (filename,))
+            file_id = cursor.fetchone()[0]
+            conn.commit()
+            self.logger.info(f"Zarejestrowano plik '{filename}' w bazie z ID: {file_id}.")
+            return file_id
+
+    def update_file_status(self, file_id: int, status: str, error_message: str = None):
+        with pypyodbc.connect(self.conn_str) as conn:
+            cursor = conn.cursor()
+            sql = "UPDATE Korytko.dbo.A_ProcessedFiles SET Status = ?, ErrorMessage = ?, ProcessDate = GETDATE() WHERE FileID = ?"
+            cursor.execute(sql, (status, error_message, file_id))
+            conn.commit()
+            self.logger.info(f"Zaktualizowano status dla pliku ID {file_id} na: {status}.")
+
+    def process_pesel_file(self, file_id: int, country: str, df: pd.DataFrame, file_stats: dict):
+        try:
+            with pypyodbc.connect(self.conn_str) as conn:
+                cursor = conn.cursor()
+                cursor.fast_executemany = True
+
+                self.logger.info(f"Przygotowywanie {len(df)} rekordów do wstawienia (PESEL)")
+                insert_data = [(file_id, row[0], self.id_generator.generate_id(row[1]), country, 'N', datetime.now()) for _, row in df.iterrows()]
+
+                cursor.executemany("INSERT INTO Korytko.dbo.A_ProcessingDetails (FileID, InputID, AnonymousID, Country, Status, ProcessDate) VALUES (?, ?, ?, ?, ?, ?)", insert_data)
+                self.logger.info("Rozpoczęcie procesu czyszczenia danych (PESEL)")
+                cursor.execute("{EXEC dbo.P_A_CleanCustomerDataByIdentifierBatch @FileID = ?}", (file_id,))
+                conn.commit()
+
+                cursor.execute("SELECT Status, COUNT(*) as cnt FROM Korytko.dbo.A_ProcessingDetails WHERE FileID = ? GROUP BY Status", (file_id,))
+                for status, count in cursor.fetchall():
+                    if status == 'P': file_stats['successful'] = count
+                    else: file_stats['failed'] = file_stats.get('failed', 0) + count
+        except Exception as e:
+            self.logger.error(f"Błąd podczas przetwarzania pliku PESEL (FileID: {file_id}): {e}", exc_info=True)
+            raise
+
+    def process_normal_file(self, file_id: int, country: str, df: pd.DataFrame, file_stats: dict):
+        try:
+            with pypyodbc.connect(self.conn_str) as conn:
+                cursor = conn.cursor()
+                cursor.fast_executemany = True
+
+                self.logger.info(f"Przygotowywanie {len(df)} rekordów do wstawienia (NORMAL)")
+                insert_data = [(file_id, row[0], None, country, 'N', datetime.now()) for _, row in df.iterrows()]
+
+                cursor.executemany("INSERT INTO Korytko.dbo.A_ProcessingDetails (FileID, InputID, AnonymousID, Country, Status, ProcessDate) VALUES (?, ?, ?, ?, ?, ?)", insert_data)
+                self.logger.info("Rozpoczęcie zbiorczego czyszczenia danych (NORMAL)")
+                cursor.execute("{EXEC dbo.P_A_CleanCustomerDataByID @FileID = ?}", (file_id,))
+                conn.commit()
+
+                cursor.execute("SELECT Status, COUNT(*) as cnt FROM Korytko.dbo.A_ProcessingDetails WHERE FileID = ? GROUP BY Status", (file_id,))
+                for status, count in cursor.fetchall():
+                    if status == 'P': file_stats['successful'] = count
+                    else: file_stats['failed'] = file_stats.get('failed', 0) + count
+        except Exception as e:
+            self.logger.error(f"Błąd podczas przetwarzania pliku NORMAL (FileID: {file_id}): {e}", exc_info=True)
+            raise
+
+    def generate_report(self, input_filename: str, file_date: datetime):
+        report_filename = f"Korytko_RODO_ZWROT_{file_date.strftime('%Y%m%d')}.TXT"
+        report_path = os.path.join(self.output_folder, report_filename)
+        self.logger.info(f"Generowanie skonsolidowanego raportu: {report_filename}")
+
+        with pypyodbc.connect(self.conn_str) as conn:
+            date_str = file_date.strftime('%Y%m%d')
+            query_files = f"SELECT DISTINCT FileName FROM Korytko.dbo.A_ProcessedFiles WHERE FileName LIKE '%{date_str}%'"
+            files_df = pd.read_sql(query_files, conn)
+
+            if files_df.empty: return
+
+            file_list = tuple(files_df['FileName'].tolist())
+            placeholders = ','.join(['?'] * len(file_list))
+            condition = f"f.FileName IN ({placeholders})"
+            params = list(file_list)
+
+            query = f"SELECT d.Country, CASE WHEN a.AnonymousID IS NOT NULL THEN a.AnonymousID ELSE d.InputID END as ReportID, d.Status FROM Korytko.dbo.A_ProcessingDetails d INNER JOIN Korytko.dbo.A_ProcessedFiles f ON f.FileID = d.FileID LEFT JOIN ( SELECT InputID, AnonymousID FROM Korytko.dbo.A_ProcessingDetails WHERE AnonymousID IS NOT NULL ) a ON d.InputID = a.InputID WHERE {condition} ORDER BY d.Country, ReportID"
+            rows = pd.read_sql(query, conn, params=params)
+            
+            rows.drop_duplicates(subset=['Country', 'ReportID'], inplace=True)
+            os.makedirs(os.path.dirname(report_path), exist_ok=True)
+            
+            with open(report_path, 'w', encoding='windows-1250') as f:
+                for _, row in rows.iterrows():
+                    f.write(f"{row['Country']}|{row['ReportID']}|{row['Status']}\r\n")
+            
+            self.logger.info(f"Wygenerowano raport: {report_filename} z {len(rows)} rekordami")
+
+
+# --- Punkt wejścia aplikacji ---
+
+def main():
+    """Główna funkcja, zarządza pobieraniem i ładowaniem danych."""
+    try:
+        # UWAGA: Poniższy blok jest przykładem. Wymaga implementacji
+        #        klas NetworkFileHandler i PasswordDecryptor oraz
+        #        odpowiedniej konfiguracji w pliku config.ini.
+        
+        # Wczytywanie konfiguracji
+        # config_parser = configparser.ConfigParser()
+        # config_parser.read('path/to/config.ini')
+        # password = PasswordDecryptor(...).decrypt_password()
+        # network_handler = NetworkFileHandler(...)
+        
+        # Przykładowe dane, aby zademonstrować działanie
+        db_connection_string = "Driver=...;Server=...;Database=...;Uid=...;Pwd=...;"
+        output_folder_path = "./output_reports"
+        all_remote_files = ["PL_zapomnienie_PESEL_20250806.csv", "CZ_zapomnienie_NORMAL_20250806.csv"]
+        
+        # Inicjalizacja procesora
+        config = {'connection_string': db_connection_string, 'output_folder': output_folder_path}
+        processor = RetentionProcessor(config)
+
+        # Filtrowanie plików
+        files_to_load = [f for f in all_remote_files if not processor.is_already_processed(f)]
+        if not files_to_load:
+            logging.info("Brak nowych plików do przetworzenia.")
+            return
+
+        # Wczytanie danych (tutaj jako mock)
+        # W docelowym rozwiązaniu: file_data_dict = network_handler.load_data_from_files(files_to_load)
+        file_data_dict_example = {
+            "PL_zapomnienie_PESEL_20250806.csv": pd.DataFrame(data={'c1': ["123"], 'c2': ["98765432101"]}),
+            "CZ_zapomnienie_NORMAL_20250806.csv": pd.DataFrame(data={'c1': ["CUST01"], 'c2': [None]})
+        }
+        
+        processor.process_loaded_data(file_data_dict_example)
+
+    except Exception as e:
+        logging.error(f"Wystąpił krytyczny błąd aplikacji: {str(e)}", exc_info=True)
+        raise
+
+if __name__ == "__main__":
+    main()
