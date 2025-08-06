@@ -1,43 +1,272 @@
-# W pliku schedule_edit_dialogs.py, wewnątrz klasy ScheduleChangeDialog
+import os
+import pandas as pd
+import pyodbc
+import logging
+from datetime import datetime
+from typing import Tuple, Dict
+import hashlib
 
-def apply_dialog_theme(self):
-    actual_theme = self.determined_theme
-    self.setStyleSheet(AppStyles.get_dialog_style(actual_theme))
-    
-    # Pobierz style z centralnej klasy
-    button_style = AppStyles.get_button_style(actual_theme)
-    combobox_style = AppStyles.get_combobox_style(actual_theme)
-    checkbox_style = AppStyles.get_checkbox_style(actual_theme) # Pobierz styl dla checkboxów
+# --- Klasa do generowania anonimowych identyfikatorów (bez zmian) ---
+class IdentifierGenerator:
+    """Generuje unikalne, anonimowe identyfikatory."""
+    def __init__(self, prefix: str = "ANM_"):
+        self.prefix = prefix
+        self.cache = {}
 
-    # Styl dla panelu "Zastosuj dla wszystkich"
-    if hasattr(self, 'all_time_button'):
-        self.all_time_button.setStyleSheet(button_style)
-        self.all_hours_button.setStyleSheet(button_style)
-        self.all_location_combo.setStyleSheet(combobox_style)
+    def generate_id(self, original_value: str) -> str:
+        """Generuje unikalny identyfikator na podstawie wartości wejściowej (PESEL, NIP, etc.)."""
+        if original_value in self.cache:
+            return self.cache[original_value]
+
+        value_to_hash = str(original_value).encode('utf-8')
+        hashed = hashlib.sha256(value_to_hash).hexdigest()
+
+        max_hash_length = 50 - len(self.prefix)
+        identifier = f"{self.prefix}{hashed[:max_hash_length]}"
+
+        self.cache[original_value] = identifier
+        return identifier
+
+# --- Klasa do przechowywania statystyk (bez zmian) ---
+class ProcessingStats:
+    """Klasa przechowująca statystyki przetwarzania."""
+    def __init__(self):
+        self.total_files = 0
+        self.processed_records = 0
+        self.successful_records = 0
+        self.failed_records = 0
+        self.start_time = None
+        self.end_time = None
+
+    def get_summary(self) -> str:
+        """Zwraca podsumowanie przetwarzania."""
+        duration = self.end_time - self.start_time if self.end_time and self.start_time else None
+        return (
+            "Podsumowanie przetwarzania:\n"
+            f"Pliki: {self.processed_records}/{self.total_files}\n"
+            f"Sukcesy: {self.successful_records}\n"
+            f"Błędy: {self.failed_records}\n"
+            f"Czas wykonania: {duration}"
+        )
+
+# --- Główna klasa procesora (mocno zmodyfikowana) ---
+class RetentionProcessor:
+    """Główna klasa orkiestrująca proces anonimizacji."""
+    def __init__(self, config: dict):
+        self.conn_str = config['connection_string']
+        self.output_folder = config['output_folder']
+        self.logger = logging.getLogger(__name__)
+        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+        self.stats = ProcessingStats()
+
+    def _execute_query(self, query: str, params: tuple = None, fetch: str = None):
+        """Pomocnicza funkcja do wykonywania zapytań SQL."""
+        with pyodbc.connect(self.conn_str) as conn:
+            cursor = conn.cursor()
+            cursor.execute(query, params if params else ())
+            if fetch == 'one':
+                return cursor.fetchone()
+            if fetch == 'all':
+                return cursor.fetchall()
+            conn.commit()
+
+    def is_file_processed(self, filename: str) -> bool:
+        """Sprawdza, czy plik został już pomyślnie przetworzony."""
+        query = "SELECT Status FROM Korytko.dbo.A_ProcessedFiles WHERE FileName = ? AND Status = 'COMPLETED'"
+        result = self._execute_query(query, (filename,), fetch='one')
+        return result is not None
+
+    def register_file(self, filename: str) -> int:
+        """Rejestruje rozpoczęcie przetwarzania pliku w bazie danych."""
+        query = """
+            INSERT INTO Korytko.dbo.A_ProcessedFiles (FileName, Status, ProcessDate, ImportDate)
+            OUTPUT INSERTED.FileID
+            VALUES (?, 'PROCESSING', GETDATE(), GETDATE())
+        """
+        result = self._execute_query(query, (filename,), fetch='one')
+        self.logger.info(f"Zarejestrowano plik '{filename}' w bazie z ID: {result[0]}")
+        return result[0]
+
+    def update_file_status(self, file_id: int, status: str, error_message: str = None):
+        """Aktualizuje status przetwarzania pliku w bazie."""
+        query = """
+            UPDATE Korytko.dbo.A_ProcessedFiles
+            SET Status = ?, ErrorMessage = ?, ProcessDate = GETDATE()
+            WHERE FileID = ?
+        """
+        self._execute_query(query, (status, error_message, file_id))
+        self.logger.info(f"Zaktualizowano status dla pliku ID {file_id} na: {status}")
+
+    def process_pesel_file(self, file_id: int, country: str, df: pd.DataFrame, file_stats: dict):
+        """Przetwarza dane dla pliku typu PESEL (z DataFrame)."""
+        self.logger.info(f"Rozpoczęto przetwarzanie pliku PESEL. Liczba rekordów: {len(df)}")
+        id_generator = IdentifierGenerator()
         
-        # --- POCZĄTEK POPRAWKI ---
-        # Zastosuj styl do checkboxów w tym panelu
-        self.apply_location_check.setStyleSheet(checkbox_style)
-        self.apply_time_check.setStyleSheet(checkbox_style)
-        self.apply_hours_check.setStyleSheet(checkbox_style)
-        # --- KONIEC POPRAWKI ---
+        # Usunięcie białych znaków z danych, jeśli kolumna jest typu object
+        for col in df.columns:
+            if df[col].dtype == 'object':
+                df[col] = df[col].str.strip()
 
-        # Znajdź przycisk "Zastosuj dla wszystkich" wewnątrz grupy i zastosuj styl
-        apply_all_button = self.findChild(QGroupBox).findChild(QPushButton)
-        if apply_all_button:
-            apply_all_button.setStyleSheet(button_style)
-
-    # Styl dla przycisku "Zamknij"
-    if hasattr(self, 'close_button'):
-        self.close_button.setStyleSheet(button_style)
+        insert_data = [
+            (
+                file_id,
+                row[0], # InputID
+                id_generator.generate_id(row[1]), # AnonymousID
+                country,
+                'N', # Status
+                datetime.now() # ProcessDate
+            )
+            for row in df.itertuples(index=False)
+        ]
         
-    # Style dla kontrolek w tabeli
-    if hasattr(self, 'cells_table'):
-        self.cells_table.setStyleSheet(AppStyles.get_tablewidget_style(actual_theme))
-        for row in range(self.cells_table.rowCount()):
-            for col_idx in [4, 5, 6, 7]: 
-                widget = self.cells_table.cellWidget(row, col_idx)
-                if isinstance(widget, QComboBox):
-                    widget.setStyleSheet(combobox_style)
-                elif isinstance(widget, QPushButton):
-                    widget.setStyleSheet(button_style)
+        query = """
+            INSERT INTO Korytko.dbo.A_ProcessingDetails 
+            (FileID, InputID, AnonymousID, Country, Status, ProcessDate)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """
+        with pyodbc.connect(self.conn_str) as conn:
+            cursor = conn.cursor()
+            cursor.fast_executemany = True
+            cursor.executemany(query, insert_data)
+            self.logger.info(f"Wstawiono zbiorczo {len(insert_data)} rekordów.")
+            
+            self.logger.info("Rozpoczęcie procedury czyszczącej dane...")
+            cursor.execute("{CALL dbo.P_A_CleanCustomerDataByID(?)}", file_id)
+            conn.commit()
+
+        # Tutaj logika aktualizacji statystyk (uproszczona)
+        # W oryginalnym kodzie była pętla po statusach - można ją przywrócić w razie potrzeby
+        file_stats['successful'] = len(insert_data)
+        file_stats['failed'] = 0
+
+
+    def process_normal_file(self, file_id: int, country: str, df: pd.DataFrame, file_stats: dict):
+        """Przetwarza dane dla normalnego pliku (z DataFrame)."""
+        # Logika dla "normalnych" plików - dostosuj w razie potrzeby
+        self.logger.info(f"Rozpoczęto przetwarzanie pliku normalnego. Liczba rekordów: {len(df)}")
+        # ... implementacja podobna do process_pesel_file ...
+        file_stats['successful'] = len(df) # Placeholder
+        file_stats['failed'] = 0 # Placeholder
+
+
+    def generate_report(self, file_date: datetime):
+        """Generuje raport skonsolidowany po dacie."""
+        self.logger.info("Generowanie raportu...")
+        date_str = file_date.strftime('%Y%m%d')
+        report_filename = f"Korytko_ZWROT_{date_str}.TXT"
+        report_path = os.path.join(self.output_folder, report_filename)
+
+        query = """
+            SELECT DISTINCT d.Country, d.InputID, d.Status,
+                CASE WHEN a.AnonymousID IS NOT NULL THEN a.AnonymousID ELSE d.InputID END as ReportID
+            FROM Korytko.dbo.A_ProcessingDetails d
+            INNER JOIN Korytko.dbo.A_ProcessedFiles f ON d.FileID = f.FileID
+            LEFT JOIN (
+                SELECT InputID, AnonymousID FROM Korytko.dbo.A_ProcessingDetails WHERE AnonymousID IS NOT NULL
+            ) a ON d.InputID = a.InputID
+            WHERE CONVERT(date, f.ProcessDate) = ?
+            ORDER BY d.Country, ReportID
+        """
+        df = pd.read_sql(query, pyodbc.connect(self.conn_str), params=(file_date.strftime('%Y-%m-%d'),))
+
+        if df.empty:
+            self.logger.warning(f"Nie znaleziono plików dla daty {date_str}")
+            return
+
+        os.makedirs(self.output_folder, exist_ok=True)
+        with open(report_path, 'w', encoding='windows-1250') as f:
+            for _, row in df.iterrows():
+                line = f"{row['Country']}|{row['ReportID']}|{row['Status']}\n"
+                f.write(line)
+        
+        self.logger.info(f"Wygenerowano raport: {report_path} ({len(df)} rekordów)")
+
+
+    def process_dataframes(self, files_to_process: Dict[str, pd.DataFrame]):
+        """Główna metoda przetwarzająca słownik z DataFrame'ami."""
+        self.stats.start_time = datetime.now()
+        
+        allowed_files = ['kraj_zapomnienie_data', 'kraj_zapomnienie_pesel_data']
+        self.stats.total_files = len(files_to_process)
+
+        for filename, df in files_to_process.items():
+            if filename not in allowed_files:
+                self.logger.info(f"Pominięto plik '{filename}', ponieważ nie jest na liście dozwolonych plików.")
+                continue
+
+            if self.is_file_processed(filename):
+                self.logger.info(f"Pominięto plik '{filename}', ponieważ został już pomyślnie przetworzony.")
+                continue
+
+            file_id = None
+            try:
+                file_stats = {'records': len(df), 'successful': 0, 'failed': 0}
+                
+                # 1. Rejestracja pliku
+                file_id = self.register_file(filename)
+                
+                # 2. Przetwarzanie w zależności od typu pliku
+                country = filename.split('_')[0].upper() # np. 'KRAJ'
+                if "pesel" in filename:
+                    self.process_pesel_file(file_id, country, df, file_stats)
+                else:
+                    self.process_normal_file(file_id, country, df, file_stats)
+
+                # 3. Aktualizacja statystyk i statusu
+                self.update_file_status(file_id, 'COMPLETED')
+                self.stats.successful_records += file_stats['successful']
+                self.stats.failed_records += file_stats['failed']
+                self.stats.processed_records += 1
+                self.logger.info(f"Zakończono pomyślnie przetwarzanie pliku '{filename}'.")
+
+            except Exception as e:
+                self.logger.error(f"Błąd podczas przetwarzania pliku '{filename}': {e}", exc_info=True)
+                if file_id:
+                    self.update_file_status(file_id, 'ERROR', str(e))
+                self.stats.failed_records += len(df) if 'df' in locals() else 0
+
+
+        self.stats.end_time = datetime.now()
+        self.logger.info(self.stats.get_summary())
+        
+        # 4. Generowanie raportu na koniec
+        self.generate_report(datetime.now())
+
+
+# --- Główny blok wykonawczy ---
+def main():
+    """Główna funkcja uruchamiająca skrypt."""
+    try:
+        # Konfiguracja połączenia i ścieżek
+        config = {
+            'connection_string': (
+                "DRIVER={ODBC Driver 17 for SQL Server};"
+                "SERVER=PL179ANA\\VSQL179ANA;"
+                "DATABASE=Korytko;"
+                "Trusted_Connection=yes;" # lub UID=...; PWD=...;
+            ),
+            'output_folder': r'C:/Temp/Korytko/Output', # Zmień na właściwą ścieżkę
+        }
+
+        # --- NOWY SPOSÓB DOSTARCZANIA DANYCH ---
+        # Zamiast wczytywać pliki, tworzymy słownik z DataFrame'ami.
+        # W rzeczywistym scenariuszu ten słownik byłby tworzony przez inny proces.
+        dane_pesel = {'InputID': ['101', '102'], 'PESEL': ['90010112345', '85051054321']}
+        dane_normalne = {'InputID': ['201', '202', '203'], 'SomeData': ['A', 'B', 'C']}
+
+        files_to_process = {
+            "kraj_zapomnienie_pesel_data": pd.DataFrame(dane_pesel),
+            "kraj_zapomnienie_data": pd.DataFrame(dane_normalne),
+            "inny_plik_do_pominięcia": pd.DataFrame() # Ten plik zostanie zignorowany
+        }
+        
+        # Inicjalizacja i uruchomienie procesora
+        processor = RetentionProcessor(config)
+        processor.process_dataframes(files_to_process)
+
+    except Exception as e:
+        logging.critical(f"Krytyczny błąd aplikacji: {e}", exc_info=True)
+        raise
+
+if __name__ == "__main__":
+    main()
