@@ -1,43 +1,133 @@
-    def generate_report(self, input_filename: str, file_date: datetime):
-        # --- ZMIANA: Zapis raportu na zasobie sieciowym ---
+Tak, zdecydowanie można wprowadzić kilka ulepszeń, aby ten fragment kodu był bardziej profesjonalny, wydajny i czytelny. Aktualna wersja jest funkcjonalna, ale miesza odpowiedzialności i zawiera "wąskie gardło" wydajnościowe.
+Poniżej przedstawiam kluczowe sugestie wraz z przykładami kodu.
+## 1. 🚀 Optymalizacja wydajności: Problem "N+1 zapytań"
+Największym problemem w obecnym kodzie jest pętla filtrująca pliki.
+# Wersja obecna (PROBLEM)
+filtered_files = []
+for filename in file_list:
+    # To wykonuje osobne zapytanie do bazy dla KAŻDEGO pliku na zasobie sieciowym!
+    if not processor.is_already_processed(filename):
+        filtered_files.append(filename)
 
-        # Nazwa pliku pozostaje taka sama, ale self.output_folder to teraz ścieżka sieciowa
-        report_filename = f"Korytko_RODO_ZWROT_{file_date.strftime('%Y%m%d')}.TXT"
+Jeśli na zasobie sieciowym znajduje się 1000 plików, program wykona 1001 zapytań do bazy danych (jedno, aby pobrać listę, i 1000 osobnych zapytań w pętli). To bardzo niewydajne.
+Rozwiązanie: Pobierz listę wszystkich przetworzonych plików z bazy za pomocą jednego zapytania, a następnie filtruj listę plików sieciowych w pamięci.
+Jak to zrobić?
+ * Zmodyfikuj RetentionProcessor, dodając nową metodę:
+   # W klasie RetentionProcessor
+def get_all_processed_filenames(self) -> set:
+    """Pobiera ZBIÓR nazw wszystkich plików oznaczonych jako 'COMPLETED'."""
+    self.logger.info("Pobieranie listy już przetworzonych plików z bazy danych...")
+    with pypyodbc.connect(self.conn_str) as conn:
+        # Używamy pandas do wczytania wyników bezpośrednio do obiektu, co jest wygodne
+        df = pd.read_sql("SELECT FileName FROM Korytko.dbo.A_ProcessedFiles WHERE Status = 'COMPLETED'", conn)
+        # Zwracamy zbiór (set) dla błyskawicznego sprawdzania przynależności (O(1))
+        return set(df['FileName'])
+
+ * Użyj nowej metody w main():
+   # W funkcji main()
+
+# ... (inicjalizacja procesora) ...
+
+# --- NOWA, WYDAJNA FILTRACJA ---
+
+# 1. Pobierz WSZYSTKIE nazwy plików z sieci (1 zapytanie sieciowe)
+all_remote_files = network_handler.get_list_files_in_network_directory(directory_path)
+
+# 2. Pobierz WSZYSTKIE przetworzone nazwy z bazy (1 zapytanie SQL)
+processed_files_set = processor.get_all_processed_filenames()
+
+# 3. Filtruj w pamięci - to jest błyskawiczne!
+files_to_process = [
+    filename for filename in all_remote_files 
+    if filename not in processed_files_set
+]
+
+logging.info(f"Znaleziono {len(files_to_process)} nowych plików do przetworzenia.")
+
+if not files_to_process:
+    return # Zakończ, jeśli nie ma nic do roboty
+
+Korzyść: Zamiast N+1 zapytań do bazy, wykonujemy teraz tylko dwa: jedno po listę przetworzonych plików i jedno (potencjalnie w generate_report) na koniec. To ogromna optymalizacja.
+## 2. 🏛️ Struktura i czytelność: Zasada jednej odpowiedzialności
+Twoja funkcja main robi obecnie zbyt wiele: wczytuje konfigurację, odszyfrowuje hasła, łączy się z siecią, filtruje dane i uruchamia proces. W profesjonalnych aplikacjach dąży się do tego, by każda funkcja i klasa miała jedną, jasno zdefiniowaną odpowiedzialność.
+Rozwiązanie: Stwórz klasę "serwisową" lub "orkiestratora", która zamknie w sobie całą logikę biznesową, a main będzie odpowiedzialne tylko za jej uruchomienie.
+Przykład refaktoryzacji
+class ProcessingService:
+    """Klasa serwisowa, która zamyka w sobie całą logikę aplikacji."""
+    def __init__(self, config):
+        self.config = config
+        self.network_handler = self._setup_network_handler()
+        self.processor = self._setup_processor()
+        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
+
+    def _setup_network_handler(self):
+        # Tutaj logika tworzenia NetworkFileHandler, odszyfrowywania hasła itp.
+        # ...
+        # return NetworkFileHandler(...)
+        pass
+
+    def _setup_processor(self):
+        # Tutaj logika tworzenia RetentionProcessor
+        # ...
+        # return RetentionProcessor(...)
+        pass
+
+    def run(self):
+        """Główna metoda uruchamiająca cały proces."""
+        logging.info("Uruchomienie serwisu przetwarzania plików.")
+        all_remote_files = self.network_handler.get_list_files_in_network_directory(...)
+        processed_files_set = self.processor.get_all_processed_filenames()
         
-        # Pełna ścieżka sieciowa do pliku raportu
-        # Zakładamy, że self.output_folder to np. \\serwer\udzial\folder
-        report_path_network = os.path.join(self.output_folder, report_filename)
+        files_to_process = [f for f in all_remote_files if f not in processed_files_set]
+
+        if not files_to_process:
+            logging.info("Brak nowych plików. Zakończono.")
+            return
+
+        file_data_dict = self.network_handler.load_data_from_files(files_to_process)
+        self.processor.process_loaded_data(file_data_dict)
+        logging.info("Serwis zakończył pracę.")
+
+
+def main():
+    """Główny punkt wejścia - tylko konfiguracja i uruchomienie."""
+    try:
+        config_parser = configparser.ConfigParser()
+        # ... wczytanie config_parser ...
         
-        self.logger.info(f"Generowanie skonsolidowanego raportu do lokalizacji sieciowej: {report_path_network}")
+        service = ProcessingService(config_parser)
+        service.run()
 
-        with pypyodbc.connect(self.conn_str) as conn:
-            # ... (istniejąca logika pobierania danych z bazy do DataFrame 'rows') ...
-            # query = f"SELECT ..."
-            # rows = pd.read_sql(query, conn, params=params)
-            # rows.drop_duplicates(...)
-            
-            if rows.empty:
-                self.logger.warning(f"Brak danych do wygenerowania raportu dla daty {file_date.strftime('%Y%m%d')}.")
-                return
+    except Exception as e:
+        logging.critical(f"Aplikacja napotkała krytyczny błąd i została zatrzymana: {e}", exc_info=True)
+        sys.exit(1) # Zakończ z kodem błędu
 
-            # 1. Przygotuj dane do zapisu jako lista wierszy
-            report_data = []
-            for _, row in rows.iterrows():
-                # Formatowanie linii jest takie samo jak wcześniej
-                line = f"{row['Country']}|{row['ReportID']}|{row['Status']}"
-                report_data.append(line)
+if __name__ == "__main__":
+    main()
 
-            # 2. Użyj handlera do zapisu na zasobie sieciowym
-            try:
-                self.network_handler.write_file_to_network(
-                    data=report_data,
-                    network_file_path=report_path_network,
-                    encoding='windows-1250',
-                    newline='\r\n'
-                )
-                self.logger.info(f"Pomyślnie zapisano raport z {len(rows)} rekordami do: {report_path_network}")
-            except Exception as e:
-                self.logger.error(f"Błąd podczas zapisu raportu na zasobie sieciowym: {e}", exc_info=True)
+Korzyść: Kod staje się znacznie bardziej zorganizowany i testowalny. Funkcja main jest prosta, a cała "magia" dzieje się wewnątrz dobrze zdefiniowanej klasy ProcessingService.
+## 3. ⚙️ Zarządzanie konfiguracją
+Logikę wczytywania i parsowania konfiguracji można wydzielić do osobnej funkcji, aby jeszcze bardziej oczyścić main.
+def load_app_config(config_path="path/to/config.ini"):
+    """Wczytuje, parsuje i zwraca gotowy obiekt konfiguracji."""
+    parser = configparser.ConfigParser()
+    parser.read(config_path)
+    
+    # Można tu dodać walidację, czy wszystkie potrzebne klucze istnieją
+    # ...
+    
+    return parser
 
-        # Usunięto stary blok zapisu lokalnego:
-        # with open(report_path, 'w', encoding='windows-1250') as f: ...
+def main():
+    try:
+        config = load_app_config()
+        service = ProcessingService(config)
+        service.run()
+    # ...
+
+Korzyść: Lepsza separacja logiki, łatwiejsze zarządzanie konfiguracją w przyszłości.
+Podsumowanie
+Wprowadzając te zmiany, Twoja aplikacja zyska na:
+ * Wydajności (eliminacja problemu N+1 zapytań).
+ * Czytelności i strukturze (każdy element ma swoje jasno określone zadanie).
+ * Łatwości w utrzymaniu i testowaniu (mniejsze, odizolowane komponenty łatwiej jest modyfikować i testować).
