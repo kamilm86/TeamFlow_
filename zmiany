@@ -1,101 +1,173 @@
-Tak, zdecydowanie można wprowadzić kilka ulepszeń, aby ten fragment kodu był bardziej profesjonalny, wydajny i czytelny. Aktualna wersja jest funkcjonalna, ale miesza odpowiedzialności i zawiera "wąskie gardło" wydajnościowe.
-Poniżej przedstawiam kluczowe sugestie wraz z przykładami kodu.
-## 1. 🚀 Optymalizacja wydajności: Problem "N+1 zapytań"
-Największym problemem w obecnym kodzie jest pętla filtrująca pliki.
-# Wersja obecna (PROBLEM)
-filtered_files = []
-for filename in file_list:
-    # To wykonuje osobne zapytanie do bazy dla KAŻDEGO pliku na zasobie sieciowym!
-    if not processor.is_already_processed(filename):
-        filtered_files.append(filename)
+import os
+import sys
+import configparser
+import pandas as pd
+import pypyodbc
+import logging
+from datetime import datetime
+from typing import Tuple, List, Dict, Set
+import hashlib
 
-Jeśli na zasobie sieciowym znajduje się 1000 plików, program wykona 1001 zapytań do bazy danych (jedno, aby pobrać listę, i 1000 osobnych zapytań w pętli). To bardzo niewydajne.
-Rozwiązanie: Pobierz listę wszystkich przetworzonych plików z bazy za pomocą jednego zapytania, a następnie filtruj listę plików sieciowych w pamięci.
-Jak to zrobić?
- * Zmodyfikuj RetentionProcessor, dodając nową metodę:
-   # W klasie RetentionProcessor
-def get_all_processed_filenames(self) -> set:
-    """Pobiera ZBIÓR nazw wszystkich plików oznaczonych jako 'COMPLETED'."""
-    self.logger.info("Pobieranie listy już przetworzonych plików z bazy danych...")
-    with pypyodbc.connect(self.conn_str) as conn:
-        # Używamy pandas do wczytania wyników bezpośrednio do obiektu, co jest wygodne
-        df = pd.read_sql("SELECT FileName FROM Korytko.dbo.A_ProcessedFiles WHERE Status = 'COMPLETED'", conn)
-        # Zwracamy zbiór (set) dla błyskawicznego sprawdzania przynależności (O(1))
-        return set(df['FileName'])
+# --- Zależności z zewnętrznych modułów (przykładowe) ---
+# Wymagają implementacji i dostosowania ścieżek
+# from db_manager_temp.network_file_handler import NetworkFileHandler
+# from db_manager_temp.password_decryptor import PasswordDecryptor
 
- * Użyj nowej metody w main():
-   # W funkcji main()
 
-# ... (inicjalizacja procesora) ...
+# --- Klasy narzędziowe i statystyczne (bez zmian) ---
 
-# --- NOWA, WYDAJNA FILTRACJA ---
+class ProcessingStats:
+    """Klasa przechowująca statystyki całościowego przetwarzania."""
+    def __init__(self):
+        self.start_time = None
+        self.end_time = None
+        self.total_files = 0
+        self.processed_files = 0
+        self.total_records = 0
+        self.successful_records = 0
+        self.failed_records = 0
 
-# 1. Pobierz WSZYSTKIE nazwy plików z sieci (1 zapytanie sieciowe)
-all_remote_files = network_handler.get_list_files_in_network_directory(directory_path)
+    def get_summary(self) -> str:
+        duration = self.end_time - self.start_time if self.end_time and self.start_time else 'N/A'
+        return (f"\n================ PODSUMOWANIE =================\n"
+                f" Czas trwania: {duration}\n"
+                f" Przetworzono plików: {self.processed_files}/{self.total_files}\n"
+                f" Przetworzono rekordów: {self.successful_records}/{self.total_records}\n"
+                f"==============================================")
 
-# 2. Pobierz WSZYSTKIE przetworzone nazwy z bazy (1 zapytanie SQL)
-processed_files_set = processor.get_all_processed_filenames()
 
-# 3. Filtruj w pamięci - to jest błyskawiczne!
-files_to_process = [
-    filename for filename in all_remote_files 
-    if filename not in processed_files_set
-]
+class IdentifierGenerator:
+    """Generuje anonimowe identyfikatory na podstawie hasha."""
+    def __init__(self, prefix: str = "ANM_"):
+        self.prefix = prefix
+        self._cache = {}
 
-logging.info(f"Znaleziono {len(files_to_process)} nowych plików do przetworzenia.")
+    def generate_id(self, original_value: str) -> str:
+        if original_value in self._cache:
+            return self._cache[original_value]
+        value_to_hash = str(original_value).encode('utf-8')
+        hashed = hashlib.sha256(value_to_hash).hexdigest()
+        max_hash_length = 50 - len(self.prefix)
+        identifier = f"{self.prefix}{hashed[:max_hash_length]}"
+        self._cache[original_value] = identifier
+        return identifier
 
-if not files_to_process:
-    return # Zakończ, jeśli nie ma nic do roboty
 
-Korzyść: Zamiast N+1 zapytań do bazy, wykonujemy teraz tylko dwa: jedno po listę przetworzonych plików i jedno (potencjalnie w generate_report) na koniec. To ogromna optymalizacja.
-## 2. 🏛️ Struktura i czytelność: Zasada jednej odpowiedzialności
-Twoja funkcja main robi obecnie zbyt wiele: wczytuje konfigurację, odszyfrowuje hasła, łączy się z siecią, filtruje dane i uruchamia proces. W profesjonalnych aplikacjach dąży się do tego, by każda funkcja i klasa miała jedną, jasno zdefiniowaną odpowiedzialność.
-Rozwiązanie: Stwórz klasę "serwisową" lub "orkiestratora", która zamknie w sobie całą logikę biznesową, a main będzie odpowiedzialne tylko za jej uruchomienie.
-Przykład refaktoryzacji
+# --- Główna klasa procesora (z nową metodą) ---
+
+class RetentionProcessor:
+    """Klasa odpowiedzialna za logikę przetwarzania danych i interakcję z bazą."""
+    def __init__(self, config: dict, network_handler):
+        self.conn_str = config['connection_string']
+        self.output_folder = config['output_folder']
+        self.network_handler = network_handler
+        self.setup_logging()
+        self.stats = None
+        self.id_generator = IdentifierGenerator()
+
+    def setup_logging(self):
+        log_file = f'retention_{datetime.now().strftime("%Y%m%d")}.log'
+        logging.basicConfig(
+            level=logging.INFO,
+            format='%(asctime)s - %(levelname)s - %(message)s',
+            handlers=[
+                logging.FileHandler(log_file, encoding='utf-8'),
+                logging.StreamHandler(sys.stdout)
+            ]
+        )
+        self.logger = logging.getLogger('RetentionProcessor')
+
+    def get_all_processed_filenames(self) -> Set[str]:
+        """Pobiera ZBIÓR nazw wszystkich plików oznaczonych jako 'COMPLETED' w jednym zapytaniu."""
+        self.logger.info("Pobieranie listy już przetworzonych plików z bazy danych...")
+        with pypyodbc.connect(self.conn_str) as conn:
+            df = pd.read_sql("SELECT FileName FROM Korytko.dbo.A_ProcessedFiles WHERE Status = 'COMPLETED'", conn)
+            return set(df['FileName'])
+
+    def process_loaded_data(self, data_dict: Dict[str, pd.DataFrame]):
+        # ... implementacja tej metody pozostaje bez zmian ...
+        pass
+        
+    def process_file(self, filename: str, df: pd.DataFrame):
+        # ... implementacja tej metody pozostaje bez zmian ...
+        pass
+    
+    # ... i wszystkie inne metody (register_file, update_file_status, etc.) ...
+
+
+# --- NOWA KLASA SERWISOWA ---
+
 class ProcessingService:
     """Klasa serwisowa, która zamyka w sobie całą logikę aplikacji."""
-    def __init__(self, config):
-        self.config = config
+    def __init__(self, config_parser):
+        self.config_parser = config_parser
         self.network_handler = self._setup_network_handler()
         self.processor = self._setup_processor()
-        logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 
     def _setup_network_handler(self):
-        # Tutaj logika tworzenia NetworkFileHandler, odszyfrowywania hasła itp.
-        # ...
-        # return NetworkFileHandler(...)
-        pass
+        """Tworzy i konfiguruje NetworkFileHandler."""
+        # W tej metodzie powinna znaleźć się logika odszyfrowywania hasła
+        # i tworzenia obiektu handlera. Poniżej znajduje się przykład.
+        #
+        # key_file = self.config_parser['paths']['key_file']
+        # encrypted_file = self.config_parser['paths']['encrypted_password_file']
+        # password = PasswordDecryptor(key_file, encrypted_file).decrypt_password()
+        #
+        # usr = self.config_parser['Connection']['usr']
+        # domain = self.config_parser['Connection']['usr_domain']
+        #
+        # return NetworkFileHandler(usr, domain, password)
+        return None # Placeholder
 
     def _setup_processor(self):
-        # Tutaj logika tworzenia RetentionProcessor
-        # ...
-        # return RetentionProcessor(...)
-        pass
+        """Tworzy i konfiguruje RetentionProcessor."""
+        config = {
+            'connection_string': self.config_parser['Database']['connection_string'],
+            'output_folder': self.config_parser['paths']['output_folder_network_path']
+        }
+        return RetentionProcessor(config, self.network_handler)
 
     def run(self):
         """Główna metoda uruchamiająca cały proces."""
         logging.info("Uruchomienie serwisu przetwarzania plików.")
-        all_remote_files = self.network_handler.get_list_files_in_network_directory(...)
+        
+        # 1. Pobierz listę plików z sieci
+        directory_path = self.config_parser['paths']['network_source_path']
+        all_remote_files = self.network_handler.get_list_files_in_network_directory(directory_path)
+        
+        # 2. Pobierz listę już przetworzonych plików (wydajnie)
         processed_files_set = self.processor.get_all_processed_filenames()
         
+        # 3. Odfiltruj pliki do przetworzenia
         files_to_process = [f for f in all_remote_files if f not in processed_files_set]
 
         if not files_to_process:
             logging.info("Brak nowych plików. Zakończono.")
             return
 
+        logging.info(f"Znaleziono {len(files_to_process)} nowych plików do przetworzenia.")
+        
+        # 4. Wczytaj dane potrzebnych plików
         file_data_dict = self.network_handler.load_data_from_files(files_to_process)
+        
+        # 5. Uruchom logikę procesora
         self.processor.process_loaded_data(file_data_dict)
+        
         logging.info("Serwis zakończył pracę.")
 
 
+# --- GŁÓWNY PUNKT WEJŚCIA APLIKACJI ---
+
 def main():
-    """Główny punkt wejścia - tylko konfiguracja i uruchomienie."""
+    """Główny punkt wejścia - tylko konfiguracja i uruchomienie serwisu."""
     try:
-        config_parser = configparser.ConfigParser()
-        # ... wczytanie config_parser ...
+        # Wczytanie konfiguracji z pliku
+        config = configparser.ConfigParser()
+        # UWAGA: Poniższa ścieżka jest przykładowa, należy ją dostosować
+        config.read("path/to/your/config.ini")
         
-        service = ProcessingService(config_parser)
+        # Utworzenie i uruchomienie serwisu
+        service = ProcessingService(config)
         service.run()
 
     except Exception as e:
@@ -104,30 +176,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-Korzyść: Kod staje się znacznie bardziej zorganizowany i testowalny. Funkcja main jest prosta, a cała "magia" dzieje się wewnątrz dobrze zdefiniowanej klasy ProcessingService.
-## 3. ⚙️ Zarządzanie konfiguracją
-Logikę wczytywania i parsowania konfiguracji można wydzielić do osobnej funkcji, aby jeszcze bardziej oczyścić main.
-def load_app_config(config_path="path/to/config.ini"):
-    """Wczytuje, parsuje i zwraca gotowy obiekt konfiguracji."""
-    parser = configparser.ConfigParser()
-    parser.read(config_path)
-    
-    # Można tu dodać walidację, czy wszystkie potrzebne klucze istnieją
-    # ...
-    
-    return parser
-
-def main():
-    try:
-        config = load_app_config()
-        service = ProcessingService(config)
-        service.run()
-    # ...
-
-Korzyść: Lepsza separacja logiki, łatwiejsze zarządzanie konfiguracją w przyszłości.
-Podsumowanie
-Wprowadzając te zmiany, Twoja aplikacja zyska na:
- * Wydajności (eliminacja problemu N+1 zapytań).
- * Czytelności i strukturze (każdy element ma swoje jasno określone zadanie).
- * Łatwości w utrzymaniu i testowaniu (mniejsze, odizolowane komponenty łatwiej jest modyfikować i testować).
