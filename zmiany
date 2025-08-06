@@ -1,0 +1,176 @@
+import os
+import sys
+import configparser
+import pandas as pd
+import pypyodbc
+import logging
+from datetime import datetime
+from typing import Tuple, List, Dict
+
+# --- Zależności z zewnętrznych modułów ---
+# Zakładamy, że te moduły istnieją i są dostępne w ścieżce projektu
+# from db_manager_temp.network_file_handler import NetworkFileHandler
+# from db_manager_temp.password_decryptor import PasswordDecryptor
+
+# --- Klasy zdefiniowane w programie ---
+# Klasy ProcessingStats i IdentifierGenerator pozostają bez zmian.
+
+class ProcessingStats:
+    # ... implementacja bez zmian
+    pass
+
+class IdentifierGenerator:
+    # ... implementacja bez zmian
+    pass
+
+class RetentionProcessor:
+    """Główna klasa orkiestrująca, teraz operuje na danych w pamięci."""
+    # <--- ZMIANA: Uproszczony konstruktor
+    def __init__(self, config: dict):
+        self.conn_str = config['connection_string']
+        # Usunięto ścieżki do folderów, nie są już potrzebne
+        self.setup_logging()
+        self.stats = None
+        self.id_generator = IdentifierGenerator()
+
+    # <--- ZMIANA: Usunięto setup_folders()
+    # def setup_folders(self): ...
+
+    def setup_logging(self):
+        # ... implementacja bez zmian
+        pass
+
+    def parse_filename(self, filename: str) -> Tuple[str, datetime, str]:
+        # ... implementacja bez zmian
+        pass
+
+    def is_already_processed(self, filename: str) -> bool:
+        # ... implementacja bez zmian
+        pass
+
+    # <--- ZMIANA: Nowa metoda główna, przyjmuje słownik z danymi
+    def process_loaded_data(self, data_dict: Dict[str, pd.DataFrame]):
+        """Przetwarza dane z gotowego słownika {nazwa_pliku: dataframe}."""
+        self.stats = ProcessingStats()
+        self.stats.start_time = datetime.now()
+        self.logger.info("Rozpoczęcie przetwarzania załadowanych danych.")
+
+        try:
+            files_to_process = list(data_dict.keys())
+            if not files_to_process:
+                self.logger.info("Brak nowych danych do przetworzenia.")
+                return
+
+            self.stats.total_files = len(files_to_process)
+            
+            # Grupowanie plików po dacie do generowania raportów
+            files_by_date = {}
+            for filename in files_to_process:
+                _, file_date, _ = self.parse_filename(filename)
+                if file_date not in files_by_date:
+                    files_by_date[file_date] = []
+                files_by_date[file_date].append(filename)
+
+            # Przetwarzanie plików
+            for filename, df in data_dict.items():
+                self.process_file(filename, df) # Przekazujemy nazwę i dataframe
+
+            # Generowanie raportów dla każdej z dat
+            for file_date, files in files_by_date.items():
+                self.generate_report(files[0], file_date)
+
+            self.stats.end_time = datetime.now()
+            self.logger.info(self.stats.get_summary())
+
+        except Exception as e:
+            self.logger.error(f"Wystąpił nieoczekiwany błąd główny: {e}", exc_info=True)
+            raise
+
+    # <--- ZMIANA: process_file przyjmuje dataframe, nie czyta z dysku
+    def process_file(self, filename: str, df: pd.DataFrame):
+        """Przetwarza dane dla jednego pliku przekazane jako DataFrame."""
+        file_id = None
+        try:
+            file_stats = {'records': 0, 'successful': 0, 'failed': 0, 'start_time': datetime.now()}
+            self.logger.info(f"--- Przetwarzanie danych z pliku: {filename} ---")
+            
+            file_id = self.register_file(filename)
+            country, file_date, file_type = self.parse_filename(filename)
+
+            # Usunięto wczytywanie pliku z dysku - dane już mamy w 'df'
+            file_stats['records'] = len(df)
+            self.logger.info(f"Znaleziono {file_stats['records']} rekordów.")
+
+            if file_type == 'PESEL':
+                self.process_pesel_file(file_id, country, df, file_stats)
+            else:
+                self.process_normal_file(file_id, country, df, file_stats)
+            
+            # Usunięto archiwizację, bo nie ma lokalnych plików
+            self.update_file_status(file_id, 'COMPLETED')
+
+            # Aktualizacja statystyk (bez zmian)
+            self.stats.processed_files += 1
+            # ... reszta logiki statystyk
+            
+        except Exception as e:
+            self.logger.error(f"Krytyczny błąd podczas przetwarzania danych z pliku {filename}: {e}", exc_info=True)
+            if file_id:
+                self.update_file_status(file_id, 'ERROR', str(e))
+    
+    # Metody `register_file`, `update_file_status`, `process_pesel_file`,
+    # `process_normal_file`, `generate_report` pozostają bez zmian,
+    # ponieważ operują na bazie danych lub danych w pamięci.
+
+    # <--- ZMIANA: Usunięto archive_file()
+    # def archive_file(self, filename: str): ...
+
+
+def main():
+    """Główna funkcja, teraz zarządza pobieraniem i ładowaniem danych."""
+    
+    # Wczytywanie konfiguracji z pliku .ini (bez zmian)
+    # ...
+    
+    # Załóżmy, że konfiguracja jest wczytana i mamy:
+    # - network_handler: obiekt klasy NetworkFileHandler
+    # - db_connection_string: string połączeniowy do bazy
+    # - output_folder_path: ścieżka do zapisu raportów
+
+    # --- NOWA LOGIKA POBIERANIA I FILTROWANIA ---
+    try:
+        # 1. Pobranie listy wszystkich plików z zasobu sieciowego
+        directory_path = "F-UF_RODO_BLACK_LIST\\SystemyBanku" # Z konfiguracji
+        all_remote_files = network_handler.get_list_files_in_network_directory(directory_path)
+        
+        # Inicjalizacja procesora z uproszczoną konfiguracją
+        config = {
+            'connection_string': db_connection_string,
+            'output_folder': output_folder_path 
+        }
+        processor = RetentionProcessor(config)
+
+        # 2. Filtrowanie plików (sprawdzenie, czy nie były już przetwarzane)
+        files_to_process = []
+        for filename in all_remote_files:
+            if not processor.is_already_processed(filename):
+                files_to_process.append(filename)
+        
+        if not files_to_process:
+            logging.info("Brak nowych plików do przetworzenia.")
+            return
+
+        # 3. Stworzenie słownika z danymi {nazwa_pliku: dataframe}
+        logging.info(f"Znaleziono {len(files_to_process)} nowych plików. Rozpoczynanie wczytywania danych...")
+        # Zakładamy, że handler może wczytać listę plików i zwrócić słownik
+        file_data_dict = network_handler.load_data_from_files(files_to_process)
+        
+        # 4. Uruchomienie przetwarzania na załadowanych danych
+        processor.process_loaded_data(file_data_dict)
+
+    except Exception as e:
+        logging.error(f"Wystąpił krytyczny błąd aplikacji: {str(e)}", exc_info=True)
+        raise
+
+if __name__ == "__main__":
+    main()
