@@ -1,0 +1,43 @@
+    def generate_report(self, input_filename: str, file_date: datetime):
+        # --- ZMIANA: Zapis raportu na zasobie sieciowym ---
+
+        # Nazwa pliku pozostaje taka sama, ale self.output_folder to teraz ścieżka sieciowa
+        report_filename = f"Korytko_RODO_ZWROT_{file_date.strftime('%Y%m%d')}.TXT"
+        
+        # Pełna ścieżka sieciowa do pliku raportu
+        # Zakładamy, że self.output_folder to np. \\serwer\udzial\folder
+        report_path_network = os.path.join(self.output_folder, report_filename)
+        
+        self.logger.info(f"Generowanie skonsolidowanego raportu do lokalizacji sieciowej: {report_path_network}")
+
+        with pypyodbc.connect(self.conn_str) as conn:
+            # ... (istniejąca logika pobierania danych z bazy do DataFrame 'rows') ...
+            # query = f"SELECT ..."
+            # rows = pd.read_sql(query, conn, params=params)
+            # rows.drop_duplicates(...)
+            
+            if rows.empty:
+                self.logger.warning(f"Brak danych do wygenerowania raportu dla daty {file_date.strftime('%Y%m%d')}.")
+                return
+
+            # 1. Przygotuj dane do zapisu jako lista wierszy
+            report_data = []
+            for _, row in rows.iterrows():
+                # Formatowanie linii jest takie samo jak wcześniej
+                line = f"{row['Country']}|{row['ReportID']}|{row['Status']}"
+                report_data.append(line)
+
+            # 2. Użyj handlera do zapisu na zasobie sieciowym
+            try:
+                self.network_handler.write_file_to_network(
+                    data=report_data,
+                    network_file_path=report_path_network,
+                    encoding='windows-1250',
+                    newline='\r\n'
+                )
+                self.logger.info(f"Pomyślnie zapisano raport z {len(rows)} rekordami do: {report_path_network}")
+            except Exception as e:
+                self.logger.error(f"Błąd podczas zapisu raportu na zasobie sieciowym: {e}", exc_info=True)
+
+        # Usunięto stary blok zapisu lokalnego:
+        # with open(report_path, 'w', encoding='windows-1250') as f: ...
