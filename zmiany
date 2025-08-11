@@ -1,39 +1,41 @@
-# W pliku location_exception_dialog.py, wewnątrz klasy LocationExceptionDialog
+# W pliku main.py, wewnątrz klasy WorkScheduleWindow
 
-def _add_exception(self):
-    """Otwiera dialog dodawania z datami wypełnionymi na podstawie zaznaczenia."""
-    dialog = AddEditExceptionDialog(self, user_name=self.user_name, default_dates=self.selection_range)
-    if dialog.exec() == QDialog.Accepted:
-        data = dialog.get_data()
-        if data:
-            # --- POCZĄTEK NOWEJ WERYFIKACJI ---
-            # Krok 1: Sprawdź, czy w podanym zakresie dat istnieją już jakieś wyjątki
-            existing_exceptions = self.parent_widget._get_location_exceptions(self.user_id, data['date_from'], data['date_to'])
-            
-            if existing_exceptions:
-                # Jeśli cokolwiek znaleziono, zablokuj operację i poinformuj użytkownika
-                QMessageBox.warning(self, "Wykryto kolizję", 
-                                    "W wybranym zakresie dat istnieje już co najmniej jeden wpis wyjątku.\n\n"
-                                    "Proszę najpierw usunąć lub edytować istniejące wpisy, aby uniknąć konfliktów.")
-                return # Przerwij działanie metody
-            # --- KONIEC NOWEJ WERYFIKACJI ---
+def _manage_location_exception(self, params):
+    """Zarządza dodawaniem, edycją i usuwaniem wyjątków, ręcznie kontrolując transakcję."""
+    conn = None # Zdefiniuj 'conn' przed blokiem try
+    try:
+        conn = DatabaseConnector.get_connection()
+        # Krok 1: Wyłącz autocommit, aby przejąć pełną kontrolę nad transakcją
+        conn.autocommit = False
+        cursor = conn.cursor()
+        
+        query = f"EXEC {SQL_OBJECTS['p_p_zz_lokalizacjewyjatki']} ?, ?, ?, ?, ?, ?, ?, ?"
+        cursor.execute(query, params)
+        
+        # Krok 2: Upewnij się, że cała procedura (wszystkie jej wewnętrzne polecenia) się wykonała
+        while cursor.nextset():
+            pass
 
-            # Krok 2: Jeśli nie ma kolizji, kontynuuj dodawanie wpisów
-            _, modyfikujacy_id, _, _, _ = get_modifier_id()
-            errors = []
-            current_date = data['date_from']
-            end_date = data['date_to']
+        # Krok 3: Jeśli nie było błędów, zatwierdź całą transakcję
+        conn.commit()
+        
+        return {"success": True}
 
-            while current_date <= end_date:
-                date_str = current_date.toString("yyyy-MM-dd")
-                params = (self.user_id, modyfikujacy_id, date_str, date_str, data['lokalizacja'], data['powod'], 1, None)
-                result = self.parent_widget._manage_location_exception(params)
-                if not result.get("success"):
-                    errors.append(f"{date_str}: {result.get('message')}")
-                current_date = current_date.addDays(1)
-            
-            if errors:
-                QMessageBox.warning(self, "Wystąpiły błędy", "Nie wszystkie dni udało się dodać:\n\n" + "\n".join(errors))
-            
-            self.load_exceptions()
-            self.data_changed.emit()
+    except Exception as e:
+        log_error(f"Błąd podczas zarządzania wyjątkiem lokalizacyjnym, wycofywanie transakcji: {e}", exception=e)
+        # Krok 4: Jeśli wystąpił błąd, wycofaj wszystkie zmiany wykonane w tej transakcji
+        if conn:
+            try:
+                conn.rollback()
+            except Exception as rb_e:
+                log_error(f"Błąd podczas rollbacku transakcji: {rb_e}", exception=rb_e)
+        return {"success": False, "message": str(e)}
+        
+    finally:
+        # Krok 5: Zawsze przywróć autocommit i zamknij połączenie
+        if conn:
+            try:
+                conn.autocommit = True
+                conn.close()
+            except Exception as close_e:
+                log_error(f"Błąd podczas zamykania połączenia: {close_e}", exception=close_e)
