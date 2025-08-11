@@ -1,90 +1,34 @@
-Jasne, dodanie kolumn audytowych to świetny pomysł na zwiększenie przejrzystości. Wprowadziłem niezbędne zmiany, które nie tylko dodadzą kolumny, ale również zamienią ID modyfikującego użytkownika na jego czytelną nazwę.
-## Plan Działania
- * Stworzymy mapę ID -> Nazwisko: W głównym oknie aplikacji, po załadowaniu danych, stworzymy prosty słownik do tłumaczenia ID użytkowników na ich nazwiska.
- * Przekażemy mapę do okna dialogowego: Nowe okno dialogowe otrzyma tę mapę, aby mogło z niej korzystać.
- * Zmodyfikujemy okno dialogowe: Zaktualizujemy tabelę w oknie LocationExceptionDialog, aby dodawała i wypełniała dwie nowe kolumny.
-## Zmiany w kodzie
-### 1. Plik: main.py
-W pliku main.py musimy wprowadzić dwie małe zmiany.
-W metodzie _apply_loaded_data dodaj jedną linię na końcu:
-# W pliku main.py, wewnątrz klasy WorkScheduleWindow
-
-def _apply_loaded_data(self, data):
-    # ... (cała istniejąca zawartość metody bez zmian)
-
-    self.raw_data = schedule_data
-    self.all_events_data = events_data
-    self.processed_data = processed_data
-    self.schedule_model.update_data(self.processed_data, year, month)
-    # ... (itd.)
-
-    self.apply_default_sort()
-    self._apply_dynamic_sizes()
-
-    # --- POCZĄTEK NOWEJ LINII ---
-    # Stwórz mapę ID użytkownika -> Nazwa, aby używać jej w innych oknach
-    self.user_id_to_name_map = {key[3]: key[2] for key in self.processed_data.keys()}
-    # --- KONIEC NOWEJ LINII ---
-
-Zastąp metodę show_location_exception_dialog poniższą wersją:
-# W pliku main.py, wewnątrz klasy WorkScheduleWindow
-
-def show_location_exception_dialog(self):
-    """Otwiera okno do zarządzania wyjątkami lokalizacyjnymi."""
-    from location_exception_dialog import LocationExceptionDialog
-
-    selected_cells = self.get_selected_cells_data()
-    if not selected_cells:
-        QMessageBox.warning(self, "Brak zaznaczenia", "Proszę zaznaczyć przynajmniej jedną komórkę pracownika.")
-        return
-
-    user_ids = {cell['uzytkownik_id'] for cell in selected_cells}
-    if len(user_ids) > 1:
-        QMessageBox.warning(self, "Wielu użytkowników", "Proszę zaznaczyć komórki tylko dla jednego pracownika.")
-        return
-    
-    user_id = user_ids.pop()
-    user_name = selected_cells[0]['uzytkownik_dane']
-
-    dates = [QDate.fromString(cell['date_str'], "yyyy-MM-dd") for cell in selected_cells]
-    selection_range = {'start': min(dates), 'end': max(dates)}
-
-    # --- ZMIANA: Przekazujemy mapę użytkowników do dialogu ---
-    dialog = LocationExceptionDialog(self, user_id, user_name, selection_range, self.user_id_to_name_map)
-    dialog.data_changed.connect(self.refresh_data)
-    dialog.exec()
-
-### 2. Plik: location_exception_dialog.py
-Na koniec, zastąp całą klasę LocationExceptionDialog w tym pliku poniższym kodem. Uwzględnia on wszystkie zmiany: nowe kolumny, ich wypełnianie i wykorzystanie mapy użytkowników.
 # W pliku location_exception_dialog.py
 
 class LocationExceptionDialog(QDialog):
     """Główne okno dialogowe do zarządzania wyjątkami lokalizacyjnymi."""
     data_changed = Signal()
 
-    def __init__(self, parent, user_id, user_name, selection_range, user_map):
+    def __init__(self, parent, user_id, user_name, selection_range):
         super().__init__(parent)
         self.parent_widget = parent
         self.is_dark_theme = parent.is_dark_theme
         self.user_id = user_id
         self.user_name = user_name
         self.selection_range = selection_range
-        self.user_map = user_map # Przechowaj mapę użytkowników
         self.setWindowTitle(f"Zarządzaj wyjątkami lokalizacyjnymi - {user_name}")
-        self.setMinimumSize(850, 500) # Zwiększono szerokość
+        self.setMinimumSize(850, 500) # Zwiększono szerokość okna
 
         main_layout = QVBoxLayout(self)
         self.table = QTableWidget()
-        # --- ZMIANA: 7 kolumn zamiast 5 ---
+        
+        # --- POCZĄTEK ZMIANY: Dodanie nowych kolumn ---
         self.table.setColumnCount(7)
         self.table.setHorizontalHeaderLabels(["ID", "Data od", "Data do", "Lokalizacja", "Powód", "Data Modyfikacji", "Modyfikujący"])
+        # --- KONIEC ZMIANY ---
+
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SingleSelection)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        # Zmieniono rozciąganie kolumn
-        self.table.horizontalHeader().setSectionResizeMode(4, QHeaderView.Stretch) # Rozciągnij kolumnę "Powód"
-        for col in [0, 1, 2, 3, 5, 6]:
-            self.table.horizontalHeader().setSectionResizeMode(col, QHeaderView.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents) # ID
+        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents) # Data Modyfikacji
+        self.table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeToContents) # Modyfikujący
 
         buttons_layout = QHBoxLayout()
         self.add_button = QPushButton("Dodaj nowy")
@@ -124,18 +68,16 @@ class LocationExceptionDialog(QDialog):
             self.table.setItem(row, 2, QTableWidgetItem(exc['Datado'].strftime('%Y-%m-%d') if exc['Datado'] else ''))
             self.table.setItem(row, 3, QTableWidgetItem(location_map.get(exc['Lokalizacja'], 'Nieznana')))
             self.table.setItem(row, 4, QTableWidgetItem(exc.get('Powod', '')))
-            
-            # --- DODANO NOWE KOLUMNY ---
-            modyfikacja_data = exc.get('DataModyfikacji')
-            modyfikacja_str = modyfikacja_data.strftime('%Y-%m-%d %H:%M') if modyfikacja_data else ''
-            self.table.setItem(row, 5, QTableWidgetItem(modyfikacja_str))
-            
-            modyfikujacy_id = exc.get('Modyfikujacy')
-            # Użyj mapy, aby znaleźć nazwisko, lub pokaż ID jeśli nie znaleziono
-            modyfikujacy_nazwa = self.user_map.get(modyfikujacy_id, str(modyfikujacy_id) if modyfikujacy_id else '')
-            self.table.setItem(row, 6, QTableWidgetItem(modyfikujacy_nazwa))
+
+            # --- POCZĄTEK ZMIANY: Wypełnienie nowych kolumn ---
+            mod_date = exc.get('DataModyfikacji')
+            mod_date_str = mod_date.strftime('%Y-%m-%d %H:%M') if mod_date else ''
+            self.table.setItem(row, 5, QTableWidgetItem(mod_date_str))
+
+            modifier = exc.get('Modyfikujacy')
+            self.table.setItem(row, 6, QTableWidgetItem(str(modifier) if modifier is not None else ''))
+            # --- KONIEC ZMIANY ---
 
         self._on_selection_changed()
 
-    # ... (pozostałe metody w tej klasie, jak _add_exception, _split_exception itd., pozostają bez zmian)
-
+    # ... (pozostałe metody w tej klasie pozostają bez zmian)
