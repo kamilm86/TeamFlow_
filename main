@@ -2097,6 +2097,38 @@ class WorkScheduleWindow(QMainWindow):
         """Buduje nowy symbol z absencją, poprawnie obsługując puste i wypełnione komórki."""
         return self._predict_new_symbol(current_symbol, special_symbol, cell_data)
 
+    def _add_location_exception_batch(self, params_list: list):
+        """Dodaje serię wyjątków w jednej transakcji dla wydajności i bezpieczeństwa."""
+        errors = []
+        conn = None
+        try:
+            # Krok 1: Otwórz połączenie TYLKO RAZ
+            conn = DatabaseConnector.get_connection()
+            cursor = conn.cursor()
+            query = f"EXEC {SQL_OBJECTS['p_lokalizacjewyjatki']} ?, ?, ?, ?, ?, ?, ?, ?"
+
+            # Krok 2: Wykonaj wszystkie operacje w pętli
+            for params in params_list:
+                try:
+                    cursor.execute(query, params)
+                except Exception as e:
+                    # Zbierz informacje o błędach, które wystąpiły
+                    date_str = params[2]  # Data jest na 3. pozycji w krotce
+                    errors.append(f"Dzień {date_str}: {e}")
+
+            # Krok 3: Zatwierdź wszystkie udane operacje JEDNYM poleceniem
+            conn.commit()
+
+            return {"success": not errors, "errors": errors}
+
+        except Exception as e:
+            log_error(f"Błąd krytyczny podczas wsadowego dodawania wyjątków: {e}", exception=e)
+            return {"success": False, "errors": [str(e)]}
+        finally:
+            # Krok 4: Zamknij połączenie na samym końcu
+            if conn:
+                conn.close()
+
     def _check_location_exception(self, user_id, change_date):
         """Sprawdza wyjątek lokalizacyjny dla konkretnego dnia używając nowej funkcji TVF."""
         debug_print(
@@ -2144,6 +2176,15 @@ class WorkScheduleWindow(QMainWindow):
             cursor = conn.cursor()
             query = f"EXEC {SQL_OBJECTS['p_lokalizacjewyjatki']} ?, ?, ?, ?, ?, ?, ?, ?"
             cursor.execute(query, params)
+
+            # --- POCZĄTEK KLUCZOWEJ POPRAWKI ---
+            # Ta pętla zmusza sterownik do poczekania na pełne wykonanie procedury na serwerze,
+            # zanim przejdzie do zamknięcia połączenia. Przetwarza wszystkie "ukryte" komunikaty
+            # i zestawy wyników, które procedura mogłaby wygenerować.
+            while cursor.nextset():
+                pass
+            # --- KONIEC KLUCZOWEJ POPRAWKI ---
+
             conn.commit()
             conn.close()
             return {"success": True}
