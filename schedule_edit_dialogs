@@ -626,23 +626,22 @@ class ScheduleChangeDialog(QDialog):
             from symbol_parser import parse_symbol
             parsed_symbol = parse_symbol(symbol)
 
-            # --- POCZĄTEK POPRAWIONEJ LOGIKI ---
-            # Krok 1: Spróbuj pobrać lokalizację bezpośrednio z symbolu w grafiku.
-            location_code = parsed_symbol.get('location')
+            # --- POCZĄTEK NOWEJ LOGIKI ---
+            can_edit_location = permissions['can_edit_location']
+            cell_date = QDate.fromString(date_str, "yyyy-MM-dd")
 
-            # Krok 2: Jeśli w symbolu nie ma lokalizacji, spróbuj pobrać domyślną lokalizację pracownika.
-            if not location_code:
-                # Używamy .get() bez wartości domyślnej, aby mogło zwrócić None
-                location_code = cell.get('lokalizacja_domyslna')
-            # W tym momencie location_code to 'h', 's', 'p' albo None
-            # --- KONIEC POPRAWIONEJ LOGIKI ---
+            # Jeśli rola to 'Lider' i data jest przeszła, zablokuj edycję lokalizacji
+            if self.user_role == 'Lider' and cell_date < QDate.currentDate():
+                can_edit_location = False
+            # --- KONIEC NOWEJ LOGIKI ---
 
+            location_code = parsed_symbol.get('location') or cell.get('lokalizacja_domyslna')
             start_hour = parsed_symbol.get('start_hour')
             parsed_hours = parsed_symbol.get('work_hours')
             if parsed_hours is not None:
                 work_hours = parsed_hours
             else:
-                work_hours = cell.get('etat')
+                work_hours = cell.get('etat', 8.0)
             try:
                 work_hours = int(float(work_hours))
             except (ValueError, TypeError):
@@ -650,16 +649,15 @@ class ScheduleChangeDialog(QDialog):
 
             location_combo = QComboBox()
             location_combo.addItem("SBC (s)", "s")
-            location_combo.addItem("Przystanek (p)", "p")
+            location_combo.addItem("mPrzystanek (p)", "p")
             location_combo.addItem("HomeOffice (h)", "h")
 
-            # Ustawiamy wartość w ComboBox tylko jeśli mamy poprawny kod lokalizacji
             if location_code and location_code in ['h', 's', 'p']:
                 location_combo.setCurrentIndex({'s': 0, 'p': 1, 'h': 2}.get(location_code))
             else:
-                location_combo.setCurrentIndex(-1)  # Ustawia puste pole (brak zaznaczenia)
+                location_combo.setCurrentIndex(-1)
 
-            location_combo.setEnabled(permissions['can_edit_location'])
+            location_combo.setEnabled(can_edit_location)  # Użyj nowej, zweryfikowanej zmiennej
             self.cells_table.setCellWidget(row, 4, location_combo)
 
             time_button = QPushButton(str(start_hour) if start_hour is not None else "")
