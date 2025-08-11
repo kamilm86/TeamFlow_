@@ -1,84 +1,29 @@
-import re
-from datetime import datetime
-# ... inne importy
+USE [BOTApp]
+GO
 
-class ProcessingService:
-    """Klasa serwisowa, która zamyka w sobie całą logikę aplikacji."""
-    def __init__(self, config_parser):
-        self.config_parser = config_parser
-        self.network_handler = self._setup_network_handler()
-        self.processor = self._setup_processor()
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
 
-    def _setup_network_handler(self):
-        # ... implementacja ...
-        return None # Placeholder
-
-    def _setup_processor(self):
-        # ... implementacja ...
-        return None # Placeholder
-
-    # --- ZAKTUALIZOWANA METODA FILTRUJĄCA ---
-    def _filter_files(self, all_files: List[str], processed_files: Set[str]) -> List[str]:
-        """
-        Filtruje listę plików na podstawie formatu nazwy, daty progowej
-        oraz statusu w bazie danych.
-        """
-        # 1. Definicje wzorców i progu daty (tak jak w Twoim kodzie)
-        try:
-            threshold_date = datetime.strptime('20250101', '%Y%m%d')
-        except ValueError:
-            logging.error("Krytyczny błąd: Nieprawidłowy format daty progowej w kodzie.")
-            return [] # Zwróć pustą listę, aby zatrzymać przetwarzanie
-
-        pattern_pesel = re.compile(r"^[A-Z]{2}_zapomnienie_PESEL_(\d{8})\.csv$", re.IGNORECASE)
-        pattern_normal = re.compile(r"^[A-Z]{2}_zapomnienie_(\d{8})\.csv$", re.IGNORECASE)
-
-        # 2. Wstępne filtrowanie po nazwie i dacie
-        valid_format_files = []
-        for filename in all_files:
-            match = pattern_pesel.match(filename) or pattern_normal.match(filename)
-            if not match:
-                continue # Pomiń pliki o niepasującym formacie
-
-            try:
-                file_date = datetime.strptime(match.group(1), '%Y%m%d')
-                if file_date > threshold_date:
-                    valid_format_files.append(filename)
-            except ValueError:
-                logging.warning(f"Pominięto plik '{filename}' z powodu nieprawidłowej daty w nazwie.")
-                continue
-
-        # 3. Filtracja końcowa - usunięcie plików już przetworzonych (sprawdzenie w pamięci)
-        final_files_to_process = [
-            filename for filename in valid_format_files
-            if filename not in processed_files
-        ]
-        
-        logging.info(f"Znaleziono {len(final_files_to_process)} nowych, prawidłowych plików do przetworzenia.")
-        return final_files_to_process
-
-    def run(self):
-        """Główna metoda uruchamiająca cały proces (jej logika pozostaje bez zmian)."""
-        logging.info("Uruchomienie serwisu przetwarzania plików.")
-        
-        # 1. Pobierz listę plików z sieci
-        directory_path = self.config_parser['paths']['network_source_path']
-        all_remote_files = self.network_handler.get_list_files_in_network_directory(directory_path)
-        
-        # 2. Pobierz listę już przetworzonych plików z bazy
-        processed_files_set = self.processor.get_all_processed_filenames()
-        
-        # 3. Użyj ZAKTUALIZOWANEJ metody do odfiltrowania plików
-        files_to_process = self._filter_files(all_remote_files, processed_files_set)
-
-        if not files_to_process:
-            logging.info("Brak nowych plików spełniających kryteria. Zakończono.")
-            return
-        
-        # 4. Wczytaj dane potrzebnych plików
-        file_data_dict = self.network_handler.load_data_from_files(files_to_process)
-        
-        # 5. Uruchom logikę procesora
-        self.processor.process_loaded_data(file_data_dict)
-        
-        logging.info("Serwis zakończył pracę.")
+-- =============================================
+-- Description: Funkcja zwracająca wyjątki lokalizacyjne dla użytkownika w danym zakresie dat.
+-- =============================================
+CREATE FUNCTION [dbo].[fn_GetLocationExceptions]
+(	
+	@uzytkownik_id INT,
+	@start_date DATE,
+	@end_date DATE
+)
+RETURNS TABLE 
+AS
+RETURN 
+(
+	SELECT * FROM dbo.p_t_zZ_lokalizacjewyjatki
+	WHERE 
+		Uzytkownik = @uzytkownik_id
+		-- Sprawdzenie, czy zakresy dat się pokrywają
+		AND Dataod <= @end_date 
+		AND (Datado IS NULL OR Datado >= @start_date)
+)
+GO
