@@ -1,0 +1,282 @@
+# location_exception_dialog.py
+
+from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
+                               QPushButton, QTableWidget, QTableWidgetItem,
+                               QHeaderView, QAbstractItemView, QDateEdit,
+                               QComboBox, QLineEdit, QMessageBox, QDialogButtonBox)
+from PySide6.QtCore import Qt, QDate, Signal
+from styles import AppStyles
+from db_connector import get_modifier_id
+from debug_utils import debug_print, log_error
+
+
+class AddEditExceptionDialog(QDialog):
+    """Pomocnicze okno dialogowe do dodawania/edycji pojedynczego wyjątku."""
+
+    def __init__(self, parent=None, exception_data=None, user_name="", default_dates=None):
+        super().__init__(parent)
+        self.is_dark_theme = parent.is_dark_theme
+        self.exception_data = exception_data
+
+        self.setWindowTitle("Edytuj Wyjątek" if exception_data else "Dodaj Nowy Wyjątek")
+        self.setMinimumWidth(400)
+
+        main_layout = QVBoxLayout(self)
+
+        # Mapa wartości ID lokalizacji na indeks w ComboBox
+        self.location_id_to_index = {1: 0, 3: 1, 2: 2}  # h:1, s:3, p:2
+        self.index_to_location_id = {v: k for k, v in self.location_id_to_index.items()}
+
+        # Pola formularza
+        self.user_label = QLabel(f"<b>Pracownik:</b> {user_name}")
+        self.date_from_edit = QDateEdit(default_dates['start'] if default_dates else QDate.currentDate())
+        self.date_from_edit.setCalendarPopup(True)
+        self.date_to_edit = QDateEdit(default_dates['end'] if default_dates else QDate.currentDate())
+        self.date_to_edit.setCalendarPopup(True)
+
+        self.location_combo = QComboBox()
+        self.location_combo.addItem("Home Office (h)")
+        self.location_combo.addItem("SBC (s)")
+        self.location_combo.addItem("Przystanek (p)")
+
+        self.reason_edit = QLineEdit()
+
+        form_layout = QHBoxLayout()
+        labels_layout = QVBoxLayout()
+        labels_layout.addWidget(QLabel("Data od:"))
+        labels_layout.addWidget(QLabel("Data do:"))
+        labels_layout.addWidget(QLabel("Lokalizacja:"))
+        labels_layout.addWidget(QLabel("Powód (opcjonalnie):"))
+
+        widgets_layout = QVBoxLayout()
+        widgets_layout.addWidget(self.date_from_edit)
+        widgets_layout.addWidget(self.date_to_edit)
+        widgets_layout.addWidget(self.location_combo)
+        widgets_layout.addWidget(self.reason_edit)
+
+        form_layout.addLayout(labels_layout)
+        form_layout.addLayout(widgets_layout)
+
+        # Przyciski OK / Anuluj
+        self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.button_box.accepted.connect(self.accept)
+        self.button_box.rejected.connect(self.reject)
+
+        main_layout.addWidget(self.user_label)
+        main_layout.addLayout(form_layout)
+        main_layout.addWidget(self.button_box)
+
+        if self.exception_data:
+            self.load_data()
+
+        self.apply_styles()
+
+    def load_data(self):
+        """Wypełnia formularz danymi do edycji."""
+        self.date_from_edit.setDate(QDate(self.exception_data['Dataod']))
+        self.date_to_edit.setDate(QDate(self.exception_data['Datado']))
+        self.location_combo.setCurrentIndex(self.location_id_to_index.get(self.exception_data.get('Lokalizacja'), 0))
+        self.reason_edit.setText(self.exception_data.get('Powod', ''))
+
+    def get_data(self):
+        """Zwraca dane z formularza jako słownik."""
+        if self.date_from_edit.date() > self.date_to_edit.date():
+            QMessageBox.warning(self, "Błąd dat", "Data 'od' nie może być późniejsza niż data 'do'.")
+            return None
+        return {"date_from": self.date_from_edit.date(), "date_to": self.date_to_edit.date(),
+                "lokalizacja": self.index_to_location_id.get(self.location_combo.currentIndex()),
+                "powod": self.reason_edit.text()}
+
+    def apply_styles(self):
+        theme = "dark" if self.is_dark_theme else "light"
+        self.setStyleSheet(AppStyles.get_dialog_style(theme))
+        for button in self.button_box.buttons():
+            button.setStyleSheet(AppStyles.get_button_style(theme))
+        self.date_from_edit.setStyleSheet(AppStyles.get_date_edit_style(theme))
+        self.date_to_edit.setStyleSheet(AppStyles.get_date_edit_style(theme))
+        self.location_combo.setStyleSheet(AppStyles.get_combobox_style(theme))
+        self.reason_edit.setStyleSheet(AppStyles.get_line_edit_style(theme))
+
+
+class LocationExceptionDialog(QDialog):
+    """Główne okno dialogowe do zarządzania wyjątkami lokalizacyjnymi."""
+    data_changed = Signal()
+
+    def __init__(self, parent, user_id, user_name, selection_range):
+        super().__init__(parent)
+        self.parent_widget = parent
+        self.is_dark_theme = parent.is_dark_theme
+        self.user_id = user_id
+        self.user_name = user_name
+        self.selection_range = selection_range # Zakres dat z zaznaczenia
+        self.setWindowTitle(f"Zarządzaj wyjątkami lokalizacyjnymi - {user_name}")
+        self.setMinimumSize(700, 500)
+
+        main_layout = QVBoxLayout(self)
+        self.table = QTableWidget()
+        self.table.setColumnCount(5)
+        self.table.setHorizontalHeaderLabels(["ID", "Data od", "Data do", "Lokalizacja", "Powód"])
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows);
+        self.table.setSelectionMode(QAbstractItemView.SingleSelection);
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch);
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        buttons_layout = QHBoxLayout()
+        self.add_button = QPushButton("Dodaj nowy");
+        self.edit_button = QPushButton("Edytuj zaznaczony");
+        self.delete_button = QPushButton("Usuń zaznaczony")
+        self.split_button = QPushButton("Podziel na dni");
+        self.split_button.setToolTip("Zamienia zaznaczony wpis wielodniowy na serię wpisów jednodniowych");
+        self.split_button.setEnabled(False)
+        self.close_button = QPushButton("Zamknij")
+        buttons_layout.addWidget(self.add_button);
+        buttons_layout.addWidget(self.edit_button);
+        buttons_layout.addWidget(self.delete_button);
+        buttons_layout.addWidget(self.split_button);
+        buttons_layout.addStretch();
+        buttons_layout.addWidget(self.close_button)
+        main_layout.addWidget(self.table);
+        main_layout.addLayout(buttons_layout)
+        self.connect_signals();
+        self.apply_styles();
+        self.load_exceptions()
+
+    def connect_signals(self):
+        self.add_button.clicked.connect(self._add_exception)
+        self.edit_button.clicked.connect(self._edit_exception)
+        self.delete_button.clicked.connect(self._delete_exception)
+        self.close_button.clicked.connect(self.accept)
+        self.split_button.clicked.connect(self._split_exception)
+        self.table.itemSelectionChanged.connect(self._on_selection_changed)
+
+    def _on_selection_changed(self):
+        """Aktywuje/deaktywuje przycisk 'Podziel' w zależności od zaznaczenia."""
+        selected_items = self.table.selectedItems()
+        if not selected_items:
+            self.split_button.setEnabled(False)
+            return
+
+        exception_data = selected_items[0].data(Qt.UserRole)
+        is_range = exception_data['Dataod'].date() != exception_data['Datado'].date()
+        self.split_button.setEnabled(is_range)
+
+    def _split_exception(self):
+        selected_items = self.table.selectedItems()
+        if not selected_items: return
+        exception_data = selected_items[0].data(Qt.UserRole)
+        reply = QMessageBox.question(self, "Potwierdzenie podziału",
+                                     f"Czy na pewno chcesz usunąć wpis ID: {exception_data['Id']} i zastąpić go serią wpisów jednodniowych?",
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply == QMessageBox.No: return
+        _, modyfikujacy_id, _, _, _ = get_modifier_id()
+        delete_params = (None, modyfikujacy_id, None, None, None, None, 3, exception_data['Id'])
+        delete_result = self.parent_widget._manage_location_exception(delete_params)
+        if not delete_result.get("success"):
+            QMessageBox.critical(self, "Błąd",
+                                 f"Nie udało się usunąć oryginalnego wpisu:\n{delete_result.get('message')}")
+            return
+        errors = []
+        current_date = QDate(exception_data['Dataod'])
+        end_date = QDate(exception_data['Datado'])
+
+        # --- ZMIANA: Tworzenie nowego powodu ---
+        original_reason = exception_data.get('Powod', '')
+        split_note = f"[Podzielono z ID: {exception_data['Id']}]"
+        new_reason = f"{split_note} {original_reason}".strip()[:1000]
+
+        while current_date <= end_date:
+            date_str = current_date.toString("yyyy-MM-dd")
+            add_params = (
+            self.user_id, modyfikujacy_id, date_str, date_str, exception_data['Lokalizacja'], new_reason, 1, None)
+            result = self.parent_widget._manage_location_exception(add_params)
+            if not result.get("success"):
+                errors.append(f"{date_str}: {result.get('message')}")
+            current_date = current_date.addDays(1)
+        if errors:
+            QMessageBox.warning(self, "Wystąpiły błędy", "Nie wszystkie dni udało się dodać:\n\n" + "\n".join(errors))
+        else:
+            QMessageBox.information(self, "Sukces", "Wpis został pomyślnie podzielony na pojedyncze dni.")
+        self.load_exceptions()
+        self.data_changed.emit()
+
+    def apply_styles(self):
+        theme = "dark" if self.is_dark_theme else "light"
+        self.setStyleSheet(AppStyles.get_dialog_style(theme))
+        self.table.setStyleSheet(AppStyles.get_tablewidget_style(theme))
+        for button in self.findChildren(QPushButton):
+            button.setStyleSheet(AppStyles.get_button_style(theme))
+
+    def load_exceptions(self):
+        """Ładuje i wyświetla wyjątki POKRYWAJĄCE SIĘ z zaznaczonym zakresem dat."""
+        exceptions = self.parent_widget._get_location_exceptions(self.user_id, self.selection_range['start'], self.selection_range['end'])
+        self.table.setRowCount(len(exceptions))
+        location_map = {1: 'Home Office', 3: 'SBC', 2: 'mPrzystanek'}
+        for row, exc in enumerate(exceptions):
+            id_item = QTableWidgetItem(str(exc['Id'])); id_item.setData(Qt.UserRole, exc)
+            self.table.setItem(row, 0, id_item)
+            self.table.setItem(row, 1, QTableWidgetItem(exc['Dataod'].strftime('%Y-%m-%d')))
+            self.table.setItem(row, 2, QTableWidgetItem(exc['Datado'].strftime('%Y-%m-%d') if exc['Datado'] else ''))
+            self.table.setItem(row, 3, QTableWidgetItem(location_map.get(exc['Lokalizacja'], 'Nieznana')))
+            self.table.setItem(row, 4, QTableWidgetItem(exc.get('Powod', '')))
+        self._on_selection_changed() # Odśwież stan przycisku "Podziel"
+
+    def _add_exception(self):
+        """Otwiera dialog dodawania z datami wypełnionymi na podstawie zaznaczenia."""
+        dialog = AddEditExceptionDialog(self, user_name=self.user_name, default_dates=self.selection_range)
+        if dialog.exec() == QDialog.Accepted:
+            data = dialog.get_data()
+            if data:
+                _, modyfikujacy_id, _, _, _ = get_modifier_id()
+                errors = []
+                current_date = data['date_from']
+                while current_date <= data['date_to']:
+                    date_str = current_date.toString("yyyy-MM-dd")
+                    params = (self.user_id, modyfikujacy_id, date_str, date_str, data['lokalizacja'], data['powod'], 1, None)
+                    result = self.parent_widget._manage_location_exception(params)
+                    if not result.get("success"):
+                        errors.append(f"{date_str}: {result.get('message')}")
+                    current_date = current_date.addDays(1)
+                if errors:
+                    QMessageBox.warning(self, "Wystąpiły błędy", "Nie wszystkie dni udało się dodać:\n\n" + "\n".join(errors))
+                self.load_exceptions()
+                self.data_changed.emit()
+
+    def _edit_exception(self):
+        selected_items = self.table.selectedItems()
+        if not selected_items:
+            QMessageBox.warning(self, "Brak zaznaczenia", "Proszę zaznaczyć wiersz do edycji.")
+            return
+
+        exception_data = selected_items[0].data(Qt.UserRole)
+        dialog = AddEditExceptionDialog(self, exception_data=exception_data, user_name=self.user_name)
+
+        if dialog.exec() == QDialog.Accepted:
+            data = dialog.get_data()
+            if data:
+                _, modyfikujacy_id, _, _, _ = get_modifier_id()
+                params = (
+                self.user_id, modyfikujacy_id, data['dataod'], data['datado'], data['lokalizacja'], data['powod'], 2,
+                exception_data['Id'])
+                result = self.parent_widget._manage_location_exception(params)
+                if result.get("success"):
+                    self.load_exceptions()
+                    self.data_changed.emit()
+
+    def _delete_exception(self):
+        selected_items = self.table.selectedItems()
+        if not selected_items:
+            QMessageBox.warning(self, "Brak zaznaczenia", "Proszę zaznaczyć wiersz do usunięcia.")
+            return
+
+        exception_data = selected_items[0].data(Qt.UserRole)
+        reply = QMessageBox.question(self, "Potwierdzenie usunięcia",
+                                     f"Czy na pewno chcesz usunąć wyjątek ID: {exception_data['Id']}?",
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+
+        if reply == QMessageBox.Yes:
+            _, modyfikujacy_id, _, _, _ = get_modifier_id()
+            params = (None, modyfikujacy_id, None, None, None, None, 3, exception_data['Id'])
+            result = self.parent_widget._manage_location_exception(params)
+            if result.get("success"):
+                self.load_exceptions()
+                self.data_changed.emit()
