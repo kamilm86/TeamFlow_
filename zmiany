@@ -1,83 +1,39 @@
-# W pliku location_exception_dialog.py
+# W pliku location_exception_dialog.py, wewnątrz klasy LocationExceptionDialog
 
-class LocationExceptionDialog(QDialog):
-    """Główne okno dialogowe do zarządzania wyjątkami lokalizacyjnymi."""
-    data_changed = Signal()
-
-    def __init__(self, parent, user_id, user_name, selection_range):
-        super().__init__(parent)
-        self.parent_widget = parent
-        self.is_dark_theme = parent.is_dark_theme
-        self.user_id = user_id
-        self.user_name = user_name
-        self.selection_range = selection_range
-        self.setWindowTitle(f"Zarządzaj wyjątkami lokalizacyjnymi - {user_name}")
-        self.setMinimumSize(850, 500) # Zwiększono szerokość okna
-
-        main_layout = QVBoxLayout(self)
-        self.table = QTableWidget()
-        
-        # --- POCZĄTEK ZMIANY: Dodanie nowych kolumn ---
-        self.table.setColumnCount(7)
-        self.table.setHorizontalHeaderLabels(["ID", "Data od", "Data do", "Lokalizacja", "Powód", "Data Modyfikacji", "Modyfikujący"])
-        # --- KONIEC ZMIANY ---
-
-        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
-        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents) # ID
-        self.table.horizontalHeader().setSectionResizeMode(5, QHeaderView.ResizeToContents) # Data Modyfikacji
-        self.table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeToContents) # Modyfikujący
-
-        buttons_layout = QHBoxLayout()
-        self.add_button = QPushButton("Dodaj nowy")
-        self.edit_button = QPushButton("Edytuj zaznaczony")
-        self.delete_button = QPushButton("Usuń zaznaczony")
-        self.split_button = QPushButton("Podziel na dni")
-        self.split_button.setToolTip("Zamienia zaznaczony wpis wielodniowy na serię wpisów jednodniowych")
-        self.split_button.setEnabled(False)
-        self.close_button = QPushButton("Zamknij")
-        
-        buttons_layout.addWidget(self.add_button)
-        buttons_layout.addWidget(self.edit_button)
-        buttons_layout.addWidget(self.delete_button)
-        buttons_layout.addWidget(self.split_button)
-        buttons_layout.addStretch()
-        buttons_layout.addWidget(self.close_button)
-
-        main_layout.addWidget(self.table)
-        main_layout.addLayout(buttons_layout)
-
-        self.connect_signals()
-        self.apply_styles()
-        self.load_exceptions()
-
-    def load_exceptions(self):
-        """Ładuje i wyświetla wyjątki, w tym nowe kolumny audytowe."""
-        exceptions = self.parent_widget._get_location_exceptions(self.user_id, self.selection_range['start'], self.selection_range['end'])
-        self.table.setRowCount(len(exceptions))
-        location_map = {1: 'Home Office', 3: 'SBC', 2: 'mPrzystanek'}
-
-        for row, exc in enumerate(exceptions):
-            id_item = QTableWidgetItem(str(exc['Id']))
-            id_item.setData(Qt.UserRole, exc)
-            self.table.setItem(row, 0, id_item)
+def _add_exception(self):
+    """Otwiera dialog dodawania z datami wypełnionymi na podstawie zaznaczenia."""
+    dialog = AddEditExceptionDialog(self, user_name=self.user_name, default_dates=self.selection_range)
+    if dialog.exec() == QDialog.Accepted:
+        data = dialog.get_data()
+        if data:
+            # --- POCZĄTEK NOWEJ WERYFIKACJI ---
+            # Krok 1: Sprawdź, czy w podanym zakresie dat istnieją już jakieś wyjątki
+            existing_exceptions = self.parent_widget._get_location_exceptions(self.user_id, data['date_from'], data['date_to'])
             
-            self.table.setItem(row, 1, QTableWidgetItem(exc['Dataod'].strftime('%Y-%m-%d')))
-            self.table.setItem(row, 2, QTableWidgetItem(exc['Datado'].strftime('%Y-%m-%d') if exc['Datado'] else ''))
-            self.table.setItem(row, 3, QTableWidgetItem(location_map.get(exc['Lokalizacja'], 'Nieznana')))
-            self.table.setItem(row, 4, QTableWidgetItem(exc.get('Powod', '')))
+            if existing_exceptions:
+                # Jeśli cokolwiek znaleziono, zablokuj operację i poinformuj użytkownika
+                QMessageBox.warning(self, "Wykryto kolizję", 
+                                    "W wybranym zakresie dat istnieje już co najmniej jeden wpis wyjątku.\n\n"
+                                    "Proszę najpierw usunąć lub edytować istniejące wpisy, aby uniknąć konfliktów.")
+                return # Przerwij działanie metody
+            # --- KONIEC NOWEJ WERYFIKACJI ---
 
-            # --- POCZĄTEK ZMIANY: Wypełnienie nowych kolumn ---
-            mod_date = exc.get('DataModyfikacji')
-            mod_date_str = mod_date.strftime('%Y-%m-%d %H:%M') if mod_date else ''
-            self.table.setItem(row, 5, QTableWidgetItem(mod_date_str))
+            # Krok 2: Jeśli nie ma kolizji, kontynuuj dodawanie wpisów
+            _, modyfikujacy_id, _, _, _ = get_modifier_id()
+            errors = []
+            current_date = data['date_from']
+            end_date = data['date_to']
 
-            modifier = exc.get('Modyfikujacy')
-            self.table.setItem(row, 6, QTableWidgetItem(str(modifier) if modifier is not None else ''))
-            # --- KONIEC ZMIANY ---
-
-        self._on_selection_changed()
-
-    # ... (pozostałe metody w tej klasie pozostają bez zmian)
+            while current_date <= end_date:
+                date_str = current_date.toString("yyyy-MM-dd")
+                params = (self.user_id, modyfikujacy_id, date_str, date_str, data['lokalizacja'], data['powod'], 1, None)
+                result = self.parent_widget._manage_location_exception(params)
+                if not result.get("success"):
+                    errors.append(f"{date_str}: {result.get('message')}")
+                current_date = current_date.addDays(1)
+            
+            if errors:
+                QMessageBox.warning(self, "Wystąpiły błędy", "Nie wszystkie dni udało się dodać:\n\n" + "\n".join(errors))
+            
+            self.load_exceptions()
+            self.data_changed.emit()
