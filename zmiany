@@ -1,104 +1,105 @@
-# W pliku schedule_edit_dialogs.py, wewnątrz klasy ScheduleChangeDialog
+# W pliku main.py, wewnątrz klasy WorkScheduleWindow
 
-def setup_ui(self):
-    main_layout = QVBoxLayout(self)
-    apply_all_group = self._create_apply_all_group()
-    main_layout.addWidget(apply_all_group)
-    self.cells_table = QTableWidget()
-    self.cells_table.setColumnCount(9)
-    self.cells_table.setHorizontalHeaderLabels(
-        ["Data", "Dzień tyg.", "Użytkownik", "Symbol", "Lokalizacja", "Godzina rozp.", "Liczba godzin", "Akcje", "Status"])
-    self.cells_table.setSortingEnabled(True)
-    self.cells_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
-    self.cells_table.horizontalHeader().setStretchLastSection(True)
-    self.cells_table.setRowCount(len(self.flattened_cells))
+def get_user_name_by_id(self, user_id):
+    """Tłumaczy ID użytkownika na jego imię i nazwisko."""
+    if user_id is None:
+        return ""
+        
+    # Stwórz mapę ID -> Nazwa przy pierwszym użyciu dla wydajności
+    if not hasattr(self, '_user_id_to_name_map'):
+        self._user_id_to_name_map = {
+            key[3]: key[2] for key in self.processed_data.keys()
+        }
+    
+    return self._user_id_to_name_map.get(user_id, f"ID: {user_id}")
 
-    for row, cell in enumerate(self.flattened_cells):
-        permissions = self.parent_widget._get_permission_for_cell(cell)
-        date_str = cell.get('date_str', '')
-        date_item = DateTableWidgetItem(date_str)
-        date_item.setFlags(date_item.flags() & ~Qt.ItemIsEditable)
-        date_item.setData(Qt.UserRole, row)
-        self.cells_table.setItem(row, 0, date_item)
-        qdate_obj = QDate.fromString(date_str, "yyyy-MM-dd")
-        day_name_item = DayOfWeekItem(qdate_obj)
-        day_name_item.setFlags(day_name_item.flags() & ~Qt.ItemIsEditable)
-        day_name_item.setTextAlignment(Qt.AlignCenter)
-        self.cells_table.setItem(row, 1, day_name_item)
-        user_name = cell.get('uzytkownik_dane', 'Nieznany')
-        self.cells_table.setItem(row, 2, QTableWidgetItem(user_name))
-        self.cells_table.item(row, 2).setFlags(self.cells_table.item(row, 2).flags() & ~Qt.ItemIsEditable)
-        symbol = cell.get('symbol', '')
-        self.cells_table.setItem(row, 3, QTableWidgetItem(symbol))
-        self.cells_table.item(row, 3).setFlags(self.cells_table.item(row, 3).flags() & ~Qt.ItemIsEditable)
-        
-        from symbol_parser import parse_symbol
-        parsed_symbol = parse_symbol(symbol)
-        
-        # --- POCZĄTEK NOWEJ LOGIKI ---
-        can_edit_location = permissions['can_edit_location']
-        cell_date = QDate.fromString(date_str, "yyyy-MM-dd")
+# W pliku location_exception_dialog.py
 
-        # Jeśli rola to 'Lider' i data jest przeszła, zablokuj edycję lokalizacji
-        if self.user_role == 'Lider' and cell_date < QDate.currentDate():
-            can_edit_location = False
-        # --- KONIEC NOWEJ LOGIKI ---
-        
-        location_code = parsed_symbol.get('location') or cell.get('lokalizacja_domyslna')
-        start_hour = parsed_symbol.get('start_hour')
-        parsed_hours = parsed_symbol.get('work_hours')
-        if parsed_hours is not None:
-            work_hours = parsed_hours
-        else:
-            work_hours = cell.get('etat', 8.0)
-        try:
-            work_hours = int(float(work_hours))
-        except (ValueError, TypeError):
-            work_hours = 8
+class LocationExceptionDialog(QDialog):
+    """Główne okno dialogowe do zarządzania wyjątkami lokalizacyjnymi."""
+    data_changed = Signal()
 
-        location_combo = QComboBox()
-        location_combo.addItem("SBC (s)", "s")
-        location_combo.addItem("mPrzystanek (p)", "p")
-        location_combo.addItem("HomeOffice (h)", "h")
-        
-        if location_code and location_code in ['h', 's', 'p']:
-            location_combo.setCurrentIndex({'s': 0, 'p': 1, 'h': 2}.get(location_code))
-        else:
-            location_combo.setCurrentIndex(-1)
+    def __init__(self, parent, user_id, user_name, selection_range):
+        super().__init__(parent)
+        self.parent_widget = parent
+        self.is_dark_theme = parent.is_dark_theme
+        self.user_id = user_id
+        self.user_name = user_name
+        self.selection_range = selection_range
+        self.setWindowTitle(f"Zarządzaj wyjątkami lokalizacyjnymi - {user_name}")
+        self.setMinimumSize(900, 500) # Zwiększono szerokość okna
 
-        location_combo.setEnabled(can_edit_location) # Użyj nowej, zweryfikowanej zmiennej
-        self.cells_table.setCellWidget(row, 4, location_combo)
+        main_layout = QVBoxLayout(self)
+        self.table = QTableWidget()
         
-        time_button = QPushButton(str(start_hour) if start_hour is not None else "")
-        time_button.setProperty("cell_index", row)
-        time_button.setProperty("field_type", "hour")
-        time_button.clicked.connect(self.show_digit_selection)
-        time_button.setEnabled(permissions['can_edit_hours'])
-        self.cells_table.setCellWidget(row, 5, time_button)
-        
-        hours_button = QPushButton(str(work_hours))
-        hours_button.setProperty("cell_index", row)
-        hours_button.setProperty("field_type", "hours")
-        hours_button.clicked.connect(self.show_digit_selection)
-        hours_button.setEnabled(permissions['can_edit_hours'])
-        self.cells_table.setCellWidget(row, 6, hours_button)
-        
-        apply_button = QPushButton("Zastosuj")
-        apply_button.setProperty("cell_index", row)
-        apply_button.clicked.connect(self.apply_change_by_index)
-        apply_button.setEnabled(any(permissions.values()) and start_hour is not None)
-        self.cells_table.setCellWidget(row, 7, apply_button)
-        
-        status_item = QTableWidgetItem("")
-        status_item.setFlags(status_item.flags() & ~Qt.ItemIsEditable)
-        status_item.setTextAlignment(Qt.AlignCenter)
-        self.cells_table.setItem(row, 8, status_item)
+        # --- POCZĄTEK ZMIANY: Dodanie nowych kolumn ---
+        self.table.setColumnCount(7)
+        self.table.setHorizontalHeaderLabels(["ID", "Data od", "Data do", "Lokalizacja", "Powód", "Data Modyfikacji", "Modyfikujący"])
+        # --- KONIEC ZMIANY ---
 
-    main_layout.addWidget(self.cells_table)
-    button_layout = QHBoxLayout()
-    self.close_button = QPushButton("Zamknij")
-    self.close_button.clicked.connect(self.close)
-    button_layout.addStretch()
-    button_layout.addWidget(self.close_button)
-    main_layout.addLayout(button_layout)
-    self.cells_table.sortByColumn(0, Qt.AscendingOrder)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents) # ID
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents) # Data od
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents) # Data do
+        self.table.horizontalHeader().setSectionResizeMode(6, QHeaderView.ResizeToContents) # Modyfikujący
+
+
+        buttons_layout = QHBoxLayout()
+        self.add_button = QPushButton("Dodaj nowy")
+        self.edit_button = QPushButton("Edytuj zaznaczony")
+        self.delete_button = QPushButton("Usuń zaznaczony")
+        self.split_button = QPushButton("Podziel na dni")
+        self.split_button.setToolTip("Zamienia zaznaczony wpis wielodniowy na serię wpisów jednodniowych")
+        self.split_button.setEnabled(False)
+
+        self.close_button = QPushButton("Zamknij")
+        
+        buttons_layout.addWidget(self.add_button)
+        buttons_layout.addWidget(self.edit_button)
+        buttons_layout.addWidget(self.delete_button)
+        buttons_layout.addWidget(self.split_button)
+        buttons_layout.addStretch()
+        buttons_layout.addWidget(self.close_button)
+
+        main_layout.addWidget(self.table)
+        main_layout.addLayout(buttons_layout)
+
+        self.connect_signals()
+        self.apply_styles()
+        self.load_exceptions()
+
+    def load_exceptions(self):
+        """Ładuje i wyświetla wyjątki, w tym dane audytowe."""
+        exceptions = self.parent_widget._get_location_exceptions(self.user_id, self.selection_range['start'], self.selection_range['end'])
+        self.table.setRowCount(len(exceptions))
+        location_map = {1: 'Home Office', 3: 'SBC', 2: 'mPrzystanek'}
+
+        for row, exc in enumerate(exceptions):
+            id_item = QTableWidgetItem(str(exc['Id']))
+            id_item.setData(Qt.UserRole, exc)
+            self.table.setItem(row, 0, id_item)
+            
+            self.table.setItem(row, 1, QTableWidgetItem(exc['Dataod'].strftime('%Y-%m-%d')))
+            self.table.setItem(row, 2, QTableWidgetItem(exc['Datado'].strftime('%Y-%m-%d') if exc['Datado'] else ''))
+            self.table.setItem(row, 3, QTableWidgetItem(location_map.get(exc['Lokalizacja'], 'Nieznana')))
+            self.table.setItem(row, 4, QTableWidgetItem(exc.get('Powod', '')))
+
+            # --- POCZĄTEK ZMIANY: Wypełnienie nowych kolumn ---
+            mod_date = exc.get('DataModyfikacji')
+            mod_date_str = mod_date.strftime('%Y-%m-%d %H:%M') if mod_date else ''
+            self.table.setItem(row, 5, QTableWidgetItem(mod_date_str))
+
+            modyfikujacy_id = exc.get('Modyfikujacy')
+            modyfikujacy_name = self.parent_widget.get_user_name_by_id(modyfikujacy_id)
+            self.table.setItem(row, 6, QTableWidgetItem(modyfikujacy_name))
+            # --- KONIEC ZMIANY ---
+
+        self._on_selection_changed()
+
+    # ... (reszta metod w tej klasie pozostaje bez zmian) ...
+
+
+
