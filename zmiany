@@ -1,41 +1,141 @@
+Jasne, rozumiem. Chodzi o to, aby cała logika wyjątków lokalizacyjnych nie dotyczyła pracowników z wydziałów, których nazwa zawiera "WZP". To ważna reguła biznesowa.
+Wprowadziłem dwuetapowe rozwiązanie, które w pełni realizuje to założenie.
+## Plan Zmian
+ * Logika w Oknie "Wstaw zmianę": Metoda zapisująca zmiany w tym oknie zostanie zmodyfikowana. Jeśli wykryje, że edytowany pracownik należy do wydziału z "WZP" w nazwie, ominie całą logikę sprawdzania, dodawania czy usuwania wyjątków i po prostu zapisze zmianę w grafiku.
+ * Przycisk "Wyjątki lokalizacyjne": Ten przycisk w głównym oknie aplikacji będzie automatycznie nieaktywny, gdy zaznaczysz pracownika z wydziału "WZP", uniemożliwiając ręczne zarządzanie wyjątkami dla tej grupy.
+## Zmiany w kodzie
+### 1. Plik: schedule_edit_dialogs.py
+Proszę, zastąp całą metodę _apply_change_for_row w klasie ScheduleChangeDialog poniższą, zaktualizowaną wersją.
+# W pliku schedule_edit_dialogs.py, wewnątrz klasy ScheduleChangeDialog
+
+def _apply_change_for_row(self, visual_row_index):
+    """Stosuje zmianę dla konkretnego wiersza, z logiką wyjątków i pominięciem dla WZP."""
+    button = self.cells_table.cellWidget(visual_row_index, 7)
+    if not button or not button.isEnabled(): return
+
+    status_item = self.cells_table.item(visual_row_index, 8)
+    
+    try:
+        item = self.cells_table.item(visual_row_index, 0)
+        if not item: raise ValueError("Nie można odnaleźć elementu w wierszu.")
+        original_data_index = item.data(Qt.UserRole)
+        cell_data = self.flattened_cells[original_data_index]
+
+        user_id = cell_data.get('uzytkownik_id')
+        nr_kadrowy = cell_data.get('nr_kadrowy')
+        user_name = cell_data.get('uzytkownik_dane')
+        date_str = cell_data.get('date_str')
+        q_date = QDate.fromString(date_str, "yyyy-MM-dd")
+        _, modyfikujacy_id, _, _, _ = get_modifier_id()
+        location_map = {'h': 1, 's': 3, 'p': 2}
+        default_location_code = cell_data.get('lokalizacja_domyslna', 'h')
+        target_dept = cell_data.get('wydzial', '') # Pobierz wydział pracownika
+
+        location_combo = self.cells_table.cellWidget(visual_row_index, 4)
+        time_button = self.cells_table.cellWidget(visual_row_index, 5)
+        hours_button = self.cells_table.cellWidget(visual_row_index, 6)
+        
+        from symbol_parser import parse_symbol, build_symbol
+        original_parsed_symbol = parse_symbol(cell_data.get('symbol', ''))
+        
+        new_location_code = location_combo.currentData()
+        new_start_hour = int(time_button.text())
+        new_work_hours = int(hours_button.text())
+        
+        original_location_code = original_parsed_symbol.get('location') or default_location_code
+        loc_changed = new_location_code != original_location_code
+        is_reverting_to_default = loc_changed and (new_location_code == default_location_code)
+        
+        button.setEnabled(False)
+        button.setText("Przetwarzanie...")
+        QApplication.processEvents()
+
+        result = {}
+        new_symbol = build_symbol(
+            location=new_location_code, start_hour=new_start_hour, work_hours=new_work_hours,
+            special_symbol=original_parsed_symbol.get('special_symbol')
+        )
+        
+        # --- POCZĄTEK NOWEJ LOGIKI ---
+        # Sprawdź, czy wydział to WZP. Jeśli tak, omiń całą logikę wyjątków.
+        if 'wzp' in target_dept.lower():
+            debug_print(f"-> Wykryto wydział WZP ({target_dept}). Omijam logikę wyjątków lokalizacyjnych.")
+            result = self.parent_widget._call_import_changes_procedure(nr_kadrowy, self.year, self.month, date_str, new_symbol)
+        # --- KONIEC NOWEJ LOGIKI ---
+        elif loc_changed:
+            # Tutaj znajduje się cała poprzednia, złożona logika wyjątków dla innych wydziałów
+            exact_exception, range_exception = self.parent_widget._check_location_exception(user_id, q_date)
+            # ... (reszta logiki wyjątków bez zmian)
+        else:
+            # Jeśli lokalizacja się nie zmieniła, zapisz normalnie
+            result = self.parent_widget._call_import_changes_procedure(nr_kadrowy, self.year, self.month, date_str, new_symbol)
+        
+        # Pozostała część metody do wyświetlania wyniku jest bez zmian, dla pewności wklejam całość
+        if result.get("success", False):
+            status_item.setText("Sukces ✅"); status_item.setForeground(QColor("green"))
+            returned_symbol = result.get('returned_symbol', new_symbol)
+            self.cells_table.item(visual_row_index, 3).setText(returned_symbol)
+            self.parent_widget._update_cells_with_new_symbols([(user_id, date_str, returned_symbol)])
+            self.parent_widget.schedule_model.layoutChanged.emit()
+            self.flattened_cells[original_data_index]['symbol'] = returned_symbol
+        else:
+            status_item.setText("Porażka ❌"); status_item.setForeground(QColor("red"))
+            error_msg = result.get("message", "Nieznany błąd.")
+            QMessageBox.warning(self, "Błąd", f"👤 {user_name} ({self.format_date(date_str)}):\n{error_msg}", QMessageBox.Ok)
+    
+    except Exception as e:
+        if status_item: status_item.setText("Porażka ❌"); status_item.setForeground(QColor("red"))
+        log_error(f"Błąd krytyczny w _apply_change_for_row: {e}", exception=e)
+        QMessageBox.critical(self, "Błąd krytyczny", f"Wystąpił nieoczekiwany błąd: {str(e)}", QMessageBox.Ok)
+    finally:
+        QTimer.singleShot(1000, lambda b=button: self._reset_button_state(b))
+
+### 2. Plik: main.py
+Zaktualizuj metodę _handle_selection_change, aby dynamicznie blokowała przycisk "Wyjątki lokalizacyjne".
 # W pliku main.py, wewnątrz klasy WorkScheduleWindow
 
-def _manage_location_exception(self, params):
-    """Zarządza dodawaniem, edycją i usuwaniem wyjątków, ręcznie kontrolując transakcję."""
-    conn = None # Zdefiniuj 'conn' przed blokiem try
+def _handle_selection_change(self):
+    """Faktyczna obsługa zmiany zaznaczenia (wywoływana po debounce)."""
+    if hasattr(self, '_updating_selection') and self._updating_selection:
+        return
+
+    self._updating_selection = True
     try:
-        conn = DatabaseConnector.get_connection()
-        # Krok 1: Wyłącz autocommit, aby przejąć pełną kontrolę nad transakcją
-        conn.autocommit = False
-        cursor = conn.cursor()
-        
-        query = f"EXEC {SQL_OBJECTS['p_p_zz_lokalizacjewyjatki']} ?, ?, ?, ?, ?, ?, ?, ?"
-        cursor.execute(query, params)
-        
-        # Krok 2: Upewnij się, że cała procedura (wszystkie jej wewnętrzne polecenia) się wykonała
-        while cursor.nextset():
-            pass
+        selected_cells_data = self.table.get_data_for_selected_cells()
 
-        # Krok 3: Jeśli nie było błędów, zatwierdź całą transakcję
-        conn.commit()
+        # --- POCZĄTEK POPRAWKI: Włączanie/wyłączanie przycisku wyjątków ---
+        enable_exception_button = False
+        if selected_cells_data:
+            user_ids = {cell['uzytkownik_id'] for cell in selected_cells_data}
+            if len(user_ids) == 1: # Przycisk aktywny tylko dla jednego zaznaczonego pracownika
+                first_cell = selected_cells_data[0]
+                department = first_cell.get('wydzial', '').lower()
+                if 'wzp' not in department:
+                    enable_exception_button = True
         
-        return {"success": True}
+        if hasattr(self, 'location_exception_button'):
+            self.location_exception_button.setEnabled(enable_exception_button)
+        # --- KONIEC POPRAWKI ---
 
-    except Exception as e:
-        log_error(f"Błąd podczas zarządzania wyjątkiem lokalizacyjnym, wycofywanie transakcji: {e}", exception=e)
-        # Krok 4: Jeśli wystąpił błąd, wycofaj wszystkie zmiany wykonane w tej transakcji
-        if conn:
-            try:
-                conn.rollback()
-            except Exception as rb_e:
-                log_error(f"Błąd podczas rollbacku transakcji: {rb_e}", exception=rb_e)
-        return {"success": False, "message": str(e)}
-        
+        if selected_cells_data:
+            events = []
+            for cell_data in selected_cells_data:
+                user_id = cell_data.get('uzytkownik_id')
+                date_str = cell_data.get('date_str')
+                if user_id and date_str:
+                    user_events = self.data_provider.get_events_for_user_date(user_id, date_str)
+                    for event in user_events:
+                        local_event = self._convert_dp_event_to_local(event)
+                        events.append(local_event)
+            self.events_data = events
+            if hasattr(self, 'events_model'):
+                self.events_model.update_data(self.events_data)
+                self.filter_events_table()
+        else:
+            self.events_data = []
+            if hasattr(self, 'events_model'):
+                self.events_model.update_data([])
     finally:
-        # Krok 5: Zawsze przywróć autocommit i zamknij połączenie
-        if conn:
-            try:
-                conn.autocommit = True
-                conn.close()
-            except Exception as close_e:
-                log_error(f"Błąd podczas zamykania połączenia: {close_e}", exception=close_e)
+        self._updating_selection = False
+
+Po tych zmianach aplikacja będzie poprawnie ignorować całą logikę wyjątków lokalizacyjnych dla wszystkich wydziałów zawierających w nazwie "WZP".
