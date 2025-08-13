@@ -1,10 +1,10 @@
 # schedule_edit_dialogs.py
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                                QPushButton, QComboBox, QGroupBox, QRadioButton,
-                               QFontComboBox, QSpinBox,  QCheckBox, QWidget,
+                               QFontComboBox, QSpinBox, QCheckBox, QWidget,
                                QTabWidget, QGridLayout, QMessageBox, QLineEdit,
                                QApplication, QSpacerItem, QSizePolicy,
-                               QTableWidget, QTableWidgetItem, QHeaderView)
+                               QTableWidget, QTableWidgetItem, QHeaderView, QDialogButtonBox)
 from PySide6.QtCore import Qt, Signal, QTimer, QDate
 from PySide6.QtGui import QFont, QColor
 from styles import AppStyles
@@ -479,6 +479,45 @@ class InsertSymbolDialog(QDialog):
         return self.selected_symbol
 
 
+class ReasonDialog(QDialog):
+    """Prosty dialog do wpisania i pobrania powodu zmiany."""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+
+        # --- POCZĄTEK POPRAWKI ---
+        # Odwołujemy się do poprawnego atrybutu 'determined_theme' z okna nadrzędnego
+        self.is_dark_theme = (parent.determined_theme == 'dark')
+        # --- KONIEC POPRAWKI ---
+
+        self.setWindowTitle("Powód zmiany lokalizacji")
+        self.setMinimumWidth(350)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("Proszę podać powód zmiany lokalizacji:"))
+
+        self.reason_input = QLineEdit("Na prośbę doradcy")
+        layout.addWidget(self.reason_input)
+
+        self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.button_box.accepted.connect(self.accept)
+        self.button_box.rejected.connect(self.reject)
+        layout.addWidget(self.button_box)
+
+        self.apply_styles()
+
+    def getReason(self):
+        """Zwraca tekst wpisany przez użytkownika."""
+        return self.reason_input.text()
+
+    def apply_styles(self):
+        theme = "dark" if self.is_dark_theme else "light"
+        self.setStyleSheet(AppStyles.get_dialog_style(theme))
+        for button in self.button_box.buttons():
+            button.setStyleSheet(AppStyles.get_button_style(theme))
+        self.reason_input.setStyleSheet(AppStyles.get_line_edit_style(theme))
+
+
 class ScheduleChangeDialog(QDialog):
     """Dialog do edycji zmian w grafiku"""
 
@@ -497,6 +536,7 @@ class ScheduleChangeDialog(QDialog):
         self.flattened_cells = self.flatten_grouped_cells(grouped_cells)
         self.user_role = getattr(self.parent_widget, 'current_user_role', "Użytkownik")
         self.default_button_style = AppStyles.get_button_style(self.determined_theme)
+        self.reason_cache = {}
         self.setup_ui()
         self.apply_dialog_theme()
 
@@ -777,7 +817,23 @@ class ScheduleChangeDialog(QDialog):
             loc_changed = new_location_code != original_location_code
             is_reverting_to_default = loc_changed and (new_location_code == default_location_code)
 
-            # ... (usunięto logowanie dla czystości kodu)
+            reason_for_change = ""
+            if loc_changed:
+                # Sprawdź, czy już pytaliśmy o powód dla tego użytkownika
+                if user_id in self.reason_cache:
+                    reason_for_change = self.reason_cache[user_id]
+                else:
+                    # Jeśli nie, otwórz okno dialogowe
+                    reason_dialog = ReasonDialog(self)
+                    if reason_dialog.exec() == QDialog.Accepted:
+                        reason_for_change = reason_dialog.getReason()
+                        # Zapisz powód w pamięci podręcznej dla kolejnych zmian tego użytkownika
+                        self.reason_cache[user_id] = reason_for_change
+                    else:
+                        # Użytkownik anulował wpisanie powodu, więc przerywamy całą operację
+                        status_item.setText("Anulowano")
+                        status_item.setForeground(QColor("gray"))
+                        return
 
             button.setEnabled(False)
             button.setText("Przetwarzanie...")
