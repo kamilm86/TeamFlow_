@@ -132,7 +132,7 @@
     <div class="container">
         <header>
             <h1>Instrukcja Obsługi Aplikacji TeamFlowApp</h1>
-            <p>Wersja 1.1 (sierpień 2025)</p>
+            <p>Wersja 1.3 (sierpień 2025)</p>
         </header>
 
         <main>
@@ -217,26 +217,36 @@
 
                 <h3 id="edycja-zmiana">5.2. Wstawianie zmiany (Dialog)</h3>
                 <p>Przycisk <strong>"Wstaw zmianę"</strong> otwiera zaawansowane okno dialogowe do edycji wielu komórek jednocześnie, które pozwala sortować listę i używać funkcji "Zastosuj dla wszystkich".</p>
-                <div class="wskazowka">
-                    <p>💡 <strong>Automatyczne wyjątki:</strong> To okno jest zintegrowane z systemem wyjątków lokalizacyjnych. Zmiana lokalizacji na inną niż domyślna automatycznie utworzy jednodniowy wyjątek. Przywrócenie lokalizacji domyślnej usunie go.</p>
-                </div>
-
+                
                 <h3 id="edycja-nieobecnosc">5.3. Wstawianie nieobecności (Dialog)</h3>
                 <p>Przycisk <strong>"Wstaw nieobecność"</strong> otwiera okno z symbolami. Wybranie symbolu spowoduje jego wstawienie do zaznaczonych komórek.</p>
                 
                 <h3 id="edycja-wyjatki">5.4. Zarządzanie Wyjątkami Lokalizacyjnymi</h3>
-                <p>Ta funkcja pozwala na precyzyjne zarządzanie dniami, w których pracownik ma pracować z lokalizacji innej niż jego domyślna.</p>
+                <p>Ta funkcja pozwala na precyzyjne zarządzanie dniami, w których pracownik ma pracować z lokalizacji innej niż jego domyślna. Obejmuje ona zarówno mechanizmy automatyczne, jak i dedykowane okno do ręcznego zarządzania.</p>
+                
+                <h4>Automatyczne Zarządzanie (w oknie "Wstaw zmianę")</h4>
+                <div class="wskazowka">
+                    <p>💡 Aplikacja inteligentnie zarządza jednodniowymi wyjątkami podczas edycji grafiku w oknie "Wstaw zmianę":</p>
+                    <ul>
+                        <li><strong>Automatyczne tworzenie:</strong> Jeśli zmienisz lokalizację pracownika na inną niż jego domyślna, aplikacja zapyta o powód i automatycznie utworzy dla tego dnia wpis w tabeli wyjątków.</li>
+                        <li><strong>Automatyczne usuwanie:</strong> Jeśli przywrócisz pracownikowi jego domyślną lokalizację, aplikacja automatycznie usunie istniejący dla tego dnia wpis wyjątku.</li>
+                        <li><strong>Ochrona przed konfliktami:</strong> Aplikacja nie pozwoli na zmianę lokalizacji, jeśli dany dzień jest częścią wielodniowego wyjątku. Należy go najpierw zmodyfikować w menedżerze wyjątków.</li>
+                    </ul>
+                </div>
+
+                <h4>Ręczne Zarządzanie (dedykowane okno)</h4>
+                <p>Aby uzyskać pełną kontrolę nad wyjątkami, zwłaszcza tymi wielodniowymi:</p>
                 <ol>
-                    <li>Zaznacz w grafiku komórki pracownika, dla którego chcesz zarządzać wyjątkami.</li>
+                    <li>Zaznacz w grafiku komórki **jednego pracownika**, dla którego chcesz zarządzać wyjątkami.</li>
                     <li>Kliknij przycisk <strong>"Wyjątki lokalizacyjne"</strong> pod grafikiem.</li>
-                    <li>W nowym oknie zobaczysz listę wyjątków, które pokrywają się z zaznaczonymi przez Ciebie dniami.</li>
+                    <li>W nowym oknie zobaczysz listę wyjątków, które pokrywają się z zaznaczonymi przez Ciebie dniami, wraz z datą modyfikacji i modyfikującym.</li>
                 </ol>
                 <p>W tym oknie możesz:</p>
                 <ul>
-                    <li><strong>Dodaj nowy:</strong> Tworzy nowe, jednodniowe wpisy dla podanego zakresu dat. Daty w formularzu są automatycznie wypełniane na podstawie Twojego zaznaczenia w grafiku.</li>
+                    <li><strong>Dodaj nowy:</strong> Otwiera formularz, w którym możesz zdefiniować nowy wyjątek dla zakresu dat. Aplikacja utworzy osobne wpisy dla każdego dnia z tego zakresu. Formularz jest automatycznie wypełniany zakresem dat zaznaczonym w grafiku.</li>
                     <li><strong>Edytuj zaznaczony:</strong> Modyfikuje istniejący, pojedynczy wpis.</li>
-                    <li><strong>Usuń zaznaczony:</strong> Kasuje wybrany wyjątek z bazy danych.</li>
-                    <li><strong>Podziel na dni:</strong> Jeśli posiadasz starszy, wielodniowy wpis, ten przycisk zamieni go na serię wpisów jednodniowych, co ułatwi dalsze zarządzanie.</li>
+                    <li><strong>Usuń zaznaczony:</strong> Kasuje wybrany wyjątek (zarówno jedno- jak i wielodniowy) i **automatycznie aktualizuje główny grafik**, aby odzwierciedlić zmianę.</li>
+                    <li><strong>Podziel na dni:</strong> Jeśli posiadasz starszy, wielodniowy wpis, ten przycisk zamieni go na serię wpisów jednodniowych, co ułatwi dalsze, bardziej precyzyjne zarządzanie. Wpis w polu "Powód" zostanie wzbogacony o notatkę o podziale.</li>
                 </ul>
             </section>
             
