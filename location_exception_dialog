@@ -320,8 +320,28 @@ class LocationExceptionDialog(QDialog):
 
         if reply == QMessageBox.Yes:
             _, modyfikujacy_id, _, _, _ = get_modifier_id()
-            params = (None, modyfikujacy_id, None, None, None, None, 3, exception_data['Id'])
-            result = self.parent_widget._manage_location_exception(params)
-            if result.get("success"):
+
+            # Krok 1: Wywołaj procedurę, która TYLKO usuwa wpis
+            delete_params = (None, modyfikujacy_id, None, None, None, None, 3, exception_data['Id'])
+            delete_result = self.parent_widget._manage_location_exception(delete_params)
+
+            if delete_result.get("success"):
+                # --- POCZĄTEK POPRAWIONEJ LOGIKI ---
+                # Krok 2: Jeśli usunięcie się powiodło, wywołaj korektę grafiku
+                # dla KAŻDEGO dnia z usuniętego zakresu.
+                start_date = QDate(exception_data['Dataod'])
+                # Upewnij się, że data końcowa nie jest None
+                end_date = QDate(exception_data['Datado']) if exception_data['Datado'] else start_date
+
+                current_date = start_date
+                while current_date <= end_date:
+                    date_str = current_date.toString("yyyy-MM-dd")
+                    self.parent_widget._run_schedule_correction(self.user_id, date_str)
+                    current_date = current_date.addDays(1)
+                # --- KONIEC POPRAWIONEJ LOGIKI ---
+
+                # Krok 3: Odśwież widok
                 self.load_exceptions()
                 self.data_changed.emit()
+            else:
+                QMessageBox.critical(self, "Błąd", f"Nie udało się usunąć wpisu: {delete_result.get('message')}")
