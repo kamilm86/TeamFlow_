@@ -1,9 +1,133 @@
-SELECT
-    deqs.last_execution_time AS [Czas wykonania],
-    dest.text AS [Treść zapytania]
-FROM
-    sys.dm_exec_query_stats AS deqs
-CROSS APPLY
-    sys.dm_exec_sql_text(deqs.sql_handle) AS dest
-ORDER BY
-    deqs.last_execution_time DESC;
+Tak, to jest doskonały i bardzo profesjonalny pomysł. Przeniesienie logiki dynamicznego MERGE do reużywalnej procedury składowanej w SQL Server to najlepsze możliwe rozwiązanie.
+Zyskujesz dzięki temu kilka kluczowych korzyści:
+ * ✅ Upraszcza kod Pythona: Skrypt w Pythonie staje się banalnie prosty – jego jedynym zadaniem jest załadowanie danych do tabeli przejściowej i wywołanie jednej procedury.
+ * 🚀 Zwiększa wydajność: Logika działa w całości po stronie serwera bazy danych, co eliminuje przesyłanie długich zapytań przez sieć i pozwala SQL Serverowi na optymalizację planu wykonania.
+ * 🔒 Poprawia bezpieczeństwo: Hermetyzujesz logikę wewnątrz bazy danych i możesz nadać uprawnienia tylko do wykonania tej procedury, zamiast do operacji na tabelach docelowych.
+ * 🔧 Ułatwia utrzymanie: Jeśli logika MERGE kiedykolwiek będzie wymagała zmiany, modyfikujesz ją w jednym miejscu (w procedurze), bez dotykania kodu Pythona.
+## Krok 1: Stworzenie procedury składowanej w SQL Server
+Poniżej znajduje się kod T-SQL procedury, która dynamicznie buduje i wykonuje polecenie MERGE. Procedura pobiera nazwy kolumn bezpośrednio z systemowych widoków katalogu bazy danych (sys.columns).
+Co robi ta procedura?
+ * Przyjmuje trzy parametry: nazwę tabeli źródłowej (przejściowej), docelowej oraz listę kolumn klucza (np. 'id' lub 'OrderID,ProductID').
+ * Pobiera listę wszystkich kolumn ze wskazanej tabeli źródłowej.
+ * Dynamicznie konstruuje całe polecenie MERGE jako tekst.
+ * Bezpiecznie wykonuje zbudowane polecenie za pomocą sp_executesql.
+<!-- end list -->
+CREATE OR ALTER PROCEDURE [dbo].[usp_DynamicMerge]
+    @SourceTable NVARCHAR(255),
+    @TargetTable NVARCHAR(255),
+    @KeyColumns NVARCHAR(MAX) -- Comma-separated list of key columns, e.g., 'ID' or 'OrderID,ProductID'
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    DECLARE @SQL NVARCHAR(MAX);
+    DECLARE @UpdateColumns NVARCHAR(MAX);
+    DECLARE @InsertColumns NVARCHAR(MAX);
+    DECLARE @SourceInsertColumns NVARCHAR(MAX);
+    DECLARE @JoinCondition NVARCHAR(MAX);
+
+    -- 1. Dynamiczne tworzenie warunku JOIN (ON clause)
+    -- Przykład: target.[OrderID] = source.[OrderID] AND target.[ProductID] = source.[ProductID]
+    SELECT @JoinCondition = STRING_AGG(
+        CONCAT('target.[', LTRIM(RTRIM(value)), '] = source.[', LTRIM(RTRIM(value)), ']'),
+        ' AND '
+    )
+    FROM STRING_SPLIT(@KeyColumns, ',');
+
+    -- 2. Dynamiczne tworzenie listy kolumn do aktualizacji (UPDATE SET clause)
+    -- Pomijamy kolumny klucza, bo ich się nie aktualizuje
+    SELECT @UpdateColumns = STRING_AGG(
+        CONCAT('target.[', c.name, '] = source.[', c.name, ']'),
+        ', '
+    )
+    FROM sys.columns c
+    JOIN sys.tables t ON c.object_id = t.object_id
+    WHERE t.name = @SourceTable
+      AND c.name NOT IN (SELECT LTRIM(RTRIM(value)) FROM STRING_SPLIT(@KeyColumns, ','));
+
+    -- 3. Dynamiczne tworzenie listy kolumn do wstawienia (INSERT clause)
+    SELECT 
+        @InsertColumns = STRING_AGG(CONCAT('[', c.name, ']'), ', '),
+        @SourceInsertColumns = STRING_AGG(CONCAT('source.[', c.name, ']'), ', ')
+    FROM sys.columns c
+    JOIN sys.tables t ON c.object_id = t.object_id
+    WHERE t.name = @SourceTable;
+
+    -- 4. Złożenie całego polecenia MERGE
+    SET @SQL = N'
+    MERGE ' + @TargetTable + N' AS target
+    USING ' + @SourceTable + N' AS source
+    ON (' + @JoinCondition + N')
+
+    WHEN MATCHED THEN
+        UPDATE SET ' + @UpdateColumns + N'
+
+    WHEN NOT MATCHED BY TARGET THEN
+        INSERT (' + @InsertColumns + N')
+        VALUES (' + @SourceInsertColumns + N');';
+
+    -- Wyświetlenie wygenerowanego polecenia do celów diagnostycznych
+    PRINT @SQL;
+
+    -- Bezpieczne wykonanie dynamicznego SQL
+    EXEC sp_executesql @SQL;
+
+END;
+GO
+
+Jak uruchomić ten kod?
+Wystarczy wkleić go i wykonać w SQL Server Management Studio (SSMS) lub dowolnym innym kliencie SQL połączonym z Twoją bazą danych. Procedura zostanie zapisana na stałe.
+## Krok 2: Uproszczony kod w Python
+Teraz Twój skrypt w Pythonie staje się znacznie czystszy. Cała skomplikowana logika budowania SQL zniknęła.
+import pandas as pd
+from sqlalchemy import create_engine, text
+from urllib.parse import quote_plus
+
+# --- Konfiguracja połączenia (bez zmian) ---
+db_server = "TWOJ_SERWER"
+db_name = "TWOJA_BAZA"
+# ... reszta konfiguracji ...
+connection_string = f"mssql+pyodbc://{db_user}:{quote_plus(db_password)}@{db_server}/{db_name}?driver=ODBC+Driver+17+for+SQL+Server"
+engine = create_engine(connection_string, fast_executemany=True)
+
+# --- Przygotowanie danych (bez zmian) ---
+df_from_impala = pd.DataFrame({
+    'id_produktu': [101, 102, 104, 105],
+    'nazwa_produktu': ['Produkt A (zmieniony)', 'Produkt B', 'Produkt D (nowy)', 'Produkt E (nowy)'],
+    'cena': [150.50, 200.0, 400.75, 500.0],
+    'kategoria_id': [1, 1, 2, 2]
+})
+
+# --- NOWA, UPROSZCZONA LOGIKA ---
+
+# Definicja nazw i kluczy
+staging_table_name = "Staging_MojeDane"
+target_table_name = "Docelowa_MojeDane"
+key_columns = "id_produktu" # Dla klucza złożonego: "klucz1,klucz2"
+
+# 1. Załaduj dane do tabeli przejściowej (bez zmian)
+df_from_impala.to_sql(staging_table_name, engine, if_exists='replace', index=False)
+print(f"Dane załadowane do tabeli przejściowej: {staging_table_name}")
+
+# 2. Wywołaj procedurę składowaną
+print("Wywoływanie procedury składowanej usp_DynamicMerge...")
+
+# Używamy `text()` z SQLAlchemy, aby bezpiecznie przekazać parametry
+# `connection.execution_options(autocommit=True)` jest ważne, bo DDL/procedury często wymagają tego trybu
+with engine.connect().execution_options(autocommit=True) as connection:
+    procedure_call = text("""
+        EXEC dbo.usp_DynamicMerge 
+            @SourceTable = :source, 
+            @TargetTable = :target, 
+            @KeyColumns = :keys
+    """)
+    
+    connection.execute(procedure_call, {
+        "source": staging_table_name,
+        "target": target_table_name,
+        "keys": key_columns
+    })
+
+print("✅ Operacja MERGE zakończona pomyślnie przez procedurę składowaną!")
+
+To podejście jest skalowalne, wydajne i zgodne z najlepszymi praktykami inżynierii danych. Teraz możesz używać tego samego skryptu Pythona do synchronizacji wielu różnych tabel, zmieniając jedynie parametry wywołania.
