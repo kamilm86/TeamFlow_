@@ -4,108 +4,64 @@ from PySide6.QtGui import QPainter, QColor, QBrush, QPen
 
 from styles import AppStyles
 
+
 class ButtonDelegate(QStyledItemDelegate):
     """
-    Delegat wyświetlający przycisk w komórce tabeli.
-    Dostosowany do pracy z modelami danych.
+    Delegat wyświetlający przycisk w komórce, który może być nieaktywny
+    w zależności od statusu zdarzenia.
     """
-    # Sygnał emitowany przy kliknięciu przycisku
-    button_clicked = Signal(int)  # Przekazuje indeks wiersza
+    button_clicked = Signal(int)
 
-    def __init__(self, parent=None, button_text="Usuń", button_style=None, is_dark_theme=False):
+    def __init__(self, parent=None, button_text="Odwołaj", is_dark_theme=False):
         super().__init__(parent)
         self.button_text = button_text
-        self.is_dark_theme = is_dark_theme  # Zapisz parametr jako atrybut klasy
-
-        # Użyj self.is_dark_theme zamiast is_dark_theme
-        from styles import AppStyles  # Dodaj import na początku funkcji
-        self.button_style = button_style or AppStyles.get_delegate_button_style(
-            "dark" if self.is_dark_theme else "light")
+        self.is_dark_theme = is_dark_theme
         self._pressed_row = -1
 
     def paint(self, painter, option, index):
-        """
-        Maluje przycisk w komórce.
+        event_data = index.model().data(index, Qt.UserRole)
+        status = event_data.get('status', '')
+        is_disabled = status in ["Do delegacji", "Usunięty"]
 
-        Args:
-            painter: QPainter do rysowania
-            option: QStyleOptionViewItem z opcjami wyświetlania
-            index: QModelIndex wskazujący na komórkę
-        """
-        # Przygotuj prostokąt dla przycisku
-        button_rect = QRect(option.rect)
-        button_rect.setLeft(option.rect.left() + 2)
-        button_rect.setRight(option.rect.right() - 2)
-        button_rect.setTop(option.rect.top() + 2)
-        button_rect.setBottom(option.rect.bottom() - 2)
+        button_rect = QRect(option.rect).adjusted(4, 4, -4, -4)
 
-        # Utwórz styl dla przycisku
-        button_option = QStyleOptionViewItem(option)
-
-        # Ustaw stan przycisku
-        if self._pressed_row == index.row():
-            button_option.state |= QStyle.State_Sunken
-        else:
-            button_option.state |= QStyle.State_Raised
-
-        # Rysuj tło przycisku
         painter.save()
+        painter.setRenderHint(QPainter.Antialiasing)
 
-        # Ustaw kolor tła
-        painter.setBrush(QColor("#e74c3c"))  # Czerwony kolor
-        painter.setPen(QColor(0, 0, 0, 0))   # Przezroczysta obwódka
+        # Wybór koloru w zależności od stanu
+        if is_disabled:
+            bg_color = QColor("#5a5a5a") if self.is_dark_theme else QColor("#d3d3d3")
+            text_color = QColor("#888888") if self.is_dark_theme else QColor("#a0a0a0")
+        elif self._pressed_row == index.row():
+            bg_color = QColor("#c0392b")  # Ciemniejszy czerwony
+        else:
+            bg_color = QColor("#e74c3c")  # Standardowy czerwony
 
-        # Rysuj prostokąt z zaokrąglonymi rogami
+        painter.setBrush(bg_color)
+        painter.setPen(Qt.NoPen)
         painter.drawRoundedRect(button_rect, 3, 3)
 
-        # Rysuj tekst
-        painter.setPen(QColor(255, 255, 255))  # Biały tekst
+        painter.setPen(text_color if is_disabled else QColor("white"))
         painter.drawText(button_rect, Qt.AlignCenter, self.button_text)
 
         painter.restore()
 
-    def sizeHint(self, option, index):
-        """
-        Zwraca sugerowany rozmiar przycisku.
-
-        Args:
-            option: QStyleOptionViewItem z opcjami wyświetlania
-            index: QModelIndex wskazujący na komórkę
-
-        Returns:
-            QSize: Sugerowany rozmiar
-        """
-        # Oblicz rozmiar tekstu
-        fm = QApplication.fontMetrics()
-        text_width = fm.horizontalAdvance(self.button_text) + 20  # Dodaj margines
-        text_height = fm.height() + 6  # Dodaj margines
-
-        return QSize(max(text_width, 60), text_height)
-
     def editorEvent(self, event, model, option, index):
-        """
-        Obsługuje zdarzenia edytora (kliknięcia).
-        Dostosowane do pracy z modelem.
+        event_data = index.data(Qt.UserRole)
+        status = event_data.get('status', '')
+        is_disabled = status in ["Do delegacji", "Usunięty"]
 
-        Args:
-            event: QEvent zdarzenie
-            model: QAbstractItemModel model danych
-            option: QStyleOptionViewItem opcje wyświetlania
-            index: QModelIndex indeks komórki
+        if is_disabled:
+            return False  # Ignoruj zdarzenia dla nieaktywnego przycisku
 
-        Returns:
-            bool: True jeśli zdarzenie zostało obsłużone, False w przeciwnym wypadku
-        """
-        if event.type() == QEvent.MouseButtonPress:
+        if event.type() == QEvent.MouseButtonPress and option.rect.contains(event.pos()):
             self._pressed_row = index.row()
             return True
-
-        elif event.type() == QEvent.MouseButtonRelease:
-            if self._pressed_row == index.row():
-                # Emituj sygnał kliknięcia z numerem wiersza
-                self.button_clicked.emit(index.row())
-
+        elif event.type() == QEvent.MouseButtonRelease and self._pressed_row == index.row():
             self._pressed_row = -1
+            self.button_clicked.emit(index.row())
             return True
+        elif event.type() == QEvent.Leave:
+            self._pressed_row = -1
 
         return False
