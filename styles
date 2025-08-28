@@ -436,63 +436,65 @@ class AppStyles:
     @staticmethod
     def get_checkbox_style(theme="dark"):
         if theme == "dark":
-            return f"""
-                QCheckBox {{
-                    color: {AppStyles.DARK_TEXT_PRIMARY};
-                    spacing: 5px;
-                    padding: {AppStyles.CONTROL_PADDING};
-                    background-color: transparent;
-                }}
-                QCheckBox::indicator {{
-                    width: 14px;
-                    height: 14px;
-                    border-radius: {AppStyles.BORDER_RADIUS};
-                }}
-                QCheckBox::indicator:unchecked {{
-                    border: 1px solid {AppStyles.DARK_BORDER_PRIMARY};
-                    background: {AppStyles.DARK_BACKGROUND_CONTROLS};
-                }}
-                QCheckBox::indicator:unchecked:hover {{
-                    border: 1px solid {AppStyles.ACCENT_COLOR_DARK};
-                }}
-                QCheckBox::indicator:checked {{
-                    border: 1px solid {AppStyles.ACCENT_COLOR_DARK};
-                    background: {AppStyles.ACCENT_COLOR_DARK};
-                }}
-                QCheckBox::indicator:checked:hover {{
-                    background: {AppStyles.ACCENT_COLOR_DARK_HOVER};
-                    border: 1px solid {AppStyles.ACCENT_COLOR_DARK_HOVER};
-                }}
-            """
-        else:
-            return f"""
-                QCheckBox {{
-                    color: {AppStyles.LIGHT_TEXT_PRIMARY};
-                    spacing: 5px;
-                    padding: {AppStyles.CONTROL_PADDING};
-                    background-color: transparent;
-                }}
-                QCheckBox::indicator {{
-                    width: 14px;
-                    height: 14px;
-                    border-radius: {AppStyles.BORDER_RADIUS};
-                }}
-                QCheckBox::indicator:unchecked {{
-                    border: 1px solid {AppStyles.LIGHT_BORDER_SECONDARY};
-                    background: {AppStyles.LIGHT_BACKGROUND_CONTROLS};
-                }}
-                 QCheckBox::indicator:unchecked:hover {{
-                    border: 1px solid {AppStyles.ACCENT_COLOR_LIGHT};
-                }}
-                QCheckBox::indicator:checked {{
-                    border: 1px solid {AppStyles.ACCENT_COLOR_LIGHT};
-                    background: {AppStyles.ACCENT_COLOR_LIGHT};
-                }}
-                QCheckBox::indicator:checked:hover {{
-                    background: {AppStyles.ACCENT_COLOR_LIGHT_HOVER};
-                    border: 1px solid {AppStyles.ACCENT_COLOR_LIGHT_HOVER};
-                }}
-            """
+            text_color = AppStyles.DARK_TEXT_PRIMARY
+            spacing = "5px"
+            padding = AppStyles.CONTROL_PADDING
+            bg = "transparent"
+            indicator_size = "14px"
+            radius = AppStyles.BORDER_RADIUS
+            unchecked_border = AppStyles.DARK_BORDER_PRIMARY
+            unchecked_bg = AppStyles.DARK_BACKGROUND_CONTROLS
+            unchecked_hover_border = AppStyles.ACCENT_COLOR_DARK
+            checked_border = AppStyles.ACCENT_COLOR_DARK
+            checked_bg = AppStyles.ACCENT_COLOR_DARK
+            checked_hover_bg = AppStyles.ACCENT_COLOR_DARK_HOVER
+            checked_hover_border = AppStyles.ACCENT_COLOR_DARK_HOVER
+        else:  # light theme
+            text_color = AppStyles.LIGHT_TEXT_PRIMARY
+            spacing = "5px"
+            padding = AppStyles.CONTROL_PADDING
+            bg = "transparent"
+            indicator_size = "14px"
+            radius = AppStyles.BORDER_RADIUS
+            unchecked_border = AppStyles.LIGHT_BORDER_SECONDARY
+            unchecked_bg = AppStyles.LIGHT_BACKGROUND_CONTROLS
+            unchecked_hover_border = AppStyles.ACCENT_COLOR_LIGHT
+            checked_border = AppStyles.ACCENT_COLOR_LIGHT
+            checked_bg = AppStyles.ACCENT_COLOR_LIGHT
+            checked_hover_bg = AppStyles.ACCENT_COLOR_LIGHT_HOVER
+            checked_hover_border = AppStyles.ACCENT_COLOR_LIGHT_HOVER
+
+        return f"""
+            QCheckBox {{
+                color: {text_color};
+                spacing: {spacing};
+                padding: {padding};
+                background-color: {bg};
+            }}
+            QCheckBox::indicator, QGroupBox::indicator {{
+                width: {indicator_size};
+                height: {indicator_size};
+                border-radius: {radius};
+            }}
+            QCheckBox::indicator:unchecked, QGroupBox::indicator:unchecked {{
+                border: 1px solid {unchecked_border};
+                background: {unchecked_bg};
+            }}
+            QCheckBox::indicator:unchecked:hover, QGroupBox::indicator:unchecked:hover {{
+                border: 1px solid {unchecked_hover_border};
+            }}
+            QCheckBox::indicator:checked, QGroupBox::indicator:checked {{
+                border: 1px solid {checked_border};
+                background: {checked_bg};
+            }}
+            QCheckBox::indicator:checked:hover, QGroupBox::indicator:checked:hover {{
+                background: {checked_hover_bg};
+                border: 1px solid {checked_hover_border};
+            }}
+            QGroupBox::title {{
+                padding-left: 5px; 
+            }}
+        """
 
     @staticmethod
     def get_delegate_button_style(theme="dark"):
