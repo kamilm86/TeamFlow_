@@ -453,12 +453,16 @@ class ForecastComparisonTableModel(BaseMatrixTableModel):
 
 
 class AbsenceDetailTableModel(QAbstractTableModel):
+    """
+    ZMIENIONA KLASA: Model danych dla tabeli szczegółów absencji z obsługą
+    wielopoziomowego grupowania (drill-down).
+    """
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._all_data = {}
         self._data = []
-        self._headers = ["Wydział / Pracownik", "Suma godzin absencji", "% Udziału"]
-        self._mode = "departments"
-        self._department_data = {}
+        self._headers = []
+        self._breadcrumbs = [] # Ścieżka nawigacji, np. ['Wydział', 'Przełożony']
 
     def rowCount(self, parent=None):
         return len(self._data)
@@ -475,43 +479,89 @@ class AbsenceDetailTableModel(QAbstractTableModel):
             return None
         value = self._data[index.row()][index.column()]
         if isinstance(value, float):
-            return f"{value:.1f}" if index.column() == 1 else f"{value:.1f}%"
+            # Kolumna z procentami
+            if "%" in self._headers[index.column()]:
+                return f"{value:.1f}%"
+            # Kolumna z godzinami
+            return f"{value:.1f}"
         return value
 
     def update_data(self, department_data):
-        self._department_data = department_data
+        """Główna metoda do załadowania nowych, w pełni przetworzonych danych."""
+        self._all_data = department_data
         self.display_departments()
 
     def display_departments(self):
+        """Ustawia widok na najwyższy poziom - grupowanie po wydziałach."""
         self.beginResetModel()
-        self._mode = "departments"
+        self._breadcrumbs = []
         self._headers = ["Wydział", "Suma godzin absencji", "Wskaźnik absencji (%)"]
-        self._data = sorted(
-            [[dept, data['total_hours'], data.get('rate', 0.0)] for dept, data in self._department_data.items()],
-            key=lambda x: x[1], reverse=True
-        )
+
+        # Sortowanie wydziałów po sumie godzin absencji
+        sorted_depts = sorted(self._all_data.items(), key=lambda item: item[1]['total_hours'], reverse=True)
+
+        self._data = [[dept, data['total_hours'], data.get('rate', 0.0)] for dept, data in sorted_depts]
         self.endResetModel()
 
-    def display_employees(self, department_name):
+    def display_supervisors(self, department_name: str):
+        """Ustawia widok na drugi poziom - przełożeni w ramach wydziału."""
+        if department_name not in self._all_data:
+            return
         self.beginResetModel()
-        self._mode = "employees"
-        self._headers = [f"Pracownik ({department_name})", "Suma godzin absencji", "% Udziału w abs. wydziału"]
-        dept_total = self._department_data.get(department_name, {}).get('total_hours', 1.0)
-        employee_data = self._department_data.get(department_name, {}).get('employees', {})
-        self._data = sorted(
-            [[name, hours, (hours / dept_total * 100.0) if dept_total > 0 else 0] for name, hours in
-             employee_data.items()],
-            key=lambda x: x[1], reverse=True
-        )
+        self._breadcrumbs = [department_name]
+        self._headers = ["Przełożony", "Suma godzin absencji", "% Udziału w wydz."]
+
+        dept_total = self._all_data[department_name].get('total_hours', 1.0)
+        supervisors_data = self._all_data[department_name].get('supervisors', {})
+
+        # Sortowanie przełożonych po sumie godzin
+        sorted_supervisors = sorted(supervisors_data.items(), key=lambda item: item[1]['total_hours'], reverse=True)
+
+        self._data = [
+            [name, data['total_hours'], (data['total_hours'] / dept_total * 100.0) if dept_total > 0 else 0]
+            for name, data in sorted_supervisors
+        ]
         self.endResetModel()
 
-    def get_current_mode(self):
-        return self._mode
+    def display_employees(self, department_name: str, supervisor_name: str):
+        """Ustawia widok na najniższy poziom - pracownicy w ramach przełożonego."""
+        if department_name not in self._all_data or supervisor_name not in self._all_data[department_name].get(
+                'supervisors', {}):
+            return
+        self.beginResetModel()
+        self._breadcrumbs = [department_name, supervisor_name]
+        self._headers = ["Pracownik", "Suma godzin absencji", "% Udziału u przeł."]
 
-    def get_department_at_row(self, row):
-        if self._mode == 'departments' and 0 <= row < len(self._data):
+        supervisor_total = self._all_data[department_name]['supervisors'][supervisor_name].get('total_hours', 1.0)
+        employee_data = self._all_data[department_name]['supervisors'][supervisor_name].get('employees', {})
+
+        # Sortowanie pracowników po sumie godzin
+        sorted_employees = sorted(employee_data.items(), key=lambda item: item[1], reverse=True)
+
+        self._data = [
+            [name, hours, (hours / supervisor_total * 100.0) if supervisor_total > 0 else 0]
+            for name, hours in sorted_employees
+        ]
+        self.endResetModel()
+
+    def get_current_level(self) -> str:
+        """Zwraca aktualny poziom zagłębienia."""
+        if not self._breadcrumbs:
+            return "departments"
+        if len(self._breadcrumbs) == 1:
+            return "supervisors"
+        if len(self._breadcrumbs) == 2:
+            return "employees"
+        return ""
+
+    def get_clicked_item_name(self, row: int) -> str | None:
+        """Zwraca nazwę (wydziału, przełożonego) z klikniętego wiersza."""
+        if 0 <= row < len(self._data):
             return self._data[row][0]
         return None
+
+    def get_breadcrumbs(self) -> list:
+        return self._breadcrumbs
 
 class StaffingDetailsWindow(QDialog):
     """
@@ -753,7 +803,6 @@ class StaffingDetailsWindow(QDialog):
         main_tab_layout.addLayout(kpi_layout)
 
         splitter = QSplitter(Qt.Orientation.Vertical)
-
         top_splitter = QSplitter(Qt.Orientation.Horizontal)
 
         summary_by_symbol_widget = QWidget()
@@ -774,7 +823,20 @@ class StaffingDetailsWindow(QDialog):
 
         detail_widget = QWidget()
         detail_layout = QVBoxLayout(detail_widget)
-        detail_layout.addWidget(QLabel("Szczegóły absencji:"))
+
+        # ZMIANA: Dodanie nagłówka i przycisku "Wróć"
+        detail_header_layout = QHBoxLayout()
+        self.absence_detail_label = QLabel("Szczegóły absencji:")
+        self.absence_back_button = QPushButton(" Wróć")
+        # Możesz użyć ikony, jeśli chcesz, np. self.absence_back_button.setIcon(QIcon("path/to/back_icon.png"))
+        self.absence_back_button.setVisible(False)  # Na początku jest niewidoczny
+        self.absence_back_button.setFixedWidth(80)
+
+        detail_header_layout.addWidget(self.absence_detail_label)
+        detail_header_layout.addStretch()
+        detail_header_layout.addWidget(self.absence_back_button)
+        detail_layout.addLayout(detail_header_layout)
+
         self._absence_detail_model = AbsenceDetailTableModel(self)
         self.absence_detail_view = QTableView()
         self.absence_detail_view.setModel(self._absence_detail_model)
@@ -826,17 +888,42 @@ class StaffingDetailsWindow(QDialog):
         return frame
 
     def _setup_table_interactivity(self):
+        """ZMIENIONA METODA: Obsługuje kliknięcia w tabeli i przycisk powrotu."""
         self.absence_detail_view.clicked.connect(self._on_absence_detail_table_clicked)
+        self.absence_back_button.clicked.connect(self._navigate_absence_details_up)
 
     def _on_absence_detail_table_clicked(self, index):
+        """Obsługuje "zanurzanie się" w dane (drill-down)."""
         if not index.isValid() or index.column() != 0:
             return
-        if self._absence_detail_model.get_current_mode() == 'departments':
-            dept = self._absence_detail_model.get_department_at_row(index.row())
-            if dept:
-                self._absence_detail_model.display_employees(dept)
-        else:
+
+        current_level = self._absence_detail_model.get_current_level()
+        clicked_item_name = self._absence_detail_model.get_clicked_item_name(index.row())
+
+        if not clicked_item_name:
+            return
+
+        if current_level == 'departments':
+            self._absence_detail_model.display_supervisors(clicked_item_name)
+        elif current_level == 'supervisors':
+            current_department = self._absence_detail_model.get_breadcrumbs()[0]
+            self._absence_detail_model.display_employees(current_department, clicked_item_name)
+
+        # Pokaż przycisk "Wróć" po pierwszym kliknięciu
+        self.absence_back_button.setVisible(True)
+
+    def _navigate_absence_details_up(self):
+        """NOWA METODA: Obsługuje powrót do wyższego poziomu grupowania."""
+        breadcrumbs = self._absence_detail_model.get_breadcrumbs()
+
+        if len(breadcrumbs) == 2:  # Jesteśmy na poziomie pracowników, wracamy do przełożonych
+            self._absence_detail_model.display_supervisors(breadcrumbs[0])
+        elif len(breadcrumbs) == 1:  # Jesteśmy na poziomie przełożonych, wracamy do wydziałów
             self._absence_detail_model.display_departments()
+
+        # Ukryj przycisk "Wróć", jeśli wróciliśmy na najwyższy poziom
+        if not self._absence_detail_model.get_breadcrumbs():
+            self.absence_back_button.setVisible(False)
 
     def _update_absence_chart_from_filter(self):
         if hasattr(self, '_last_absence_data'):
@@ -1355,7 +1442,6 @@ class StaffingDetailsWindow(QDialog):
         """
         Przetwarza listę zdarzeń i zwraca słownik z czasem trwania spotkań/szkoleń
         dla każdego użytkownika, w każdej godzinie danego dnia.
-        Format zwracany: {user_id: {day: {hour: total_minutes}}}
         """
         event_durations = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
 
@@ -1374,8 +1460,10 @@ class StaffingDetailsWindow(QDialog):
                     continue
 
                 day = int(date_key.split('-')[2])
-                start_time = dt.datetime.strptime(time_from_str, '%H:%M')
-                end_time = dt.datetime.strptime(time_to_str, '%H:%M')
+
+                # ZMIANA: Użycie poprawnego formatu RRRR-MM-DD GG:MM do parsowania
+                start_time = dt.datetime.strptime(time_from_str, '%Y-%m-%d %H:%M')
+                end_time = dt.datetime.strptime(time_to_str, '%Y-%m-%d %H:%M')
 
                 if end_time <= start_time:
                     end_time += dt.timedelta(days=1)
@@ -1383,14 +1471,10 @@ class StaffingDetailsWindow(QDialog):
                 current_time = start_time
                 while current_time < end_time:
                     hour_slot = current_time.hour
-
-                    # Oblicz, ile minut tego zdarzenia przypada na bieżący slot godzinowy
                     next_hour = (current_time + dt.timedelta(hours=1)).replace(minute=0, second=0)
                     slot_end_time = min(end_time, next_hour)
                     duration_in_slot = (slot_end_time - current_time).total_seconds() / 60
-
                     event_durations[user_id][day][hour_slot] += duration_in_slot
-
                     current_time = next_hour
             except (ValueError, TypeError, IndexError) as e:
                 log_error(f"Błąd przetwarzania zdarzenia w _get_events_duration_per_hour: {event}, błąd: {e}")
@@ -1598,10 +1682,13 @@ class StaffingDetailsWindow(QDialog):
             f"{absence_data['top_employee']['name']} ({absence_data['top_employee']['hours']:.1f}h)")
 
     def _update_absence_tab(self, absence_data):
+        # Aktualizacja KPI (bez zmian)
         self.total_absence_hours_label.value_label.setText(f"{absence_data.get('total_hours', 0):.1f} h")
         self.absence_rate_label.value_label.setText(f"{absence_data.get('rate', 0):.2f}%")
         self.top_absent_dept_label.value_label.setText(absence_data.get('top_dept', ('Brak',))[0])
         self.top_absent_emp_label.value_label.setText(absence_data.get('top_employee', {}).get('name', 'Brak'))
+
+        # Aktualizacja tabeli podsumowującej i listy filtrów (bez zmian)
         self._absence_summary_model.update_data(absence_data.get('summary_table', []))
         all_symbols = sorted([item[0] for item in absence_data.get('summary_table', [])])
         current_selection = {item.text() for item in self.absence_symbols_list.selectedItems()}
@@ -1612,6 +1699,11 @@ class StaffingDetailsWindow(QDialog):
             item = self.absence_symbols_list.item(i)
             if item.text() in current_selection or not current_selection: item.setSelected(True)
         self.absence_symbols_list.blockSignals(False)
+
+        # ZMIANA: Dodanie brakującej linii zasilającej tabelę "Szczegóły absencji"
+        self._absence_detail_model.update_data(absence_data.get('department_details', {}))
+
+        # Aktualizacja wykresu (bez zmian)
         self._update_absence_chart(absence_data)
 
     def _calculate_absence_analysis(self, schedule_data):
@@ -1619,14 +1711,24 @@ class StaffingDetailsWindow(QDialog):
         absence_symbols_map = {"U", "CO", "UZ", "CR", "NN", "NW", "Z", "UB", "UM", "UO", "UOD", "US", "UT", "UW", "UOP",
                                "USW"}
         total_summary = defaultdict(lambda: {'count': 0, 'hours': 0.0})
-        dept_summary = defaultdict(lambda: {'total_hours': 0.0, 'rate': 0.0, 'employees': defaultdict(float)})
+        dept_summary = defaultdict(lambda: {
+            'total_hours': 0.0,
+            'rate': 0.0,
+            'supervisors': defaultdict(lambda: {
+                'total_hours': 0.0,
+                'employees': defaultdict(float)
+            })
+        })
         daily_composition = defaultdict(lambda: defaultdict(float))
         total_planned_hours = 0.0
         top_employee = {'name': 'Brak', 'hours': 0}
         dept_planned_hours = defaultdict(float)
 
         for user_key, user_schedule in schedule_data.items():
-            wydzial, user_name = user_key[0], user_key[2]
+            wydzial, przelozony, user_name, user_id = user_key
+            if not wydzial: wydzial = "Brak wydziału"
+            if not przelozony: przelozony = "Brak przełożonego"
+
             user_total_absence = 0.0
             for day, day_info in user_schedule.get('days', {}).items():
                 parsed = parse_symbol(day_info.get('symbol', ''))
@@ -1634,15 +1736,20 @@ class StaffingDetailsWindow(QDialog):
                 if work_hours:
                     total_planned_hours += work_hours
                     dept_planned_hours[wydzial] += work_hours
+
                 symbol = parsed.get('special_symbol')
                 if symbol and symbol in absence_symbols_map:
                     absence_hours = work_hours or 8.0
                     total_summary[symbol]['count'] += 1
                     total_summary[symbol]['hours'] += absence_hours
-                    dept_summary[wydzial]['total_hours'] += absence_hours
-                    dept_summary[wydzial]['employees'][user_name] += absence_hours
                     daily_composition[day - 1][symbol] += absence_hours
                     user_total_absence += absence_hours
+
+                    # ZMIANA: Zapis do nowej, zagnieżdżonej struktury
+                    dept_summary[wydzial]['total_hours'] += absence_hours
+                    dept_summary[wydzial]['supervisors'][przelozony]['total_hours'] += absence_hours
+                    dept_summary[wydzial]['supervisors'][przelozony]['employees'][user_name] += absence_hours
+
             if user_total_absence > top_employee['hours']:
                 top_employee = {'name': user_name, 'hours': user_total_absence}
 
@@ -1656,9 +1763,15 @@ class StaffingDetailsWindow(QDialog):
         top_dept = max(dept_summary.items(), key=lambda item: item[1]['total_hours']) if dept_summary else (
         'Brak', {'total_hours': 0})
 
-        return {'total_hours': total_absence_hours, 'rate': absence_rate, 'summary_table': summary_table_data,
-                'daily_composition': daily_composition, 'department_details': dept_summary, 'top_dept': top_dept,
-                'top_employee': top_employee}
+        return {
+            'total_hours': total_absence_hours,
+            'rate': absence_rate,
+            'summary_table': summary_table_data,
+            'daily_composition': daily_composition,
+            'department_details': dept_summary,  # Zwracamy nową strukturę
+            'top_dept': top_dept,
+            'top_employee': top_employee
+        }
 
     def _calculate_flexibility_analysis(self, schedule_data):
         summary = defaultdict(float)
