@@ -36,9 +36,9 @@ class DatabaseConnector:
         for driver in drivers:
             try:
                 connection_string = f"DRIVER={{{driver}}};{base_connection_string}"
-                debug_print(f"Próba połączenia ze sterownikiem: {driver}")
+                # debug_print(f"Próba połączenia ze sterownikiem: {driver}")
                 conn = pyodbc.connect(connection_string, timeout=5)
-                debug_print(f"Połączenie udane przy użyciu sterownika: {driver}")
+                # debug_print(f"Połączenie udane przy użyciu sterownika: {driver}")
                 return conn
             except pyodbc.Error as e:
                 last_error = e
