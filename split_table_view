@@ -1,6 +1,8 @@
+# split_table_view.py
+
 from PySide6.QtWidgets import (QWidget, QTableView, QVBoxLayout, QHBoxLayout,
                                QSplitter, QHeaderView, QAbstractItemView, QScrollBar, QSizePolicy,
-                               QTableWidgetSelectionRange)
+                               QTableWidgetSelectionRange, QApplication)
 from PySide6.QtCore import Qt, Signal, QItemSelectionModel, QEvent, QModelIndex, QItemSelection, QTimer
 from debug_utils import debug_print, log_warning, log_error
 from styles import AppStyles
@@ -8,50 +10,46 @@ from styles import AppStyles
 
 class SplitTableView(QWidget):
     """
-    Widget zawierający dwa zsynchronizowane widoki tabeli - tabelę pracowników i tabelę grafiku.
+    Widget zawierający dwa zsynchronizowane widoki tabeli.
+    Wersja z nową, niezawodną logiką obsługi nagłówka grafiku.
     """
     selection_changed = Signal()
+    day_sort_requested = Signal(int, Qt.SortOrder)
 
     def __init__(self, parent=None):
         super().__init__(parent)
-
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
         self.main_layout.setSpacing(0)
 
         self.splitter = QSplitter(Qt.Horizontal)
-
-        # --- ZMIANA: Powrót do standardowych nagłówków QHeaderView ---
         self.employees_view = QTableView()
         self.schedule_view = QTableView()
-        # --- KONIEC ZMIANY ---
 
+        # Konfiguracja tabeli pracowników (employees_view)
         self.employees_view.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.employees_view.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.employees_view.verticalHeader().setVisible(True)
         self.employees_view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-
         self.employees_view.verticalHeader().setDefaultSectionSize(25)
-        self.employees_view.verticalHeader().setMinimumSectionSize(25)
         self.employees_view.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
-
         self.employees_view.horizontalHeader().setFixedHeight(35)
         self.employees_view.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self.employees_view.horizontalHeader().setSectionsClickable(True)
 
+        # Konfiguracja tabeli grafiku (schedule_view)
         self.schedule_view.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.schedule_view.setSelectionBehavior(QAbstractItemView.SelectItems)
         self.schedule_view.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.schedule_view.verticalHeader().setVisible(False)
         self.schedule_view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-
         self.schedule_view.verticalHeader().setDefaultSectionSize(25)
-        self.schedule_view.verticalHeader().setMinimumSectionSize(25)
         self.schedule_view.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
-
         self.schedule_view.horizontalHeader().setFixedHeight(35)
+
+        # ZMIANA: Wyłączamy wbudowane sortowanie, aby przejąć pełną kontrolę
         self.schedule_view.setSortingEnabled(False)
-        self.schedule_view.horizontalHeader().setSectionsClickable(False)
+        self.schedule_view.horizontalHeader().setSectionsClickable(True)
 
         self.employees_view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOn)
         self.employees_view.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
@@ -60,7 +58,6 @@ class SplitTableView(QWidget):
         self.splitter.addWidget(self.employees_view)
         self.splitter.addWidget(self.schedule_view)
         self.main_layout.addWidget(self.splitter)
-
         self.splitter.setStretchFactor(0, 0)
         self.splitter.setStretchFactor(1, 1)
 
@@ -70,8 +67,103 @@ class SplitTableView(QWidget):
         self._sync_timer.setSingleShot(True)
         self._sync_timer.timeout.connect(self._delayed_sync_heights)
 
+        # ZMIANA: Nowe atrybuty do ręcznego zarządzania sortowaniem
+        self._last_sorted_day_index = -1
+        self._current_day_sort_order = Qt.AscendingOrder
+
         self._setup_simple_scrollbar_hiding()
         self.schedule_view.horizontalHeader().setContextMenuPolicy(Qt.CustomContextMenu)
+
+        # ZMIANA: Jedno centralne połączenie dla wszystkich kliknięć w nagłówek grafiku
+        self.schedule_view.horizontalHeader().sectionClicked.connect(self._on_schedule_header_section_clicked)
+
+    # NOWA METODA: Centralny punkt obsługi kliknięć w nagłówek grafiku
+    def _on_schedule_header_section_clicked(self, logical_index: int):
+        """
+        Obsługuje kliknięcia w nagłówek. Decyduje, czy zaznaczyć kolumnę (z Ctrl),
+        czy posortować (zwykłe kliknięcie).
+        """
+        header = self.schedule_view.horizontalHeader()
+
+        # Scenariusz 1: Zaznaczanie kolumny (wciśnięty Ctrl)
+        if QApplication.keyboardModifiers() & Qt.ControlModifier:
+            if logical_index != -1:
+                self._is_updating = True
+                schedule_sm = self.schedule_view.selectionModel()
+                employees_sm = self.employees_view.selectionModel()
+
+                schedule_sm.blockSignals(True)
+                employees_sm.blockSignals(True)
+
+                try:
+                    schedule_sm.clear()
+                    employees_sm.clear()
+                    self.schedule_view.selectColumn(logical_index)
+                    self.employees_view.selectAll()
+                finally:
+                    schedule_sm.blockSignals(False)
+                    employees_sm.blockSignals(False)
+                    self._is_updating = False
+
+                self.selection_changed.emit()
+                # Zresetuj wskaźnik sortowania, jeśli był ustawiony
+                header.setSortIndicator(-1, Qt.AscendingOrder)
+                self._last_sorted_day_index = -1
+
+        # Scenariusz 2: Sortowanie (zwykłe kliknięcie)
+        else:
+            if not self._model: return
+
+            # Ustalenie kierunku sortowania
+            if self._last_sorted_day_index == logical_index:
+                # Jeśli kliknięto tę samą kolumnę, odwróć kierunek
+                self._current_day_sort_order = Qt.DescendingOrder if self._current_day_sort_order == Qt.AscendingOrder else Qt.AscendingOrder
+            else:
+                # Jeśli kliknięto nową kolumnę, ustaw domyślne sortowanie rosnące
+                self._current_day_sort_order = Qt.AscendingOrder
+
+            self._last_sorted_day_index = logical_index
+
+            # Ręczne ustawienie wskaźnika sortowania (strzałki)
+            header.setSortIndicator(logical_index, self._current_day_sort_order)
+
+            # Emisja sygnału do okna głównego z prośbą o posortowanie danych
+            employee_cols_count = len(self._model.get_visible_columns())
+            if logical_index >= employee_cols_count:
+                day = logical_index - employee_cols_count + 1
+                if 1 <= day <= self._model._days_in_month:
+                    self.day_sort_requested.emit(day, self._current_day_sort_order)
+
+    def _on_column_ctrl_clicked(self, logical_index: int):
+        """Obsługuje zaznaczenie całej kolumny po Ctrl+Click."""
+        self._is_updating = True
+        schedule_sm = self.schedule_view.selectionModel()
+        employees_sm = self.employees_view.selectionModel()
+
+        schedule_sm.blockSignals(True)
+        employees_sm.blockSignals(True)
+
+        try:
+            schedule_sm.clear()
+            employees_sm.clear()
+            self.schedule_view.selectColumn(logical_index)
+            self.employees_view.selectAll()
+        finally:
+            schedule_sm.blockSignals(False)
+            employees_sm.blockSignals(False)
+            self._is_updating = False
+
+        self.selection_changed.emit()
+
+    def _on_schedule_sort_changed(self, logical_index, order):
+        """Obsługuje żądanie sortowania po kliknięciu w nagłówek dnia (bez Ctrl)."""
+        if not self._model: return
+        employee_cols_count = len(self._model.get_visible_columns())
+
+        if logical_index >= employee_cols_count:
+            day = logical_index - employee_cols_count + 1
+            if 1 <= day <= self._model._days_in_month:
+                self.day_sort_requested.emit(day, order)
 
     def set_header_height(self, height):
         self.employees_view.horizontalHeader().setFixedHeight(height)
@@ -146,6 +238,28 @@ class SplitTableView(QWidget):
         self.employees_view.selectionModel().selectionChanged.connect(self._on_employees_selection_changed)
         self.schedule_view.selectionModel().selectionChanged.connect(self._on_schedule_selection_changed)
 
+    def _on_schedule_selection_changed(self, selected, deselected):
+        """Synchronizuje zaznaczenie z tabeli grafiku do tabeli pracowników."""
+        if not self._is_updating:
+            self._is_updating = True
+            try:
+                # Zbierz unikalne wiersze zaznaczone w tabeli grafiku
+                rows = set(index.row() for index in self.schedule_view.selectionModel().selectedIndexes())
+
+                # Wyczyść zaznaczenie w tabeli pracowników
+                self.employees_view.selectionModel().clearSelection()
+
+                # Zaznacz odpowiednie wiersze w tabeli pracowników
+                for row in rows:
+                    left = self.employees_view.model().index(row, 0)
+                    right = self.employees_view.model().index(row, self.employees_view.model().columnCount() - 1)
+                    row_selection = QItemSelectionModel.Select | QItemSelectionModel.Rows
+                    self.employees_view.selectionModel().select(QItemSelection(left, right), row_selection)
+
+                self.selection_changed.emit()
+            finally:
+                self._is_updating = False
+
     def _on_employees_selection_changed(self, selected, deselected):
         if not self._is_updating:
             self._is_updating = True
@@ -162,20 +276,10 @@ class SplitTableView(QWidget):
             finally:
                 self._is_updating = False
 
-    def _on_schedule_selection_changed(self, selected, deselected):
-        if not self._is_updating:
-            self._is_updating = True
-            try:
-                rows = set(index.row() for index in self.schedule_view.selectionModel().selectedIndexes())
-                self.employees_view.selectionModel().clearSelection()
-                for row in rows:
-                    left = self.employees_view.model().index(row, 0)
-                    right = self.employees_view.model().index(row, self.employees_view.model().columnCount() - 1)
-                    row_selection = QItemSelectionModel.Select | QItemSelectionModel.Rows
-                    self.employees_view.selectionModel().select(QItemSelection(left, right), row_selection)
-                self.selection_changed.emit()
-            finally:
-                self._is_updating = False
+    # def _on_schedule_header_clicked(self, logical_index: int):
+    #     model = self.employees_view.model()
+    #     if model and model.rowCount() > 0:
+    #         self.employees_view.selectAll()
 
     def _on_scrollbar_range_changed(self, min_val, max_val):
         self._sync_timer.start(50)
