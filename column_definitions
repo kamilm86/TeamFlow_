@@ -39,9 +39,13 @@ class ColumnDefinitions:
             id='przelozony', name='PrzelozonyDane', data_type=DataType.STRING,
             default_value='', description='PrzelozonyDane', width=150, selectable_in_ui=True
         ),
-        'przelozony_imie_nazwisko': ColumnDefinition(
-            id='przelozony_imie_nazwisko', name='PrzelozonyImieNazwisko', data_type=DataType.STRING,
-            default_value='', description='PrzelozonyImieNazwisko', width=100, selectable_in_ui=True
+        'przelozony_nazwisko_imie': ColumnDefinition(
+            id='przelozony_nazwisko_imie', name='PrzelozonyNazwiskoImie', data_type=DataType.STRING,
+            default_value='', description='PrzelozonyNazwiskoImie', width=100, selectable_in_ui=True
+        ),
+        'nazwisko_imie': ColumnDefinition(
+            id='nazwisko_imie', name='NazwiskoImie', data_type=DataType.STRING,
+            default_value='', description='NazwiskoImie', width=150, required=True, selectable_in_ui=True
         ),
         'uzytkownik_dane': ColumnDefinition(
             id='uzytkownik_dane', name='UzytkownikDane', data_type=DataType.STRING,
@@ -131,15 +135,14 @@ class ColumnDefinitions:
         'status': ColumnDefinition(
             id='status', name='Status zdarzenia', data_type=DataType.STRING,
             default_value='', description='Status zdarzenia'
+        ),
+        'data_modyfikacji': ColumnDefinition(
+            id='data_modyfikacji', name='DataModyfikacji', data_type=DataType.STRING,
+            default_value=None, description='DataModyfikacji', width=None
         )
-        # ,
-        # 'data_modyfikacji': ColumnDefinition(
-        #     id='data_modyfikacji', name='DataModyfikacji', data_type=DataType.STRING,
-        #     default_value=None, description='DataModyfikacji', width=None
-        # )
     }
 
-    DEFAULT_VISIBLE_COLUMNS = ['wydzial', 'przelozony_imie_nazwisko', 'uzytkownik_dane']
+    DEFAULT_VISIBLE_COLUMNS = ['wydzial', 'przelozony_nazwisko_imie', 'uzytkownik_dane']
 
     @classmethod
     def get_ui_display_columns(cls):
