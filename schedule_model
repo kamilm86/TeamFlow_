@@ -521,7 +521,7 @@ class ScheduleTableModel(QAbstractTableModel):
             self.endResetModel()
         else:
             changed_rows = [i for i, k in enumerate(self._keys) if
-                            k in filtered_data and filtered_data[k] != self._processed_data.get(k, {})]
+                             k in filtered_data and filtered_data[k] != self._processed_data.get(k, {})]
             self._processed_data = filtered_data
             for row in changed_rows:
                 self.dataChanged.emit(self.index(row, 0), self.index(row, self._column_count - 1))
@@ -583,3 +583,47 @@ class ScheduleTableModel(QAbstractTableModel):
         except Exception as e:
             log_error(f"Błąd aktualizacji ikon: {e}")
         return False
+
+    def sort_by_day(self, day: int, order: Qt.SortOrder):
+        """
+        Sortuje dane wielopoziomowo na podstawie zawartości komórek
+        dla podanego dnia.
+        """
+        if not self._keys:
+            return
+
+        self.layoutAboutToBeChanged.emit()
+
+        def get_day_sort_key(key):
+            """
+            Zwraca krotkę wartości, która będzie użyta do sortowania.
+            Hierarchia: (czy pracuje, godzina startu, godziny pracy, symbol)
+            """
+            day_data = self._processed_data.get(key, {}).get('days', {}).get(day, {})
+            symbol = day_data.get('symbol', '')
+
+            # Jeśli komórka jest pusta, przypisz wartości sortujące na koniec
+            if not symbol:
+                return (1, 99, 99, "")
+
+            parsed = parse_symbol(symbol)
+            start = parsed.get('start_hour')
+            hours = parsed.get('work_hours')
+            special = parsed.get('special_symbol') or ''
+
+            # Jeśli to tylko absencja bez godzin, traktuj jak dzień wolny
+            if start is None and hours is None and special:
+                return (1, 99, 99, special)
+
+            # Krotka sortująca:
+            # 1. Osoby pracujące (0) przed niepracującymi (1)
+            # 2. Godzina rozpoczęcia (None jako 99, żeby były na końcu)
+            # 3. Liczba godzin (None jako 99)
+            # 4. Symbol specjalny alfabetycznie
+            return (0, start if start is not None else 99, hours if hours is not None else 99, special)
+
+        # Sortuj listę kluczy
+        self._keys.sort(key=get_day_sort_key, reverse=(order == Qt.DescendingOrder))
+
+        self.layoutChanged.emit()
+        debug_print(f"Posortowano dane po dniu: {day}, kierunek: {'DESC' if order == Qt.DescendingOrder else 'ASC'}")
