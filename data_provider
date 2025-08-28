@@ -597,70 +597,58 @@ class DataProvider(QObject):
         return schedule_data
 
     def _fetch_events_data(self, year: int, month: int) -> List[Dict]:
-        """Pobiera wszystkie zdarzenia miesiąca"""
-        query = f"""
-        SELECT * FROM {SQL_OBJECTS['fn_geteventsdata']}(?, ?) 
-        """
-        conn = self.db_connector.get_connection()
-        cursor = conn.cursor()
-        debug_print(f"DataProvider: Wykonuję SQL fn_GetEventsData dla {year}-{month}")
+        """Pobiera i mapuje zdarzenia, używając jawnego tłumaczenia nazw kolumn."""
+        try:
+            query = f"SELECT * FROM {SQL_OBJECTS['fn_geteventsdata']}(?, ?)"
+            conn = self.db_connector.get_connection()
+            cursor = conn.cursor()
+            cursor.execute(query, (year, month))
 
-        sql_exec_start_time = time.time()
-        cursor.execute(query, (year, month))
-        sql_exec_end_time = time.time()
-        debug_print(f"DataProvider: SQL fn_GetEventsData wykonane w {sql_exec_end_time - sql_exec_start_time:.4f}s")
+            columns = [column[0] for column in cursor.description]
+            raw_events_as_dicts = [dict(zip(columns, row)) for row in cursor.fetchall()]
+            conn.close()
 
-        fetchall_start_time = time.time()
-        raw_events = cursor.fetchall()
-        fetchall_end_time = time.time()
-        debug_print(
-            f"DataProvider: cursor.fetchall() dla raw_events zajęło {fetchall_end_time - fetchall_start_time:.4f}s dla {len(raw_events)} wierszy.")
+            debug_print(f"DataProvider: Pobrane surowe zdarzenia: {len(raw_events_as_dicts)} wierszy.")
 
-        conn.close()
-        debug_print(
-            f"DataProvider: Pobrane surowe zdarzenia: {len(raw_events)} wierszy (całkowity czas fetch: {fetchall_end_time - sql_exec_start_time:.4f}s).")
+            processed_events = []
+            for raw_event in raw_events_as_dicts:
+                try:
+                    # --- KLUCZOWA POPRAWKA: Jawne mapowanie nazw kolumn z bazy na klucze aplikacji ---
+                    event = {
+                        'type': raw_event.get('EventType'),
+                        'id': raw_event.get('Id'),
+                        'topic': raw_event.get('Temat'),
+                        'name': raw_event.get('Nazwa'),
+                        'user_id': raw_event.get('Uzytkownik'),
+                        'UzytkownikDane': raw_event.get('UzytkownikDane'),
+                        'date': raw_event.get('Data'),
+                        'time_from': raw_event.get('DataOd'),
+                        'time_to': raw_event.get('DataDo'),
+                        'status': raw_event.get('StatusNazwa'),
+                        'DataModyfikacji': raw_event.get('DataModyfikacji')
+                    }
 
-        events_dicts = []
-        mapping_start_time = time.time()
-        for row_idx, row_data in enumerate(raw_events):
-            try:
-                event = self.column_mapper.map_events_row_to_dict(row_data)
+                    # Ujednolicenie klucza daty do sortowania i filtrowania
+                    if event.get('date'):
+                        event['date_key'] = self._standardize_date(event['date'])
 
-                if 'event_type' in event: event['type'] = event['event_type']
-                if 'event_id' in event: event['id'] = event['event_id']
+                    # Formatowanie dat i czasów do spójnego formatu tekstowego
+                    for key in ['time_from', 'time_to', 'DataModyfikacji']:
+                        value = event.get(key)
+                        if hasattr(value, 'strftime'):
+                            event[key] = value.strftime('%Y-%m-%d %H:%M')
 
-                raw_date = event.get('date', '')
-                if hasattr(raw_date, 'strftime'):
-                    event['date_display'] = raw_date.strftime('%d.%m.%Y')
-                    event['date_key'] = raw_date.strftime('%Y-%m-%d')
-                elif isinstance(raw_date, str) and raw_date:
-                    event['date_display'] = self._format_date_display(raw_date)
-                    event['date_key'] = self._standardize_date(raw_date)
+                    processed_events.append(event)
+                except Exception as e:
+                    log_error(f"DataProvider: Błąd przetwarzania pojedynczego zdarzenia: {raw_event}. Błąd: {e}")
+                    continue  # Przejdź do następnego rekordu w razie błędu
 
-                for time_key in ['time_from', 'time_to']:
-                    time_val = event.get(time_key)
-                    if hasattr(time_val, 'strftime'):
-                        event[time_key] = time_val.strftime('%H:%M')
-                    elif isinstance(time_val, str):
-                        if 'T' in time_val:
-                            event[time_key] = time_val.split('T')[1][:5]
-                        elif ' ' in time_val and ':' in time_val:
-                            event[time_key] = time_val.split(' ')[1][:5]
+            debug_print(f"DataProvider: Poprawnie przetworzono {len(processed_events)} zdarzeń.")
+            return processed_events
 
-                if event.get('type') and event.get('id') is not None:
-                    events_dicts.append(event)
-                else:
-                    log_warning(
-                        f"DataProvider: Pominięto zdarzenie z brakiem typu lub ID: {event} (wiersz {row_idx})")
-            except Exception as e:
-                log_error(
-                    f"DataProvider: Błąd mapowania wiersza zdarzenia w _fetch_events_data: {e}, wiersz: {row_data} (indeks: {row_idx})")
-                continue
-        mapping_end_time = time.time()
-        debug_print(
-            f"DataProvider: Mapowanie {len(raw_events)} zdarzeń zajęło {mapping_end_time - mapping_start_time:.4f}s.")
-        debug_print(f"DataProvider: Przetworzone zdarzenia: {len(events_dicts)} słowników.")
-        return events_dicts
+        except Exception as e:
+            log_error(f"Krytyczny błąd w _fetch_events_data: {e}", exception=e)
+            return []
 
     def _build_events_cache(self, events_data: List[Dict]) -> Dict[Tuple[int, str], List[Dict]]:
         """Buduje cache zdarzeń (user_id, date_key) -> [list_of_events]"""
