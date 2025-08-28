@@ -1,4 +1,5 @@
 # schedule_edit_dialogs.py
+
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                                QPushButton, QComboBox, QGroupBox, QRadioButton,
                                QFontComboBox, QSpinBox, QCheckBox, QWidget,
@@ -11,6 +12,7 @@ from styles import AppStyles
 from debug_utils import debug_print, log_error
 from app_settings import app_settings
 from db_connector import get_modifier_id
+from symbol_parser import parse_symbol
 
 class DateTableWidgetItem(QTableWidgetItem):
     """Niestandardowy element tabeli do sortowania dat chronologicznie."""
@@ -519,11 +521,17 @@ class ReasonDialog(QDialog):
 
 
 class ScheduleChangeDialog(QDialog):
-    """Dialog do edycji zmian w grafiku"""
+    """
+    Dialog do edycji zmian w grafiku. W tej wersji pełni rolę wyłącznie
+    prezentacyjną, emitując sygnał z danymi do przetworzenia przez okno nadrzędne.
+    """
+    # NOWY SYGNAŁ: Emituje listę słowników ze zmianami do przetworzenia.
+    changes_requested = Signal(list)
 
-    def __init__(self, parent=None, grouped_cells=None, year=None, month=None):
+    def __init__(self, parent=None, grouped_cells=None, year=None, month=None, main_window=None):
         super().__init__(parent)
         self.parent_widget = parent
+        self.main_window = main_window # Zapisujemy referencję do okna głównego
         self.determined_theme = "dark"
         if self.parent_widget and hasattr(self.parent_widget, 'is_dark_theme'):
             self.determined_theme = "dark" if self.parent_widget.is_dark_theme else "light"
@@ -624,7 +632,7 @@ class ScheduleChangeDialog(QDialog):
 
         layout.addStretch()
 
-        apply_all_button = QPushButton("Zastosuj dla wszystkich")
+        apply_all_button = QPushButton("Wstaw dla wszystkich")
         apply_all_button.clicked.connect(self._apply_all_changes)
         layout.addWidget(apply_all_button)
 
@@ -665,27 +673,33 @@ class ScheduleChangeDialog(QDialog):
 
             from symbol_parser import parse_symbol
             parsed_symbol = parse_symbol(symbol)
+            is_empty_cell = parsed_symbol.get('work_hours') is None
 
-            # --- POCZĄTEK NOWEJ LOGIKI ---
-            can_edit_location = permissions['can_edit_location']
-            cell_date = QDate.fromString(date_str, "yyyy-MM-dd")
+            location_code = parsed_symbol.get('location')
+            if not location_code:
+                if is_empty_cell:
+                    if self.main_window:
+                        location_code = self.main_window.determine_correct_location(cell)
+                    else:
+                        location_code = cell.get('lokalizacja_domyslna')
+                else:
+                    location_code = cell.get('lokalizacja_domyslna')
 
-            # Jeśli rola to 'Lider' i data jest przeszła, zablokuj edycję lokalizacji
-            if self.user_role == 'Lider' and cell_date < QDate.currentDate():
-                can_edit_location = False
+            # --- NOWA LOGIKA: Sprawdzenie, czy symbol może mieć lokalizację ---
+            special_symbol = parsed_symbol.get('special_symbol')
+            symbol_accepts_location = True
+            if special_symbol and special_symbol.upper() not in app_settings.WORK_LIKE_SYMBOLS:
+                symbol_accepts_location = False
             # --- KONIEC NOWEJ LOGIKI ---
 
-            location_code = parsed_symbol.get('location') or cell.get('lokalizacja_domyslna')
+            can_edit_location_by_permission = permissions['can_edit_location']
+            cell_date = QDate.fromString(date_str, "yyyy-MM-dd")
+            if self.user_role == 'Lider' and cell_date < QDate.currentDate():
+                can_edit_location_by_permission = False
+
             start_hour = parsed_symbol.get('start_hour')
             parsed_hours = parsed_symbol.get('work_hours')
-            if parsed_hours is not None:
-                work_hours = parsed_hours
-            else:
-                work_hours = cell.get('etat', 8.0)
-            try:
-                work_hours = int(float(work_hours))
-            except (ValueError, TypeError):
-                work_hours = 8
+            work_hours = int(float(parsed_hours if parsed_hours is not None else cell.get('etat', 8.0)))
 
             location_combo = QComboBox()
             location_combo.addItem("SBC (s)", "s")
@@ -697,9 +711,14 @@ class ScheduleChangeDialog(QDialog):
             else:
                 location_combo.setCurrentIndex(-1)
 
-            location_combo.setEnabled(can_edit_location)  # Użyj nowej, zweryfikowanej zmiennej
+            # ZMIANA: Złożony warunek do włączenia/wyłączenia comboboxa
+            location_combo.setEnabled(can_edit_location_by_permission and symbol_accepts_location)
+            if not symbol_accepts_location:
+                location_combo.clear()  # Wyczyść opcje, jeśli symbol nie przyjmuje lokalizacji
+
             self.cells_table.setCellWidget(row, 4, location_combo)
 
+            # Reszta logiki wiersza bez zmian
             time_button = QPushButton(str(start_hour) if start_hour is not None else "")
             time_button.setProperty("cell_index", row)
             time_button.setProperty("field_type", "hour")
@@ -725,11 +744,15 @@ class ScheduleChangeDialog(QDialog):
             status_item.setTextAlignment(Qt.AlignCenter)
             self.cells_table.setItem(row, 8, status_item)
 
+        # Pozostała część metody `setup_ui` bez zmian
         main_layout.addWidget(self.cells_table)
         button_layout = QHBoxLayout()
         self.close_button = QPushButton("Zamknij")
         self.close_button.clicked.connect(self.close)
+        self.apply_all_rows_button = QPushButton("Zatwierdź wszystkie zmiany")
+        self.apply_all_rows_button.clicked.connect(self._apply_all_pending_changes)
         button_layout.addStretch()
+        button_layout.addWidget(self.apply_all_rows_button)
         button_layout.addWidget(self.close_button)
         main_layout.addLayout(button_layout)
         self.cells_table.sortByColumn(0, Qt.AscendingOrder)
@@ -765,170 +788,6 @@ class ScheduleChangeDialog(QDialog):
                         apply_button.setEnabled(any(permissions.values()) and selected_value is not None)
             # --- KONIEC POPRAWKI ---
 
-    def _reset_button_state(self, button):
-        button.setText("Zastosuj")
-        button.setStyleSheet(self.default_button_style)
-        button.setEnabled(True)
-
-    def apply_change_by_index(self):
-        button = self.sender()
-        if not button: return
-        # Znajdź wizualny wiersz, w którym jest przycisk
-        for row in range(self.cells_table.rowCount()):
-            if self.cells_table.cellWidget(row, 7) == button:
-                self._apply_change_for_row(row)
-                return
-
-    def _apply_change_for_row(self, visual_row_index):
-        """Stosuje zmianę dla konkretnego wiersza, implementując logikę wyjątków lokalizacyjnych."""
-        button = self.cells_table.cellWidget(visual_row_index, 7)
-        if not button or not button.isEnabled(): return
-
-        status_item = self.cells_table.item(visual_row_index, 8)
-
-        try:
-            item = self.cells_table.item(visual_row_index, 0)
-            if not item: raise ValueError("Nie można odnaleźć elementu w wierszu.")
-            original_data_index = item.data(Qt.UserRole)
-            cell_data = self.flattened_cells[original_data_index]
-
-            # Inicjalizacja danych
-            user_id = cell_data.get('uzytkownik_id')
-            nr_kadrowy = cell_data.get('nr_kadrowy')
-            user_name = cell_data.get('uzytkownik_dane')
-            date_str = cell_data.get('date_str')
-            q_date = QDate.fromString(date_str, "yyyy-MM-dd")
-            _, modyfikujacy_id, _, _, _ = get_modifier_id()
-            location_map = {'h': 1, 's': 3, 'p': 2}
-            default_location_code = cell_data.get('lokalizacja_domyslna')
-
-            location_combo = self.cells_table.cellWidget(visual_row_index, 4)
-            time_button = self.cells_table.cellWidget(visual_row_index, 5)
-            hours_button = self.cells_table.cellWidget(visual_row_index, 6)
-
-            from symbol_parser import parse_symbol, build_symbol
-            original_parsed_symbol = parse_symbol(cell_data.get('symbol', ''))
-
-            new_location_code = location_combo.currentData()
-            new_start_hour = int(time_button.text())
-            new_work_hours = int(hours_button.text())
-
-            original_location_code = original_parsed_symbol.get('location') or default_location_code
-            loc_changed = new_location_code != original_location_code
-            is_reverting_to_default = loc_changed and (new_location_code == default_location_code)
-
-            reason_for_change = ""
-            if loc_changed:
-                # Sprawdź, czy już pytaliśmy o powód dla tego użytkownika
-                if user_id in self.reason_cache:
-                    reason_for_change = self.reason_cache[user_id]
-                else:
-                    # Jeśli nie, otwórz okno dialogowe
-                    reason_dialog = ReasonDialog(self)
-                    if reason_dialog.exec() == QDialog.Accepted:
-                        reason_for_change = reason_dialog.getReason()
-                        # Zapisz powód w pamięci podręcznej dla kolejnych zmian tego użytkownika
-                        self.reason_cache[user_id] = reason_for_change
-                    else:
-                        # Użytkownik anulował wpisanie powodu, więc przerywamy całą operację
-                        status_item.setText("Anulowano")
-                        status_item.setForeground(QColor("gray"))
-                        return
-
-            button.setEnabled(False)
-            button.setText("Przetwarzanie...")
-            QApplication.processEvents()
-
-            result = {}
-            new_symbol = build_symbol(
-                location=new_location_code, start_hour=new_start_hour, work_hours=new_work_hours,
-                special_symbol=original_parsed_symbol.get('special_symbol')
-            )
-
-            if loc_changed:
-                exact_exception, range_exception = self.parent_widget._check_location_exception(user_id, q_date)
-                new_location_id = location_map.get(new_location_code, 1)
-
-                if is_reverting_to_default:
-                    if range_exception:
-                        result = {"success": False,
-                                  "message": "Ten dzień jest częścią wielodniowego wyjątku. Zaktualizuj go ręcznie, aby kontynuować."}
-                    else:
-                        result = self.parent_widget._call_import_changes_procedure(nr_kadrowy, self.year, self.month,
-                                                                                   date_str, new_symbol)
-                        if result.get("success") and exact_exception:
-                            params = (None, modyfikujacy_id, None, None, None, None, 3, exact_exception['Id'])
-                            self.parent_widget._manage_location_exception(params)
-                else:
-                    if exact_exception:
-                        if exact_exception['Lokalizacja'] == new_location_id:
-                            result = self.parent_widget._call_import_changes_procedure(nr_kadrowy, self.year,
-                                                                                         self.month, date_str,
-                                                                                         new_symbol)
-                        else:
-                            result = self.parent_widget._call_import_changes_procedure(nr_kadrowy, self.year,
-                                                                                       self.month, date_str, new_symbol)
-                            if result.get("success"):
-                                params = (
-                                user_id, modyfikujacy_id, date_str, date_str, new_location_id, "Zmiana z TeamFlowApp",
-                                2, exact_exception['Id'])
-                                self.parent_widget._manage_location_exception(params)
-                    elif range_exception:
-                        if range_exception['Lokalizacja'] != new_location_id:
-                            result = {"success": False,
-                                      "message": "Istnieje wyjątek w zakresie dat z inną lokalizacją. Edytuj lub usuń go, aby kontynuować."}
-                        else:
-                            result = self.parent_widget._call_import_changes_procedure(nr_kadrowy, self.year,
-                                                                                       self.month, date_str, new_symbol)
-                    else:
-                        result = self.parent_widget._call_import_changes_procedure(nr_kadrowy, self.year, self.month,
-                                                                                   date_str, new_symbol)
-                        if result.get("success"):
-                            params = (
-                            user_id, modyfikujacy_id, date_str, date_str, new_location_id, "Wpis z TeamFlowApp", 1,
-                            None)
-                            self.parent_widget._manage_location_exception(params)
-            else:
-                result = self.parent_widget._call_import_changes_procedure(nr_kadrowy, self.year, self.month, date_str,
-                                                                           new_symbol)
-
-            if loc_changed and result.get("success"):
-                overtime_events = self.parent_widget.data_provider.get_events_for_user_date(user_id, date_str)
-                overtime_events = [e for e in overtime_events if e.get('type') == 'Nadgodziny']
-                if overtime_events:
-                    ot_dialog = OvertimeLocationDialog(self, overtime_events, new_location_code, self.determined_theme)
-                    if ot_dialog.exec() == QDialog.Accepted:
-                        location_changes = ot_dialog.get_selected_locations()
-                        if location_changes:
-                            self.parent_widget._update_multiple_overtime_locations(location_changes)
-
-            if result.get("success", False):
-                status_item.setText("Sukces ✅");
-                status_item.setForeground(QColor("green"))
-                returned_symbol = result.get('returned_symbol', new_symbol)
-                self.cells_table.item(visual_row_index, 3).setText(returned_symbol)
-                self.parent_widget._update_cells_with_new_symbols([(user_id, date_str, returned_symbol)])
-                self.parent_widget.schedule_model.layoutChanged.emit()
-
-                # --- POCZĄTEK KLUCZOWEJ POPRAWKI ---
-                # Zaktualizuj wewnętrzną pamięć dialogu o nowy, zapisany symbol.
-                self.flattened_cells[original_data_index]['symbol'] = returned_symbol
-                # --- KONIEC KLUCZOWEJ POPRAWKI ---
-
-            else:
-                status_item.setText("Porażka ❌");
-                status_item.setForeground(QColor("red"))
-                error_msg = result.get("message", "Nieznany błąd.")
-                QMessageBox.warning(self, "Błąd", f"👤 {user_name} ({self.format_date(date_str)}):\n{error_msg}",
-                                    QMessageBox.Ok)
-
-        except Exception as e:
-            if status_item: status_item.setText("Porażka ❌"); status_item.setForeground(QColor("red"))
-            log_error(f"Błąd krytyczny w _apply_change_for_row: {e}", exception=e)
-            QMessageBox.critical(self, "Błąd krytyczny", f"Wystąpił nieoczekiwany błąd: {str(e)}", QMessageBox.Ok)
-        finally:
-            QTimer.singleShot(2000, lambda b=button: self._reset_button_state(b))
-
     def format_date(self, date_str):
         try:
             year, month, day = date_str.split('-')
@@ -936,51 +795,300 @@ class ScheduleChangeDialog(QDialog):
         except:
             return date_str
 
-    def _apply_all_changes(self):
-        if not any([self.apply_location_check.isChecked(), self.apply_time_check.isChecked(),
-                    self.apply_hours_check.isChecked()]):
-            QMessageBox.warning(self, "Brak wyboru",
-                                "Proszę zaznaczyć, które atrybuty chcesz zastosować dla wszystkich.")
-            return
+    def _reset_button_state(self, button: QPushButton):
+        """Przywraca domyślny wygląd i stan przycisku 'Zastosuj'."""
+        if button:
+            button.setText("Zastosuj")
+            button.setStyleSheet(self.default_button_style)
+            button.setEnabled(True)
 
-        if (self.apply_time_check.isChecked() and self.all_time_button.text() == "Wybierz") or \
-                (self.apply_hours_check.isChecked() and self.all_hours_button.text() == "Wybierz"):
-            QMessageBox.warning(self, "Brak danych", "Proszę wybrać wartości dla zaznaczonych atrybutów.")
-            return
-
-        reply = QMessageBox.question(self, "Potwierdzenie",
-                                     "Czy na pewno chcesz zastosować wybrane zmiany dla wszystkich widocznych wierszy?",
-                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-        if reply == QMessageBox.No:
-            return
-
-        # Pętla aktualizująca UI, a następnie wywołująca zapis
-        for row in range(self.cells_table.rowCount()):
-            # Najpierw zaktualizuj wizualnie kontrolki w wierszu
-            self._update_row_widgets_from_global_settings(row)
-            # Następnie spróbuj zapisać zmiany dla tego wiersza
-            self._apply_change_for_row(row)
-
-
-    def _update_row_widgets_from_global_settings(self, visual_row):
+    def _update_row_widgets_from_global_settings(self, visual_row: int):
+        """Aktualizuje kontrolki w danym wierszu na podstawie globalnych ustawień 'Wstaw dla wszystkich'."""
         item = self.cells_table.item(visual_row, 0)
         if not item: return
         original_data_index = item.data(Qt.UserRole)
         cell_data = self.flattened_cells[original_data_index]
         permissions = self.parent_widget._get_permission_for_cell(cell_data)
 
-        if self.apply_location_check.isChecked() and permissions['can_edit_location']:
+        # Logika sprawdzania daty dla Lidera (bez zmian)
+        can_apply_location_by_date = True
+        if self.user_role == 'Lider' and self.apply_location_check.isChecked():
+            cell_date = QDate.fromString(cell_data.get('date_str', ''), "yyyy-MM-dd")
+            if cell_date.isValid() and cell_date < QDate.currentDate():
+                can_apply_location_by_date = False
+
+        # --- NOWA LOGIKA: Sprawdzenie, czy symbol w komórce może mieć lokalizację ---
+        symbol_can_have_location = False
+        parsed_symbol = parse_symbol(cell_data.get('symbol', ''))
+        special_symbol = parsed_symbol.get('special_symbol')
+
+        # Lokalizację można ustawić, jeśli nie ma symbolu specjalnego (jest to zmiana robocza)
+        # lub jeśli symbol specjalny jest na liście symboli pracujących.
+        if not special_symbol or special_symbol.upper() in app_settings.WORK_LIKE_SYMBOLS:
+            symbol_can_have_location = True
+        # --- KONIEC NOWEJ LOGIKI ---
+
+        # ZMIANA: Dodano `and symbol_can_have_location` do warunku
+        if self.apply_location_check.isChecked() and permissions[
+            'can_edit_location'] and can_apply_location_by_date and symbol_can_have_location:
             combo = self.cells_table.cellWidget(visual_row, 4)
             new_location = self.all_location_combo.currentData()
             combo.setCurrentIndex(combo.findData(new_location))
+
+        # Pozostała część metody bez zmian
         if self.apply_time_check.isChecked() and permissions['can_edit_hours']:
             time_btn = self.cells_table.cellWidget(visual_row, 5)
             new_start_hour = self.all_time_button.text()
             time_btn.setText(new_start_hour)
+            apply_button = self.cells_table.cellWidget(visual_row, 7)
+            if apply_button:
+                apply_button.setEnabled(bool(new_start_hour) and any(permissions.values()))
+
         if self.apply_hours_check.isChecked() and permissions['can_edit_hours']:
             hours_btn = self.cells_table.cellWidget(visual_row, 6)
             new_work_hours = self.all_hours_button.text()
             hours_btn.setText(new_work_hours)
+
+    def apply_change_by_index(self):
+        """Uproszczona metoda, która deleguje logikę do nowej metody pomocniczej."""
+        button = self.sender()
+        if not button: return
+
+        for row in range(self.cells_table.rowCount()):
+            if self.cells_table.cellWidget(row, 7) == button:
+                # ZMIANA: Wywołanie nowej, scentralizowanej logiki
+                change_request = self._prepare_change_request_for_row(row)
+                if change_request:
+                    self.changes_requested.emit([change_request])
+                    button.setEnabled(False)
+                    button.setText("Wysyłanie...")
+                    QApplication.processEvents()
+                return
+
+    def _prepare_change_request_for_row(self, visual_row_index: int) -> dict | None:
+        """
+        NOWA METODA POMOCNICZA: Sprawdza zmiany i przygotowuje słownik z żądaniem.
+
+        Returns:
+            Słownik z żądaniem zmiany, jeśli zmiana wystąpiła, w przeciwnym razie None.
+        """
+        button = self.cells_table.cellWidget(visual_row_index, 7)
+        status_item = self.cells_table.item(visual_row_index, 8)
+        if not button or not button.isEnabled():
+            return None
+
+        try:
+            item = self.cells_table.item(visual_row_index, 0)
+            if not item: raise ValueError("Brak danych w wierszu.")
+
+            original_data_index = item.data(Qt.UserRole)
+            cell_data = self.flattened_cells[original_data_index]
+
+            location_combo = self.cells_table.cellWidget(visual_row_index, 4)
+            time_button = self.cells_table.cellWidget(visual_row_index, 5)
+            hours_button = self.cells_table.cellWidget(visual_row_index, 6)
+
+            if not time_button.text():
+                self.update_status_for_row(visual_row_index, 'failure', "Brak godziny!")
+                return None
+
+            parsed = parse_symbol(cell_data.get('symbol', ''))
+            original_loc = parsed.get('location') or cell_data.get('lokalizacja_domyslna', 'h')
+            original_start = parsed.get('start_hour')
+            original_hours = parsed.get('work_hours')
+            if original_hours is None:
+                original_hours = int(float(cell_data.get('etat', 8.0)))
+
+            new_loc = location_combo.currentData()
+            new_start = int(time_button.text())
+            new_hours = int(hours_button.text())
+
+            if original_loc == new_loc and original_start == new_start and original_hours == new_hours:
+                self.update_status_for_row(visual_row_index, 'no_change')
+                return None
+
+            return {
+                'cell_data': cell_data,
+                'new_location_code': new_loc,
+                'new_start_hour': new_start,
+                'new_work_hours': new_hours,
+                'visual_row': visual_row_index
+            }
+        except Exception as e:
+            self.update_status_for_row(visual_row_index, 'failure', str(e))
+            log_error(f"Błąd podczas przygotowywania żądania zmiany: {e}", exception=e)
+            return None
+
+    def _apply_all_pending_changes(self):
+        """
+        NOWA METODA GŁÓWNA: Zbiera wszystkie oczekujące zmiany i emituje je razem.
+        """
+        reply = QMessageBox.question(self, "Potwierdzenie",
+                                     "Czy na pewno chcesz zatwierdzić wszystkie wprowadzone zmiany w tabeli?",
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+        if reply == QMessageBox.No:
+            return
+
+        all_change_requests = []
+        for row in range(self.cells_table.rowCount()):
+            change_request = self._prepare_change_request_for_row(row)
+            if change_request:
+                all_change_requests.append(change_request)
+                button = self.cells_table.cellWidget(row, 7)
+                if button:
+                    button.setEnabled(False)
+                    button.setText("W kolejce...")
+
+        if all_change_requests:
+            self.changes_requested.emit(all_change_requests)
+            QApplication.processEvents()
+        else:
+            QMessageBox.information(self, "Informacja", "Nie wykryto żadnych zmian do zatwierdzenia.")
+
+    def _prepare_and_emit_change_for_row(self, visual_row_index: int):
+        """
+        Zbiera dane, sprawdza czy nastąpiła zmiana i emituje sygnał.
+        """
+        button = self.cells_table.cellWidget(visual_row_index, 7)
+        status_item = self.cells_table.item(visual_row_index, 8)
+        if not button or not button.isEnabled(): return
+
+        try:
+            item = self.cells_table.item(visual_row_index, 0)
+            if not item: raise ValueError("Brak danych w wierszu.")
+
+            original_data_index = item.data(Qt.UserRole)
+            cell_data = self.flattened_cells[original_data_index]
+
+            location_combo = self.cells_table.cellWidget(visual_row_index, 4)
+            time_button = self.cells_table.cellWidget(visual_row_index, 5)
+            hours_button = self.cells_table.cellWidget(visual_row_index, 6)
+
+            if not time_button.text():
+                self.update_status_for_row(visual_row_index, 'failure', "Brak godziny!")
+                return
+
+            # --- ZMIANA 1: Logika porównawcza ---
+            parsed = parse_symbol(cell_data.get('symbol', ''))
+            original_loc = parsed.get('location') or cell_data.get('lokalizacja_domyslna', 'h')
+            original_start = parsed.get('start_hour')
+            original_hours = parsed.get('work_hours')
+            if original_hours is None:
+                original_hours = int(float(cell_data.get('etat', 8.0)))
+
+            new_loc = location_combo.currentData()
+            new_start = int(time_button.text())
+            new_hours = int(hours_button.text())
+
+            if original_loc == new_loc and original_start == new_start and original_hours == new_hours:
+                self.update_status_for_row(visual_row_index, 'no_change')
+                return  # Zakończ, jeśli nie ma zmian
+            # --- Koniec ZMIANY 1 ---
+
+            change_request = {
+                'cell_data': cell_data,
+                'new_location_code': new_loc,
+                'new_start_hour': new_start,
+                'new_work_hours': new_hours,
+                'visual_row': visual_row_index
+            }
+
+            self.changes_requested.emit([change_request])
+            button.setEnabled(False);
+            button.setText("Wysyłanie...")
+            QApplication.processEvents()
+
+        except Exception as e:
+            self.update_status_for_row(visual_row_index, 'failure', str(e))
+            log_error(f"Błąd podczas przygotowywania żądania zmiany: {e}", exception=e)
+
+    def _apply_all_changes(self):
+        """Zbiera zmiany ze wszystkich wierszy i emituje je w jednym sygnale."""
+        # Ta metoda pozostaje bez zmian w stosunku do poprzedniej propozycji
+        if not any([self.apply_location_check.isChecked(), self.apply_time_check.isChecked(),
+                    self.apply_hours_check.isChecked()]):
+            QMessageBox.warning(self, "Brak wyboru",
+                                "Proszę zaznaczyć, które atrybuty chcesz zastosować dla wszystkich.")
+            return
+
+        reply = QMessageBox.question(self, "Potwierdzenie",
+                                     "Czy na pewno chcesz zastosować wybrane zmiany dla wszystkich widocznych wierszy?",
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply == QMessageBox.No: return
+
+        all_change_requests = []
+        for row in range(self.cells_table.rowCount()):
+            self._update_row_widgets_from_global_settings(row)
+
+            button = self.cells_table.cellWidget(row, 7)
+            if not button.isEnabled(): continue
+            item = self.cells_table.item(row, 0)
+            if not item: continue
+
+            # --- ZMIANA 2: Logika porównawcza dla 'apply all' ---
+            original_data_index = item.data(Qt.UserRole)
+            cell_data = self.flattened_cells[original_data_index]
+
+            location_combo = self.cells_table.cellWidget(row, 4)
+            time_button = self.cells_table.cellWidget(row, 5)
+            hours_button = self.cells_table.cellWidget(row, 6)
+
+            if not time_button.text(): continue
+
+            parsed = parse_symbol(cell_data.get('symbol', ''))
+            original_loc = parsed.get('location') or cell_data.get('lokalizacja_domyslna', 'h')
+            original_start = parsed.get('start_hour')
+            original_hours = parsed.get('work_hours')
+            if original_hours is None: original_hours = int(float(cell_data.get('etat', 8.0)))
+
+            new_loc = location_combo.currentData()
+            new_start = int(time_button.text())
+            new_hours = int(hours_button.text())
+
+            if original_loc == new_loc and original_start == new_start and original_hours == new_hours:
+                self.update_status_for_row(row, 'no_change')
+                continue  # Pomiń ten wiersz i przejdź do następnego
+            # --- Koniec ZMIANY 2 ---
+
+            change_request = {
+                'cell_data': cell_data,
+                'new_location_code': new_loc,
+                'new_start_hour': new_start,
+                'new_work_hours': new_hours,
+                'visual_row': row
+            }
+            all_change_requests.append(change_request)
+            button.setEnabled(False);
+            button.setText("W kolejce...")
+            QApplication.processEvents()
+
+        if all_change_requests:
+            self.changes_requested.emit(all_change_requests)
+
+    def update_status_for_row(self, visual_row: int, status: str, message: str = ""):
+        """
+        ZMIANA 3: Publiczny slot do aktualizacji statusu wiersza z zewnątrz.
+        Obsługuje teraz 3 stany: 'success', 'failure', 'no_change'.
+        """
+        if visual_row >= self.cells_table.rowCount(): return
+
+        status_item = self.cells_table.item(visual_row, 8)
+        button = self.cells_table.cellWidget(visual_row, 7)
+
+        if status == 'success':
+            status_item.setText("Sukces ✅")
+            status_item.setForeground(QColor("green"))
+        elif status == 'no_change':
+            status_item.setText("Brak zmiany")
+            status_item.setForeground(QColor("orange"))
+        else:  # 'failure'
+            status_item.setText("Porażka ❌")
+            status_item.setForeground(QColor("red"))
+            if message:
+                status_item.setToolTip(message)
+
+        if button:
+            QTimer.singleShot(1000, lambda b=button: self._reset_button_state(b))
 
 
 class DigitSelectionDialog(QDialog):
