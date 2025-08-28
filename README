@@ -3,298 +3,290 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Instrukcja Obsługi - TeamFlowApp</title>
+    <title>Instrukcja Obsługi Aplikacji TeamFlowApp</title>
     <style>
-        :root {
-            --primary-color: #007bff;
-            --secondary-color: #6c757d;
-            --light-bg: #f8f9fa;
-            --dark-text: #343a40;
-            --light-text: #f8f9fa;
-            --border-color: #dee2e6;
-            --shadow: 0 4px 8px rgba(0,0,0,0.1);
-        }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-            line-height: 1.7;
+            font-family: 'Segoe UI', Calibri, Arial, sans-serif;
+            line-height: 1.6;
             margin: 0;
             padding: 0;
-            background-color: var(--light-bg);
-            color: var(--dark-text);
+            background-color: #f4f7f9;
+            color: #333;
         }
         .container {
-            width: 90%;
             max-width: 1024px;
             margin: 20px auto;
+            padding: 25px 40px;
             background-color: #ffffff;
+            border: 1px solid #dce1e6;
             border-radius: 8px;
-            box-shadow: var(--shadow);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.08);
         }
-        header, footer {
-            background: var(--primary-color);
-            color: var(--light-text);
-            padding: 1.5rem;
+        header {
             text-align: center;
+            border-bottom: 2px solid #0078d4;
+            padding-bottom: 15px;
+            margin-bottom: 25px;
         }
-        header { border-radius: 8px 8px 0 0; }
-        footer { border-radius: 0 0 8px 8px; margin-top: 2rem; }
-        header h1 { color: var(--light-text); border: none; margin: 0; }
-        header p { opacity: 0.9; margin: 5px 0 0; }
-        main {
-            padding: 2rem;
+        header h1 {
+            color: #005a9e;
+            margin: 0;
+            font-size: 2.5em;
         }
-        h2, h3, h4 {
-            color: var(--dark-text);
-            padding-bottom: 10px;
-        }
-        h2 { 
-            border-bottom: 3px solid var(--primary-color); 
-            font-size: 2em;
-            margin-top: 2.5em;
-        }
-        h3 { 
-            border-bottom: 1px solid var(--border-color);
-            font-size: 1.5em;
-            margin-top: 2em;
-        }
-        nav#spis-tresci {
-            background: #eef5ff;
-            padding: 20px;
+        nav.toc {
+            background: #eef5f9;
+            border: 1px solid #d1e3ed;
+            border-radius: 6px;
+            padding: 15px 25px;
             margin-bottom: 30px;
-            border-left: 5px solid var(--primary-color);
-            border-radius: 5px;
         }
-        nav#spis-tresci h2 {
+        nav.toc h2 {
             margin-top: 0;
-            border-bottom: 1px solid #cce0ff;
+            border-bottom: 0;
         }
-        nav#spis-tresci ul { padding-left: 20px; }
-        nav#spis-tresci ul li { margin-bottom: 8px; }
-        nav#spis-tresci a { text-decoration: none; color: #0056b3; font-weight: 500; }
-        nav#spis-tresci a:hover { text-decoration: underline; }
-        .klawisz {
-            display: inline-block;
-            background-color: #f0f0f0;
-            border: 1px solid #ccc;
-            border-radius: 4px;
-            padding: 3px 8px;
-            font-family: "Consolas", "Courier New", monospace;
-            font-size: 0.9em;
-            font-weight: 600;
-            box-shadow: 0 2px 0 #bbb;
-            position: relative;
-            top: -1px;
+        nav.toc ul {
+            list-style-type: none;
+            padding-left: 0;
         }
-        .uwaga, .wskazowka {
-            padding: 1.25rem;
-            margin: 1.5rem 0;
-            border-radius: 5px;
-            border-left-width: 5px;
-            border-left-style: solid;
+        nav.toc ul li a {
+            text-decoration: none;
+            color: #005a9e;
         }
-        .uwaga {
-            background-color: #fff3cd;
-            border-color: #ffc107;
-            color: #856404;
+        nav.toc ul li a:hover {
+            text-decoration: underline;
         }
-        .wskazowka {
-            background-color: #d1ecf1;
-            border-color: #bee5eb;
-            color: #0c5460;
+        nav.toc ul ul {
+            padding-left: 20px;
         }
-        strong { color: var(--primary-color); }
-        code {
+        h2 {
+            color: #005a9e;
+            border-bottom: 1px solid #d1e3ed;
+            padding-bottom: 10px;
+            margin-top: 40px;
+            font-size: 1.8em;
+        }
+        h3 {
+            color: #1d4b6e;
+            margin-top: 30px;
+            font-size: 1.4em;
+        }
+        p { margin-bottom: 15px; }
+        ul, ol { margin-bottom: 15px; padding-left: 25px; }
+        li { margin-bottom: 8px; }
+        code, kbd {
             background-color: #e9ecef;
-            padding: 2px 5px;
+            color: #c7254e;
+            padding: 3px 6px;
             border-radius: 4px;
-            font-family: "Consolas", "Courier New", monospace;
+            font-family: 'Consolas', 'Courier New', monospace;
+            font-size: 0.9em;
         }
-        ol li {
-            margin-bottom: 10px;
+        .key {
+            display: inline-block;
+            border: 1px solid #adb5bd;
+            border-radius: 4px;
+            padding: 2px 8px;
+            box-shadow: 1px 1px 1px #ced4da;
+            background-color: #f8f9fa;
+            font-weight: bold;
         }
         table {
             width: 100%;
             border-collapse: collapse;
-            margin: 20px 0;
+            margin-top: 20px;
         }
         th, td {
             padding: 12px;
+            border: 1px solid #dee2e6;
             text-align: left;
-            border-bottom: 1px solid var(--border-color);
         }
         th {
-            background-color: var(--light-bg);
+            background-color: #e9ecef;
+            font-weight: bold;
+        }
+        tr:nth-child(even) { background-color: #f8f9fa; }
+        .note {
+            background-color: #e7f3ff;
+            border-left: 5px solid #0078d4;
+            padding: 15px 20px;
+            margin: 20px 0;
+            border-radius: 4px;
+        }
+        footer {
+            text-align: center;
+            margin-top: 40px;
+            font-size: 0.9em;
+            color: #6c757d;
         }
     </style>
 </head>
 <body>
-
     <div class="container">
         <header>
             <h1>Instrukcja Obsługi Aplikacji TeamFlowApp</h1>
-            <p>Wersja 1.3 (sierpień 2025)</p>
         </header>
 
-        <main>
-            <nav id="spis-tresci">
-                <h2>Spis Treści</h2>
-                <ul>
-                    <li><a href="#wstep">1. Wprowadzenie</a></li>
-                    <li><a href="#start">2. Pierwsze Kroki (Quick Start)</a></li>
-                    <li><a href="#glowne-okno">3. Główne Okno Aplikacji</a></li>
-                    <li><a href="#podstawy">4. Podstawowe Operacje</a></li>
-                    <li><a href="#edycja">5. Edycja Grafiku</a>
-                        <ul>
-                            <li><a href="#edycja-klawiatura">5.1. Edycja z klawiatury</a></li>
-                            <li><a href="#edycja-zmiana">5.2. Wstawianie zmiany (Dialog)</a></li>
-                            <li><a href="#edycja-nieobecnosc">5.3. Wstawianie nieobecności (Dialog)</a></li>
-                            <li><a href="#edycja-wyjatki">5.4. Zarządzanie Wyjątkami Lokalizacyjnymi</a></li>
-                        </ul>
-                    </li>
-                    <li><a href="#zaawansowane">6. Zaawansowane Funkcje</a></li>
-                    <li><a href="#ustawienia">7. Ustawienia Aplikacji</a></li>
-                    <li><a href="#skroty">8. Skróty Klawiszowe</a></li>
-                    <li><a href="#rozwoj">9. Możliwości Rozwoju</a></li>
-                </ul>
-            </nav>
-            
-            <section id="wstep">
-                <h2>1. Wprowadzenie</h2>
-                <p>Aplikacja <strong>TeamFlowApp</strong> to zaawansowane narzędzie do zarządzania grafikiem pracy. Pozwala na centralne planowanie, edycję i analizę harmonogramów pracy w czasie rzeczywistym, łącząc się bezpośrednio z firmową bazą danych.</p>
-                <div class="uwaga">
-                    <p><strong>Uprawnienia:</strong> Dostępność funkcji zależy od Twojej roli (Pracownik WPR, Lider, Lider OUT). Niektóre opcje opisane w instrukcji mogą być dla Ciebie niewidoczne.</p>
-                </div>
-            </section>
-
-            <section id="start">
-                <h2>2. Pierwsze Kroki (Quick Start)</h2>
-                <ol>
-                    <li><strong>Uruchomienie:</strong> Po uruchomieniu aplikacja automatycznie załaduje grafik na bieżący miesiąc.</li>
-                    <li><strong>Filtrowanie:</strong> Użyj panelu po lewej stronie, aby zawęzić listę pracowników. Wybierz np. swój wydział z listy "Wydział".</li>
-                    <li><strong>Zaznaczenie komórki:</strong> Kliknij na dowolną komórkę w siatce grafiku, aby ją zaznaczyć. W dolnym panelu pojawią się ewentualne zdarzenia (spotkania, nadgodziny) przypisane do tej osoby w danym dniu.</li>
-                </ol>
-            </section>
-            
-            <section id="glowne-okno">
-                <h2>3. Główne Okno Aplikacji</h2>
-                <p>Interfejs aplikacji został zaprojektowany z myślą o maksymalnej wydajności i czytelności. Składa się z kilku kluczowych stref:</p>
-                <ul>
-                    <li><strong>Górny Pasek Narzędzi:</strong> Centrum dowodzenia. Znajdziesz tu wybór miesiąca oraz przyciski do najważniejszych akcji: <strong>"Ustawienia"</strong>, <strong>"Odśwież"</strong>, <strong>"Historia Zmian"</strong>, <strong>"Obsada"</strong> i <strong>"Zarządzaj Grafikiem"</strong>.</li>
-                    <li><strong>Panel Filtrów (po lewej):</strong> Twoje narzędzie do precyzyjnego wyszukiwania. Pozwala filtrować pracowników według wielu kryteriów. Można go ukryć/pokazać klawiszem <span class="klawisz">F1</span>.</li>
-                    <li><strong>Główny Widok Grafiku (centrum):</strong> Podzielony na dwie części: zamrożoną listę pracowników oraz przewijaną w poziomie siatkę z dniami miesiąca. Kolory komórek oznaczają godzinę rozpoczęcia zmiany.</li>
-                     <li><strong>Pasek Akcji pod Grafikiem:</strong> Zawiera przyciski do najczęstszych operacji edycyjnych, takich jak "Wstaw zmianę", "Wstaw nieobecność" czy "Wyjątki lokalizacyjne".</li>
-                     <li><strong>Panel Zdarzeń (na dole):</strong> Po zaznaczeniu komórki w grafiku, ten panel wyświetli listę powiązanych zdarzeń (spotkania, szkolenia, nadgodziny).</li>
-                </ul>
-            </section>
-
-            <section id="podstawy">
-                <h2>4. Podstawowe Operacje</h2>
-                <p>Poniżej opisano podstawowe czynności wykonywane w aplikacji.</p>
-                
-                <h3>Filtrowanie grafiku</h3>
-                <p>Panel po lewej stronie pozwala błyskawicznie znaleźć potrzebne informacje.</p>
-                <ol>
-                    <li>Wybierz interesujący Cię filtr, np. "Wydział".</li>
-                    <li>Rozwiń listę i zaznacz jedną lub więcej wartości.</li>
-                    <li>Widok grafiku automatycznie się zaktualizuje.</li>
-                </ol>
-                <div class="wskazowka">
-                    <p>💡 <strong>Wskazówka:</strong> W panelu "Obecni w pracy w dniu:" możesz dynamicznie sprawdzić, kto pracował w wybranym dniu i w konkretnej lokalizacji (lub bez przypisanej lokalizacji).</p>
-                </div>
-            </section>
-
-            <section id="edycja">
-                <h2>5. Edycja Grafiku</h2>
-                <p>Edycja jest możliwa na kilka sposobów, w zależności od potrzeb i posiadanych uprawnień.</p>
-
-                <h3 id="edycja-klawiatura">5.1. Edycja z klawiatury</h3>
-                <p>Najszybszy sposób na drobne korekty. Po zaznaczeniu komórek:</p>
-                <ul>
-                    <li><strong>Wpisz cyfrę (np. <span class="klawisz">8</span>):</strong> Ustawia godzinę rozpoczęcia pracy na 8:00.</li>
-                    <li><strong>Użyj <span class="klawisz">+</span> / <span class="klawisz">-</span>:</strong> Zmienia liczbę godzin pracy.</li>
-                    <li><strong>Użyj <span class="klawisz">Delete</span> lub <span class="klawisz">Backspace</span>:</strong> Czyści całą komórkę.</li>
-                </ul>
-
-                <h3 id="edycja-zmiana">5.2. Wstawianie zmiany (Dialog)</h3>
-                <p>Przycisk <strong>"Wstaw zmianę"</strong> otwiera zaawansowane okno dialogowe do edycji wielu komórek jednocześnie, które pozwala sortować listę i używać funkcji "Zastosuj dla wszystkich".</p>
-                
-                <h3 id="edycja-nieobecnosc">5.3. Wstawianie nieobecności (Dialog)</h3>
-                <p>Przycisk <strong>"Wstaw nieobecność"</strong> otwiera okno z symbolami. Wybranie symbolu spowoduje jego wstawienie do zaznaczonych komórek.</p>
-                
-                <h3 id="edycja-wyjatki">5.4. Zarządzanie Wyjątkami Lokalizacyjnymi</h3>
-                <p>Ta funkcja pozwala na precyzyjne zarządzanie dniami, w których pracownik ma pracować z lokalizacji innej niż jego domyślna. Obejmuje ona zarówno mechanizmy automatyczne, jak i dedykowane okno do ręcznego zarządzania.</p>
-                
-                <h4>Automatyczne Zarządzanie (w oknie "Wstaw zmianę")</h4>
-                <div class="wskazowka">
-                    <p>💡 Aplikacja inteligentnie zarządza jednodniowymi wyjątkami podczas edycji grafiku w oknie "Wstaw zmianę":</p>
+        <nav class="toc">
+            <h2>Spis Treści</h2>
+            <ul>
+                <li><a href="#intro">1. Wprowadzenie</a></li>
+                <li><a href="#ui">2. Interfejs Główny</a>
                     <ul>
-                        <li><strong>Automatyczne tworzenie:</strong> Jeśli zmienisz lokalizację pracownika na inną niż jego domyślna, aplikacja zapyta o powód i automatycznie utworzy dla tego dnia wpis w tabeli wyjątków.</li>
-                        <li><strong>Automatyczne usuwanie:</strong> Jeśli przywrócisz pracownikowi jego domyślną lokalizację, aplikacja automatycznie usunie istniejący dla tego dnia wpis wyjątku.</li>
-                        <li><strong>Ochrona przed konfliktami:</strong> Aplikacja nie pozwoli na zmianę lokalizacji, jeśli dany dzień jest częścią wielodniowego wyjątku. Należy go najpierw zmodyfikować w menedżerze wyjątków.</li>
+                        <li><a href="#ui-toolbar">2.1. Górny Pasek Narzędzi</a></li>
+                        <li><a href="#ui-filters">2.2. Panel Filtrów</a></li>
+                        <li><a href="#ui-table">2.3. Główna Tabela Grafiku</a></li>
+                        <li><a href="#ui-events">2.4. Panel Zdarzeń</a></li>
+                        <li><a href="#ui-buttons">2.5. Dolny Pasek Przycisków</a></li>
+                    </ul>
+                </li>
+                <li><a href="#editing">3. Edycja Grafiku</a>
+                    <ul>
+                        <li><a href="#editing-keyboard">3.1. Edycja z Klawiatury</a></li>
+                        <li><a href="#editing-dialogs">3.2. Edycja za pomocą okien dialogowych</a></li>
+                    </ul>
+                </li>
+                <li><a href="#advanced">4. Funkcje Zaawansowane</a>
+                    <ul>
+                        <li><a href="#advanced-copy">4.1. Kopiowanie do Schowka (Ctrl+C)</a></li>
+                        <li><a href="#advanced-export">4.2. Eksport do Pliku Excel</a></li>
+                        <li><a href="#advanced-analytics">4.3. Moduł Analityczny "Obsada"</a></li>
+                        <li><a href="#advanced-history">4.4. Historia Zmian</a></li>
+                    </ul>
+                </li>
+                <li><a href="#shortcuts">5. Tabela Skrótów Klawiszowych</a></li>
+            </ul>
+        </nav>
+
+        <main>
+            <section id="intro">
+                <h2>1. Wprowadzenie</h2>
+                <p>TeamFlowApp to zaawansowana aplikacja desktopowa przeznaczona do zarządzania, wizualizacji i analizy harmonogramu czasu pracy. Umożliwia ona szybkie wprowadzanie zmian, filtrowanie danych według wielu kryteriów oraz dostęp do szczegółowych analiz, zastępując manualne procesy i minimalizując ryzyko błędów.</p>
+                <p>Logowanie do aplikacji odbywa się automatycznie na podstawie konta użytkownika w systemie Windows, a przypisana rola decyduje o zakresie dostępnych funkcji.</p>
+            </section>
+
+            <section id="ui">
+                <h2>2. Interfejs Główny</h2>
+
+                <h3 id="ui-toolbar">2.1. Górny Pasek Narzędzi</h3>
+                <p>Zawiera globalne akcje i ustawienia:</p>
+                <ul>
+                    <li><strong>Ustawienia:</strong> Otwiera okno konfiguracji wyglądu aplikacji (motyw jasny/ciemny, czcionka) oraz parametrów importu danych.</li>
+                    <li><strong>Miesiąc:</strong> Pozwala wybrać rok i miesiąc, dla którego wyświetlany jest grafik.</li>
+                    <li><strong>Odśwież:</strong> Ponownie ładuje dane z bazy. Przycisk zmienia kolor na pomarańczowy, gdy w bazie pojawią się nowe, niezaładowane jeszcze dane.</li>
+                    <li><strong>Eksportuj do Excel:</strong> Zapisuje aktualnie widoczny (przefiltrowany) grafik do sformatowanego pliku <code>.xlsx</code>.</li>
+                    <li><strong>Historia Zmian:</strong> Otwiera okno z audytem modyfikacji. Jeśli zaznaczono komórki, pokaże historię tylko dla nich. W przeciwnym razie, wyświetli 50 ostatnich zmian dla widocznych pracowników.</li>
+                    <li><strong>Obsada:</strong> Uruchamia zaawansowany moduł analityczny.</li>
+                </ul>
+
+                <h3 id="ui-filters">2.2. Panel Filtrów (po lewej)</h3>
+                <p>To główne narzędzie do nawigacji i wyszukiwania. Można go ukryć/pokazać skrótem <span class="key">F1</span>.</p>
+                <ul>
+                    <li><strong>Filtry listowe (np. Grupa, Wydział):</strong> Działają jako listy wielokrotnego wyboru. Można zaznaczyć jedną lub wiele wartości. Tekst na filtrze informuje o liczbie zaznaczonych opcji.</li>
+                    <li><strong>Filtry tekstowe (Przełożony, Użytkownik):</strong> Wpisanie fragmentu tekstu filtruje listę poniżej, z której można wybrać jednego lub wielu menedżerów/pracowników.</li>
+                    <li><strong>Przycisk "X":</strong> Obok każdego aktywnego filtra znajduje się przycisk <code>X</code>, który pozwala na szybkie wyczyszczenie tylko tego jednego filtra bez resetowania pozostałych.</li>
+                    <li><strong>"Obecni w pracy w dniu":</strong> To zaawansowany filtr, który po zaznaczeniu pola wyboru pozwala znaleźć pracowników świadczących pracę w konkretnym dniu, o określonych godzinach i w wybranych lokalizacjach. Godziny i lokalizacje również można zaznaczać wielokrotnie.</li>
+                    <li><strong>Wyczyść filtry:</strong> Resetuje wszystkie aktywne filtry do stanu domyślnego.</li>
+                </ul>
+
+                <h3 id="ui-table">2.3. Główna Tabela Grafiku</h3>
+                <p>Centralna część aplikacji, podzielona na dwie zsynchronizowane części:</p>
+                <ol>
+                    <li><strong>Lista Pracowników (po lewej):</strong> Wyświetla dane pracowników (np. wydział, nazwisko). Kolumny i ich kolejność można konfigurować w oknie "Dostosuj widok".</li>
+                    <li><strong>Siatka Grafiku (po prawej):</strong> Pokazuje harmonogram w widoku miesięcznym.</li>
+                </ol>
+                <div class="note">
+                    <p><strong>Sortowanie:</strong></p>
+                    <ul>
+                        <li>Kliknięcie w nagłówek kolumny na <strong>liście pracowników</strong> (np. "WydziałGrafik") sortuje dane rosnąco/malejąco po tej kolumnie.</li>
+                        <li>Kliknięcie w nagłówek dnia na <strong>siatce grafiku</strong> (np. "15") sortuje pracowników według ich statusu pracy w tym dniu (najpierw pracujący, potem wg godziny rozpoczęcia).</li>
+                        <li>Zaawansowane sortowanie wielopoziomowe można skonfigurować w oknie "Dostosuj widok".</li>
+                    </ul>
+                    <p><strong>Zaznaczanie:</strong></p>
+                    <ul>
+                        <li>Kliknięcie wiersza na liście pracowników zaznacza cały wiersz w obu tabelach.</li>
+                        <li><strong><span class="key">Ctrl</span> + Kliknięcie</strong> w nagłówek dnia zaznacza całą kolumnę dla tego dnia. To idealne rozwiązanie do masowej edycji.</li>
                     </ul>
                 </div>
 
-                <h4>Ręczne Zarządzanie (dedykowane okno)</h4>
-                <p>Aby uzyskać pełną kontrolę nad wyjątkami, zwłaszcza tymi wielodniowymi:</p>
-                <ol>
-                    <li>Zaznacz w grafiku komórki **jednego pracownika**, dla którego chcesz zarządzać wyjątkami.</li>
-                    <li>Kliknij przycisk <strong>"Wyjątki lokalizacyjne"</strong> pod grafikiem.</li>
-                    <li>W nowym oknie zobaczysz listę wyjątków, które pokrywają się z zaznaczonymi przez Ciebie dniami, wraz z datą modyfikacji i modyfikującym.</li>
-                </ol>
-                <p>W tym oknie możesz:</p>
+                <h3 id="ui-events">2.4. Panel Zdarzeń</h3>
+                <p>Ta tabela jest dynamiczna i pokazuje szczegóły **zdarzeń** (spotkań, szkoleń, nadgodzin) przypisanych do **aktualnie zaznaczonych komórek** w głównej tabeli grafiku. Posiada własny zestaw filtrów (zakres dat, status, temat, nazwa, typy zdarzeń) oraz przycisk "Odwołaj", który jest aktywny tylko dla zdarzeń o statusie pozwalającym na modyfikację.</p>
+
+                <h3 id="ui-buttons">2.5. Dolny Pasek Przycisków</h3>
                 <ul>
-                    <li><strong>Dodaj nowy:</strong> Otwiera formularz, w którym możesz zdefiniować nowy wyjątek dla zakresu dat. Aplikacja utworzy osobne wpisy dla każdego dnia z tego zakresu. Formularz jest automatycznie wypełniany zakresem dat zaznaczonym w grafiku.</li>
-                    <li><strong>Edytuj zaznaczony:</strong> Modyfikuje istniejący, pojedynczy wpis.</li>
-                    <li><strong>Usuń zaznaczony:</strong> Kasuje wybrany wyjątek (zarówno jedno- jak i wielodniowy) i **automatycznie aktualizuje główny grafik**, aby odzwierciedlić zmianę.</li>
-                    <li><strong>Podziel na dni:</strong> Jeśli posiadasz starszy, wielodniowy wpis, ten przycisk zamieni go na serię wpisów jednodniowych, co ułatwi dalsze, bardziej precyzyjne zarządzanie. Wpis w polu "Powód" zostanie wzbogacony o notatkę o podziale.</li>
+                    <li><strong>Dostosuj widok:</strong> Otwiera okno, w którym można zarządzać widocznością i kolejnością kolumn na liście pracowników oraz konfigurować zaawansowane, wielopoziomowe sortowanie danych.</li>
+                    <li><strong>Wyjątki lokalizacyjne:</strong> Umożliwia zarządzanie stałymi wyjątkami od domyślnej lokalizacji pracy dla wybranego pracownika.</li>
+                    <li><strong>Wstaw zmianę (F3):</strong> Otwiera okno do masowej edycji godzin i lokalizacji dla zaznaczonych komórek.</li>
+                    <li><strong>Wstaw nieobecność (F4):</strong> Otwiera okno do wstawiania symboli specjalnych (np. urlopów).</li>
+                    <li><strong>Odwołaj delegacje:</strong> Wyszukuje wszystkie zdarzenia dla zaznaczonych komórek i pozwala je masowo odwołać.</li>
+                    <li><strong>Dodaj nadgodziny (Insert):</strong> Otwiera okno do dodawania wpisu o nadgodzinach dla pojedynczej zaznaczonej komórki.</li>
                 </ul>
-            </section>
-            
-            <section id="zaawansowane">
-                <h2>6. Zaawansowane Funkcje</h2>
-                <ul>
-                    <li><strong>Historia Zmian:</strong> Pokazuje szczegółowy rejestr kto, co i kiedy zmienił w grafiku.</li>
-                    <li><strong>Obsada:</strong> Uruchamia zaawansowany moduł analityczny z wykresami, pozwalający na analizę obsady godzinowej, realizację prognozy i wiele więcej.</li>
-                    <li><strong>Zarządzaj Grafikiem:</strong> Umożliwia uprawnionym użytkownikom publikację i blokowanie grafiku na przyszły miesiąc.</li>
-                </ul>
-            </section>
-            
-            <section id="ustawienia">
-                <h2>7. Ustawienia Aplikacji</h2>
-                <p>Kliknij <strong>"Ustawienia"</strong> na górnym pasku, aby spersonalizować aplikację. Możesz tu zmienić motyw, czcionkę oraz domyślne parametry importu grafiku. Ustawienia okna, filtrów i kolumn zapisują się automatycznie przy zamykaniu.</p>
             </section>
 
-            <section id="skroty">
-                <h2>8. Skróty Klawiszowe</h2>
+            <section id="editing">
+                <h2>3. Edycja Grafiku</h2>
+
+                <h3 id="editing-keyboard">3.1. Edycja z Klawiatury</h3>
+                <p>Po zaznaczeniu jednej lub wielu komórek, można szybko wprowadzać zmiany z klawiatury:</p>
+                <ul>
+                    <li><strong>Godzina rozpoczęcia:</strong> Wpisanie cyfry (np. <code>8</code>) lub dwóch (np. <code>10</code>) wstawi zmianę z domyślną liczbą godzin.</li>
+                    <li><strong>Symbol nieobecności:</strong> Wpisanie liter (np. <code>U</code>, <code>CO</code>) wstawi odpowiedni symbol specjalny. Aplikacja czeka chwilę na wpisanie dłuższego symbolu.</li>
+                    <li><strong>Modyfikacja godzin:</strong> Klawisze <span class="key">+</span> i <span class="key">-</span> zwiększają lub zmniejszają liczbę godzin pracy w zaznaczonych komórkach.</li>
+                    <li><strong>Kasowanie:</strong> Klawisze <span class="key">Delete</span> lub <span class="key">Backspace</span> całkowicie czyszczą zawartość zaznaczonych komórek.</li>
+                </ul>
+
+                <h3 id="editing-dialogs">3.2. Edycja za pomocą okien dialogowych</h3>
+                <ul>
+                    <li><strong>Okno "Wstaw zmianę":</strong> Pozwala na szczegółową edycję wielu zaznaczonych dni. Posiada przyciski "Zastosuj" dla każdego wiersza, a także przycisk "Zatwierdź wszystkie zmiany", który przetwarza wszystkie zmodyfikowane wiersze naraz.</li>
+                    <li><strong>Okno "Wstaw nieobecność":</strong> Otwiera panel z listą wszystkich dostępnych symboli specjalnych. Symbole, do których użytkownik nie ma uprawnień, są nieaktywne.</li>
+                </ul>
+            </section>
+
+            <section id="advanced">
+                <h2>4. Funkcje Zaawansowane</h2>
+
+                <h3 id="advanced-copy">4.1. Kopiowanie do Schowka (<span class="key">Ctrl</span> + <span class="key">C</span>)</h3>
+                <p>Funkcja ta pozwala na szybkie przeniesienie fragmentu danych do Excela. Po zaznaczeniu wybranych wierszy i kolumn, naciśnięcie <code>Ctrl+C</code> kopiuje dane do schowka. Wklejenie ich w Excelu (`Ctrl+V`) utworzy gotową do analizy tabelę z nagłówkami.</p>
+
+                <h3 id="advanced-export">4.2. Eksport do Pliku Excel</h3>
+                <p>Przycisk "Eksportuj do Excel" tworzy sformatowany plik <code>.xlsx</code> zawierający dane dla wszystkich przefiltrowanych w danym momencie pracowników. Plik zawiera m.in. pokolorowane weekendy i zamrożone kolumny z danymi pracowników.</p>
+
+                <h3 id="advanced-analytics">4.3. Moduł Analityczny "Obsada"</h3>
+                <p>To osobne okno, które prezentuje dane z wybranego miesiąca w formie tabel i wykresów. Posiada następujące zakładki:</p>
+                <ul>
+                    <li><strong>Obsada Godzinowa/Dzienna:</strong> Pokazuje rozkład roboczogodzin w ujęciu godzinowym lub dziennym.</li>
+                    <li><strong>Prognoza vs. Rzeczywistość:</strong> Porównuje zaplanowaną obsadę z prognozą.</li>
+                    <li><strong>Symbole Specjalne:</strong> Przedstawia statystyki użycia poszczególnych symboli.</li>
+                    <li><strong>Analiza Absencji:</strong> Zawiera kluczowe wskaźniki (KPI) oraz tabelę ze szczegółami, w której można przechodzić między poziomami grupowania **Wydział &rarr; Przełożony &rarr; Pracownik** i cofać się za pomocą przycisku "Wróć".</li>
+                    <li><strong>Pozostałe zakładki:</strong> Analiza nadgodzin i elastyczności pracy (udział Home Office, SBC, etc.).</li>
+                </ul>
+
+                <h3 id="advanced-history">4.4. Historia Zmian</h3>
+                <p>Okno "Historia Zmian" wyświetla log wszystkich modyfikacji. Działa kontekstowo – jeśli przed jego otwarciem zostaną zaznaczone komórki, pokaże historię tylko dla nich.</p>
+            </section>
+
+            <section id="shortcuts">
+                <h2>5. Tabela Skrótów Klawiszowych</h2>
                 <table>
                     <thead>
-                        <tr><th>Klawisz</th><th>Akcja</th></tr>
+                        <tr><th>Skrót</th><th>Akcja</th></tr>
                     </thead>
                     <tbody>
-                        <tr><td><span class="klawisz">F1</span></td><td>Pokaż / ukryj panel filtrów</td></tr>
-                        <tr><td><span class="klawisz">F2</span></td><td>Pokaż / ukryj panel zdarzeń</td></tr>
-                        <tr><td><span class="klawisz">F3</span></td><td>Otwórz okno "Wstaw zmianę"</td></tr>
-                        <tr><td><span class="klawisz">F4</span></td><td>Otwórz okno "Wstaw nieobecność"</td></tr>
-                        <tr><td><span class="klawisz">Insert</span></td><td>Otwórz okno "Dodaj nadgodziny"</td></tr>
-                        <tr><td><span class="klawisz">F12</span></td><td>Usuń tylko symbol specjalny (pozostaw godziny)</td></tr>
+                        <tr><td><span class="key">Ctrl</span> + <span class="key">C</span></td><td>Kopiuje zaznaczone dane do schowka w formacie tabelarycznym.</td></tr>
+                        <tr><td><span class="key">F1</span></td><td>Pokazuje/ukrywa lewy panel z filtrami.</td></tr>
+                        <tr><td><span class="key">F2</span></td><td>Pokazuje/ukrywa dolny panel ze zdarzeniami.</td></tr>
+                        <tr><td><span class="key">F3</span></td><td>Otwiera okno "Wstaw zmianę".</td></tr>
+                        <tr><td><span class="key">F4</span></td><td>Otwiera okno "Wstaw nieobecność".</td></tr>
+                        <tr><td><span class="key">F12</span></td><td>Usuwa symbol specjalny (np. urlop), pozostawiając godziny pracy.</td></tr>
+                        <tr><td><span class="key">Insert</span></td><td>Otwiera okno "Dodaj nadgodziny".</td></tr>
+                        <tr><td><span class="key">Delete</span> / <span class="key">Backspace</span></td><td>Całkowicie czyści zawartość zaznaczonych komórek.</td></tr>
                     </tbody>
                 </table>
-            </section>
-
-            <section id="rozwoj">
-                <h2>9. Możliwości Rozwoju: Automatyczne Generowanie Grafiku</h2>
-                <p>Twoja aplikacja ma potencjał, aby stać się jeszcze potężniejszym narzędziem dzięki integracji z biblioteką <strong>Google OR-Tools</strong>. Pozwala ona na automatyczne tworzenie optymalnych harmonogramów pracy.</p>
-                <div class="wskazowka">
-                    <p>💡 <strong>Jak to działa?</strong> Zamiast ręcznie układać grafik, definiuje się w kodzie zestaw reguł (np. "wymagane 5 osób na zmianie", "11h odpoczynku między zmianami", "Anna woli zmiany poranne"). Następnie "silnik" od Google w kilka sekund znajduje najlepszy możliwy grafik, który spełnia wszystkie te warunki i maksymalizuje zadowolenie pracowników.</p>
-                </div>
-                <p>Integracja takiego rozwiązania mogłaby w przyszłości zautomatyzować najtrudniejszą i najbardziej czasochłonną część procesu planowania.</p>
             </section>
         </main>
 
         <footer>
-            <p>&copy; 2025 TeamFlowApp</p>
+            <p>TeamFlowApp &copy; 2025. Wszelkie prawa zastrzeżone.</p>
         </footer>
     </div>
-
 </body>
 </html>
