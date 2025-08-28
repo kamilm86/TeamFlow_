@@ -49,7 +49,7 @@ class SettingsDatabase:
             'visible_columns': ['wydzial', 'przelozony_nazwisko_imie', 'uzytkownik_dane'],
             'show_schedule_comment': False, 'import_grupa': 3, 'import_funkcja': 1,
             'is_maximized': True, 'window_size': (1600, 800),
-            'column_widths': {}, 'last_filters': {}
+            'column_widths': {}, 'last_filters': {},  'sort_preferences': []
         }
 
         try:
