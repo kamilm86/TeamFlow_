@@ -1,150 +1,200 @@
+# column_select_dialog.py
+
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-                               QListWidget, QListWidgetItem, QAbstractItemView, QCheckBox, QFrame)
+                               QListWidget, QListWidgetItem, QAbstractItemView, QCheckBox,
+                               QFrame, QGroupBox, QTableWidget, QTableWidgetItem, QComboBox,
+                               QHeaderView)
 from PySide6.QtCore import Qt
 from styles import AppStyles
-from app_settings import app_settings # ZMIANA
+from app_settings import app_settings
 
 
 class ColumnSelectDialog(QDialog):
-    """Dialog do wyboru kolumn widocznych w tabeli pracowników."""
+    """
+    Dialog do wyboru kolumn, ich kolejności ORAZ konfiguracji
+    wielopoziomowego sortowania za pomocą nowej, niezawodnej tabeli.
+    """
 
     def __init__(self, parent=None, available_columns=None, visible_columns=None,
-                 default_columns=None, user_role=None, is_comment_column_checked=False):
+                 default_columns=None, user_role=None, is_comment_column_checked=False,
+                 sort_preferences=None):
         super().__init__(parent)
         self.parent_widget = parent
+        self.setWindowTitle("Dostosowywanie widoku tabeli")
+        self.setMinimumWidth(600)
+        self.setMinimumHeight(550)
 
-        self.setWindowTitle("Wybór i kolejność kolumn")
-        self.setMinimumWidth(350)
-        self.setMinimumHeight(450)
-
+        # Dane
         self.available_columns = available_columns or []
         self.visible_columns = visible_columns or []
         self.default_columns = default_columns or []
-        self.column_map = {col_id: (name, width) for col_id, name, width in self.available_columns}
-
+        self.column_map = {col_id: name for col_id, name, width in self.available_columns}
         self.user_role = user_role
+        self.sort_preferences = sort_preferences if sort_preferences is not None else []
 
+        # Poprawna kolejność inicjalizacji
         self.setup_ui(is_comment_column_checked)
+        self.populate_lists()
         self.apply_dialog_theme()
-
-    def apply_dialog_theme(self):
-        actual_theme = "dark"
-        if self.parent_widget and hasattr(self.parent_widget, 'is_dark_theme'):
-            actual_theme = "dark" if self.parent_widget.is_dark_theme else "light"
-
-        self.setStyleSheet(AppStyles.get_dialog_style(actual_theme))
-
-        if actual_theme == "dark":
-            unchecked_bg = AppStyles.DARK_BACKGROUND_MAIN
-            unchecked_border = AppStyles.DARK_BORDER_PRIMARY
-            accent_color = AppStyles.ACCENT_COLOR_DARK
-            accent_hover = AppStyles.ACCENT_COLOR_DARK_HOVER
-        else:
-            unchecked_bg = AppStyles.LIGHT_BACKGROUND_CONTROLS
-            unchecked_border = AppStyles.LIGHT_BORDER_SECONDARY
-            accent_color = AppStyles.ACCENT_COLOR_LIGHT
-            accent_hover = AppStyles.ACCENT_COLOR_LIGHT_HOVER
-
-        list_style = f"""
-            QListWidget {{
-                background-color: {AppStyles.DARK_BACKGROUND_CONTROLS if actual_theme == 'dark' else AppStyles.LIGHT_BACKGROUND_CONTROLS};
-                color: {AppStyles.DARK_TEXT_PRIMARY if actual_theme == 'dark' else AppStyles.LIGHT_TEXT_PRIMARY};
-                border: 1px solid {AppStyles.DARK_BORDER_SECONDARY if actual_theme == 'dark' else AppStyles.LIGHT_BORDER_PRIMARY};
-                border-radius: {AppStyles.BORDER_RADIUS};
-            }}
-            QListWidget::item:selected {{
-                background-color: {AppStyles.DARK_BACKGROUND_HOVER if actual_theme == 'dark' else AppStyles.LIGHT_BACKGROUND_HOVER};
-                border: 1px solid {accent_color};
-                border-radius: 2px;
-            }}
-            QListWidget::indicator {{ width: 13px; height: 13px; border-radius: 3px; }}
-            QListWidget::indicator:unchecked {{ background-color: {unchecked_bg}; border: 1px solid {unchecked_border}; }}
-            QListWidget::indicator:unchecked:hover {{ border: 1px solid {accent_color}; }}
-            QListWidget::indicator:checked {{ background-color: {accent_color}; border: 1px solid {accent_hover}; image: none; }}
-        """
-        self.columns_list.setStyleSheet(list_style)
-
-        button_style = AppStyles.get_button_style(actual_theme)
-        self.move_up_button.setStyleSheet(button_style)
-        self.move_down_button.setStyleSheet(button_style)
-        self.restore_default_button.setStyleSheet(button_style)
-        self.ok_button.setStyleSheet(button_style)
-        self.cancel_button.setStyleSheet(button_style)
-        self.komentarz_checkbox.setStyleSheet(AppStyles.get_checkbox_style(actual_theme))
 
     def setup_ui(self, is_comment_checked):
         main_layout = QVBoxLayout(self)
-        instruction_label = QLabel("Wybierz i uporządkuj kolumny, które mają być widoczne:")
-        main_layout.addWidget(instruction_label)
 
+        # --- Sekcja widoczności kolumn (bez zmian) ---
+        columns_group = QGroupBox("Widoczność i kolejność kolumn")
+        columns_group_layout = QVBoxLayout(columns_group)
         columns_layout = QHBoxLayout()
         self.columns_list = QListWidget()
         self.columns_list.setSelectionMode(QAbstractItemView.SingleSelection)
         self.columns_list.setDragDropMode(QAbstractItemView.InternalMove)
-
         order_buttons_layout = QVBoxLayout()
         self.move_up_button = QPushButton("▲ Wyżej")
         self.move_down_button = QPushButton("▼ Niżej")
-        self.move_up_button.clicked.connect(self.move_item_up)
-        self.move_down_button.clicked.connect(self.move_item_down)
         order_buttons_layout.addWidget(self.move_up_button)
         order_buttons_layout.addWidget(self.move_down_button)
         order_buttons_layout.addStretch()
-
         columns_layout.addWidget(self.columns_list)
         columns_layout.addLayout(order_buttons_layout)
-        main_layout.addLayout(columns_layout)
+        columns_group_layout.addLayout(columns_layout)
+
+        # --- NOWA SEKCJA SORTOWANIA ---
+        sort_group = QGroupBox("Ustawienia sortowania danych")
+        sort_group_layout = QVBoxLayout(sort_group)
+
+        sort_buttons_layout = QHBoxLayout()
+        self.add_sort_level_button = QPushButton("[+] Dodaj poziom sortowania")
+        self.remove_sort_level_button = QPushButton("[-] Usuń poziom sortowania")
+        sort_buttons_layout.addWidget(self.add_sort_level_button)
+        sort_buttons_layout.addWidget(self.remove_sort_level_button)
+        sort_buttons_layout.addStretch()
+        sort_group_layout.addLayout(sort_buttons_layout)
+
+        self.sort_table = QTableWidget()
+        self.sort_table.setColumnCount(3)
+        self.sort_table.setHorizontalHeaderLabels(["Poziom", "Kolumna", "Kierunek"])
+        self.sort_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.sort_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.sort_table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeToContents)
+        self.sort_table.setSelectionBehavior(QAbstractItemView.SelectRows)
+        self.sort_table.verticalHeader().setVisible(False)
+        sort_group_layout.addWidget(self.sort_table)
+
+        # --- Reszta UI ---
+        main_layout.addWidget(columns_group)
+        main_layout.addWidget(sort_group)
 
         separator = QFrame()
         separator.setFrameShape(QFrame.HLine)
         separator.setFrameShadow(QFrame.Sunken)
-        main_layout.addWidget(separator)
-
         self.komentarz_checkbox = QCheckBox("Pokaż kolumnę 'Komentarz do Grafiku'")
         self.komentarz_checkbox.setChecked(is_comment_checked)
         self.komentarz_checkbox.setVisible(app_settings.has_permission(self.user_role, 'view_schedule_comment_column'))
-        main_layout.addWidget(self.komentarz_checkbox)
 
         buttons_layout = QHBoxLayout()
         self.restore_default_button = QPushButton("Przywróć domyślne")
         self.ok_button = QPushButton("OK")
         self.cancel_button = QPushButton("Anuluj")
-        self.restore_default_button.clicked.connect(self.restore_default_columns)
-        self.ok_button.clicked.connect(self.accept)
-        self.cancel_button.clicked.connect(self.reject)
-
         buttons_layout.addWidget(self.restore_default_button)
         buttons_layout.addStretch()
         buttons_layout.addWidget(self.ok_button)
         buttons_layout.addWidget(self.cancel_button)
+
+        main_layout.addWidget(separator)
+        main_layout.addWidget(self.komentarz_checkbox)
         main_layout.addLayout(buttons_layout)
 
-        self.populate_columns_list()
-        self.columns_list.itemSelectionChanged.connect(self.update_button_states)
+        self.connect_signals()
         self.update_button_states()
+        self._update_sort_buttons_state()
 
-    def populate_columns_list(self):
+    def connect_signals(self):
+        self.ok_button.clicked.connect(self.accept)
+        self.cancel_button.clicked.connect(self.reject)
+        self.restore_default_button.clicked.connect(self.restore_default_columns)
+        self.move_up_button.clicked.connect(self.move_item_up)
+        self.move_down_button.clicked.connect(self.move_item_down)
+        self.columns_list.itemSelectionChanged.connect(self.update_button_states)
+
+        self.add_sort_level_button.clicked.connect(self._add_sort_row)
+        self.remove_sort_level_button.clicked.connect(self._remove_sort_row)
+        self.sort_table.itemSelectionChanged.connect(self._update_sort_buttons_state)
+
+    def populate_lists(self):
+        # Wypełnianie listy kolumn
         self.columns_list.clear()
         for col_id in self.visible_columns:
             if col_id in self.column_map:
-                name, _ = self.column_map[col_id]
-                item = QListWidgetItem(name)
+                name = self.column_map[col_id]
+                item = QListWidgetItem(name);
                 item.setData(Qt.UserRole, col_id)
-                item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+                item.setFlags(item.flags() | Qt.ItemIsUserCheckable);
                 item.setCheckState(Qt.Checked)
                 self.columns_list.addItem(item)
 
         visible_ids = set(self.visible_columns)
         for col_id, name, _ in self.available_columns:
-            if col_id == 'komentarz_grafik':
-                continue
             if col_id not in visible_ids:
-                item = QListWidgetItem(name)
+                item = QListWidgetItem(name);
                 item.setData(Qt.UserRole, col_id)
-                item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+                item.setFlags(item.flags() | Qt.ItemIsUserCheckable);
                 item.setCheckState(Qt.Unchecked)
                 self.columns_list.addItem(item)
 
+        # Wypełnianie tabeli sortowania
+        self.sort_table.setRowCount(0)
+        for col_id, direction in self.sort_preferences:
+            self._add_sort_row(col_id, direction)
+        self._update_sort_buttons_state()
+
+    def _add_sort_row(self, col_id=None, direction='asc'):
+        row_position = self.sort_table.rowCount()
+        self.sort_table.insertRow(row_position)
+
+        level_item = QTableWidgetItem(str(row_position + 1))
+        level_item.setFlags(level_item.flags() & ~Qt.ItemIsEditable)
+        self.sort_table.setItem(row_position, 0, level_item)
+
+        combo_column = QComboBox()
+        for c_id, c_name, _ in self.available_columns:
+            combo_column.addItem(c_name, c_id)
+        if col_id:
+            index = combo_column.findData(col_id)
+            if index != -1: combo_column.setCurrentIndex(index)
+        self.sort_table.setCellWidget(row_position, 1, combo_column)
+
+        combo_direction = QComboBox()
+        combo_direction.addItem("Rosnąco", 'asc')
+        combo_direction.addItem("Malejąco", 'desc')
+        if direction == 'desc': combo_direction.setCurrentIndex(1)
+        self.sort_table.setCellWidget(row_position, 2, combo_direction)
+
+        self._update_sort_buttons_state()
+
+    def _remove_sort_row(self):
+        current_row = self.sort_table.currentRow()
+        if current_row >= 0:
+            self.sort_table.removeRow(current_row)
+            for row in range(self.sort_table.rowCount()):
+                self.sort_table.item(row, 0).setText(str(row + 1))
+        self._update_sort_buttons_state()
+
+    def _update_sort_buttons_state(self):
+        can_remove = self.sort_table.currentRow() >= 0
+        self.remove_sort_level_button.setEnabled(can_remove)
+
+    def get_sort_preferences(self) -> list:
+        prefs = []
+        for row in range(self.sort_table.rowCount()):
+            combo_column = self.sort_table.cellWidget(row, 1)
+            combo_direction = self.sort_table.cellWidget(row, 2)
+            if combo_column and combo_direction:
+                col_id = combo_column.currentData()
+                direction = combo_direction.currentData()
+                if col_id:
+                    prefs.append((col_id, direction))
+        return prefs
+
+    # Metody do obsługi starej listy kolumn (bez zmian)
     def update_button_states(self):
         current_row = self.columns_list.currentRow()
         item_count = self.columns_list.count()
@@ -152,32 +202,45 @@ class ColumnSelectDialog(QDialog):
         self.move_down_button.setEnabled(current_row >= 0 and current_row < item_count - 1)
 
     def move_item_up(self):
-        current_row = self.columns_list.currentRow()
-        if current_row > 0:
-            current_item = self.columns_list.takeItem(current_row)
-            self.columns_list.insertItem(current_row - 1, current_item)
-            self.columns_list.setCurrentRow(current_row - 1)
+        row = self.columns_list.currentRow()
+        if row > 0:
+            item = self.columns_list.takeItem(row)
+            self.columns_list.insertItem(row - 1, item)
+            self.columns_list.setCurrentRow(row - 1)
 
     def move_item_down(self):
-        current_row = self.columns_list.currentRow()
-        if current_row >= 0 and current_row < self.columns_list.count() - 1:
-            current_item = self.columns_list.takeItem(current_row)
-            self.columns_list.insertItem(current_row + 1, current_item)
-            self.columns_list.setCurrentRow(current_row + 1)
+        row = self.columns_list.currentRow()
+        if row < self.columns_list.count() - 1:
+            item = self.columns_list.takeItem(row)
+            self.columns_list.insertItem(row + 1, item)
+            self.columns_list.setCurrentRow(row + 1)
 
     def restore_default_columns(self):
         self.visible_columns = self.default_columns.copy()
-        self.populate_columns_list()
+        self.populate_lists()
 
     def get_selected_columns(self):
-        selected_columns = []
-        for i in range(self.columns_list.count()):
-            item = self.columns_list.item(i)
-            if item.checkState() == Qt.Checked:
-                col_id = item.data(Qt.UserRole)
-                selected_columns.append(col_id)
-        return selected_columns
+        return [self.columns_list.item(i).data(Qt.UserRole) for i in range(self.columns_list.count()) if
+                self.columns_list.item(i).checkState() == Qt.Checked]
 
     def get_comment_column_state(self):
-        """Zwraca stan zaznaczenia checkboxa komentarza."""
         return self.komentarz_checkbox.isChecked()
+
+    def apply_dialog_theme(self):
+        actual_theme = "dark"
+        if self.parent_widget and hasattr(self.parent_widget, 'is_dark_theme'):
+            actual_theme = "dark" if self.parent_widget.is_dark_theme else "light"
+
+        self.setStyleSheet(AppStyles.get_dialog_style(actual_theme))
+        self.columns_list.setStyleSheet(AppStyles.get_list_style(actual_theme))
+        self.sort_table.setStyleSheet(AppStyles.get_tablewidget_style(actual_theme))
+
+        button_style = AppStyles.get_button_style(actual_theme)
+        for btn in [self.move_up_button, self.move_down_button, self.restore_default_button,
+                    self.ok_button, self.cancel_button, self.add_sort_level_button, self.remove_sort_level_button]:
+            btn.setStyleSheet(button_style)
+
+        for combo in self.sort_table.findChildren(QComboBox):
+            combo.setStyleSheet(AppStyles.get_combobox_style(actual_theme))
+
+        self.komentarz_checkbox.setStyleSheet(AppStyles.get_checkbox_style(actual_theme))
