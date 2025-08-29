@@ -65,6 +65,7 @@
             }}
         """
 
+
 # W pliku: column_select_dialog.py
 
     def apply_dialog_theme(self):
@@ -78,12 +79,21 @@
         checkable_list_style = AppStyles.get_checkable_list_style(actual_theme)
         self.columns_list.setStyleSheet(checkable_list_style)
         
-        # Style dla pozostałych list i tabeli (bez zmian)
+        # Style dla pozostałych list i tabeli
         list_style = AppStyles.get_list_style(actual_theme)
-        self.available_sort_list.setStyleSheet(list_style)
-        self.applied_sort_list.setStyleSheet(list_style)
-        self.sort_table.setStyleSheet(AppStyles.get_tablewidget_style(actual_theme))
+        if hasattr(self, 'available_sort_list'): # Sprawdzenie dla starszej wersji UI
+            self.available_sort_list.setStyleSheet(list_style)
+            self.applied_sort_list.setStyleSheet(list_style)
+        
+        if hasattr(self, 'sort_table'): # Dla nowej wersji UI
+            self.sort_table.setStyleSheet(AppStyles.get_tablewidget_style(actual_theme))
+            for combo in self.sort_table.findChildren(QComboBox):
+                combo.setStyleSheet(AppStyles.get_combobox_style(actual_theme))
 
-        # Style przycisków i innych kontrolek (bez zmian)
+        # Style przycisków i innych kontrolek
         button_style = AppStyles.get_button_style(actual_theme)
-        # ... (reszta metody `apply_dialog_theme`)
+        all_buttons = self.findChildren(QPushButton)
+        for btn in all_buttons:
+            btn.setStyleSheet(button_style)
+        
+        self.komentarz_checkbox.setStyleSheet(AppStyles.get_checkbox_style(actual_theme))
