@@ -1,133 +1,213 @@
-Tak, to jest doskonały i bardzo profesjonalny pomysł. Przeniesienie logiki dynamicznego MERGE do reużywalnej procedury składowanej w SQL Server to najlepsze możliwe rozwiązanie.
-Zyskujesz dzięki temu kilka kluczowych korzyści:
- * ✅ Upraszcza kod Pythona: Skrypt w Pythonie staje się banalnie prosty – jego jedynym zadaniem jest załadowanie danych do tabeli przejściowej i wywołanie jednej procedury.
- * 🚀 Zwiększa wydajność: Logika działa w całości po stronie serwera bazy danych, co eliminuje przesyłanie długich zapytań przez sieć i pozwala SQL Serverowi na optymalizację planu wykonania.
- * 🔒 Poprawia bezpieczeństwo: Hermetyzujesz logikę wewnątrz bazy danych i możesz nadać uprawnienia tylko do wykonania tej procedury, zamiast do operacji na tabelach docelowych.
- * 🔧 Ułatwia utrzymanie: Jeśli logika MERGE kiedykolwiek będzie wymagała zmiany, modyfikujesz ją w jednym miejscu (w procedurze), bez dotykania kodu Pythona.
-## Krok 1: Stworzenie procedury składowanej w SQL Server
-Poniżej znajduje się kod T-SQL procedury, która dynamicznie buduje i wykonuje polecenie MERGE. Procedura pobiera nazwy kolumn bezpośrednio z systemowych widoków katalogu bazy danych (sys.columns).
-Co robi ta procedura?
- * Przyjmuje trzy parametry: nazwę tabeli źródłowej (przejściowej), docelowej oraz listę kolumn klucza (np. 'id' lub 'OrderID,ProductID').
- * Pobiera listę wszystkich kolumn ze wskazanej tabeli źródłowej.
- * Dynamicznie konstruuje całe polecenie MERGE jako tekst.
- * Bezpiecznie wykonuje zbudowane polecenie za pomocą sp_executesql.
-<!-- end list -->
-CREATE OR ALTER PROCEDURE [dbo].[usp_DynamicMerge]
-    @SourceTable NVARCHAR(255),
-    @TargetTable NVARCHAR(255),
-    @KeyColumns NVARCHAR(MAX) -- Comma-separated list of key columns, e.g., 'ID' or 'OrderID,ProductID'
-AS
-BEGIN
-    SET NOCOUNT ON;
+# staffing_details_window.py
 
-    DECLARE @SQL NVARCHAR(MAX);
-    DECLARE @UpdateColumns NVARCHAR(MAX);
-    DECLARE @InsertColumns NVARCHAR(MAX);
-    DECLARE @SourceInsertColumns NVARCHAR(MAX);
-    DECLARE @JoinCondition NVARCHAR(MAX);
+from PySide6.QtWidgets import (QDialog, QVBoxLayout, QTableView, QPushButton, QComboBox,
+                               QHeaderView, QLabel, QHBoxLayout, QSplitter, QWidget, QTabWidget,
+                               QListWidget, QAbstractItemView, QFrame, QGridLayout, QToolTip)
+from PySide6.QtCore import Qt, QAbstractTableModel, QDate, Signal
+from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QCursor
+from PySide6.QtCharts import QChart, QChartView, QBarSeries, QBarSet, QPieSeries, QLineSeries, QValueAxis, \
+    QBarCategoryAxis, QStackedBarSeries
 
-    -- 1. Dynamiczne tworzenie warunku JOIN (ON clause)
-    -- Przykład: target.[OrderID] = source.[OrderID] AND target.[ProductID] = source.[ProductID]
-    SELECT @JoinCondition = STRING_AGG(
-        CONCAT('target.[', LTRIM(RTRIM(value)), '] = source.[', LTRIM(RTRIM(value)), ']'),
-        ' AND '
-    )
-    FROM STRING_SPLIT(@KeyColumns, ',');
+from collections import defaultdict
+import datetime as dt
+from debug_utils import log_error, debug_print
+from symbol_parser import parse_symbol
+from styles import AppStyles
 
-    -- 2. Dynamiczne tworzenie listy kolumn do aktualizacji (UPDATE SET clause)
-    -- Pomijamy kolumny klucza, bo ich się nie aktualizuje
-    SELECT @UpdateColumns = STRING_AGG(
-        CONCAT('target.[', c.name, '] = source.[', c.name, ']'),
-        ', '
-    )
-    FROM sys.columns c
-    JOIN sys.tables t ON c.object_id = t.object_id
-    WHERE t.name = @SourceTable
-      AND c.name NOT IN (SELECT LTRIM(RTRIM(value)) FROM STRING_SPLIT(@KeyColumns, ','));
+# Wszystkie klasy Modeli Tabel (HourlyStaffingTableModel, BaseMatrixTableModel, etc.) pozostają bez zmian.
+# Poniżej znajduje się tylko główna klasa okna z poprawionymi metodami obliczeniowymi.
 
-    -- 3. Dynamiczne tworzenie listy kolumn do wstawienia (INSERT clause)
-    SELECT 
-        @InsertColumns = STRING_AGG(CONCAT('[', c.name, ']'), ', '),
-        @SourceInsertColumns = STRING_AGG(CONCAT('source.[', c.name, ']'), ', ')
-    FROM sys.columns c
-    JOIN sys.tables t ON c.object_id = t.object_id
-    WHERE t.name = @SourceTable;
+class StaffingDetailsWindow(QDialog):
+    # ... (kod __init__, setup_ui, apply_styles i inne metody UI bez zmian)
 
-    -- 4. Złożenie całego polecenia MERGE
-    SET @SQL = N'
-    MERGE ' + @TargetTable + N' AS target
-    USING ' + @SourceTable + N' AS source
-    ON (' + @JoinCondition + N')
+    # ZMIENIONA METODA
+    def _calculate_hourly_staffing(self, schedule_data, all_events, option="all", location_filter=None):
+        """Oblicza obsadę godzina po godzinie dla każdego dnia."""
+        days = self._days_in_month
+        schedule_matrix = [[0.0] * days for _ in range(24)]
+        overtime_matrix = [[0.0] * days for _ in range(24)]
+        events_matrix = [[0.0] * days for _ in range(24)]
 
-    WHEN MATCHED THEN
-        UPDATE SET ' + @UpdateColumns + N'
+        events_map = self._get_events_duration_per_hour(all_events)
+        location_map = self._get_daily_location_map(schedule_data)
 
-    WHEN NOT MATCHED BY TARGET THEN
-        INSERT (' + @InsertColumns + N')
-        VALUES (' + @SourceInsertColumns + N');';
+        for user_key, user_schedule in schedule_data.items():
+            if user_schedule.get('dtn') == 1:
+                continue
 
-    -- Wyświetlenie wygenerowanego polecenia do celów diagnostycznych
-    PRINT @SQL;
+            korekta = float(user_schedule.get('korekta', 0.0) or 0.0)
 
-    -- Bezpieczne wykonanie dynamicznego SQL
-    EXEC sp_executesql @SQL;
+            for day, day_info in user_schedule.get('days', {}).items():
+                day_idx = day - 1
+                parsed = parse_symbol(day_info.get('symbol', ''))
 
-END;
-GO
+                if parsed.get('special_symbol') is not None and parsed.get('special_symbol').strip() != '':
+                    continue
 
-Jak uruchomić ten kod?
-Wystarczy wkleić go i wykonać w SQL Server Management Studio (SSMS) lub dowolnym innym kliencie SQL połączonym z Twoją bazą danych. Procedura zostanie zapisana na stałe.
-## Krok 2: Uproszczony kod w Python
-Teraz Twój skrypt w Pythonie staje się znacznie czystszy. Cała skomplikowana logika budowania SQL zniknęła.
-import pandas as pd
-from sqlalchemy import create_engine, text
-from urllib.parse import quote_plus
+                if location_filter and location_filter != "-Wszystkie-" and location_map.get((user_key[3], day)) != location_filter:
+                    continue
 
-# --- Konfiguracja połączenia (bez zmian) ---
-db_server = "TWOJ_SERWER"
-db_name = "TWOJA_BAZA"
-# ... reszta konfiguracji ...
-connection_string = f"mssql+pyodbc://{db_user}:{quote_plus(db_password)}@{db_server}/{db_name}?driver=ODBC+Driver+17+for+SQL+Server"
-engine = create_engine(connection_string, fast_executemany=True)
+                start, base_hours = parsed.get('start_hour'), parsed.get('work_hours')
 
-# --- Przygotowanie danych (bez zmian) ---
-df_from_impala = pd.DataFrame({
-    'id_produktu': [101, 102, 104, 105],
-    'nazwa_produktu': ['Produkt A (zmieniony)', 'Produkt B', 'Produkt D (nowy)', 'Produkt E (nowy)'],
-    'cena': [150.50, 200.0, 400.75, 500.0],
-    'kategoria_id': [1, 1, 2, 2]
-})
+                if start is not None and base_hours is not None:
+                    final_hours = base_hours + korekta
+                    if final_hours > 0:
+                        for h in range(int(final_hours)):
+                            hour = (start + h) % 24
+                            schedule_matrix[hour][day_idx] += 1.0
+                            if events_map.get(user_key[3], {}).get(day, {}).get(hour, 0) > 30:
+                                events_matrix[hour][day_idx] += 1.0
 
-# --- NOWA, UPROSZCZONA LOGIKA ---
+        user_ids_in_view = {k[3] for k in schedule_data.keys()}
+        for event in all_events:
+            if event.get('type') == 'Nadgodziny' and event.get('user_id') in user_ids_in_view:
+                try:
+                    user_id = event.get('user_id')
+                    user_data = next((data for key, data in schedule_data.items() if key[3] == user_id), None)
+                    if user_data and user_data.get('dtn') == 1:
+                        continue
+                    
+                    day = int(event.get('date_key', '0-0-0').split('-')[2])
+                    if location_filter and location_filter != "-Wszystkie-" and location_map.get((user_id, day)) != location_filter:
+                        continue
 
-# Definicja nazw i kluczy
-staging_table_name = "Staging_MojeDane"
-target_table_name = "Docelowa_MojeDane"
-key_columns = "id_produktu" # Dla klucza złożonego: "klucz1,klucz2"
+                    day_idx = day - 1
+                    # POPRAWKA FORMATU DATY
+                    t_from = dt.datetime.strptime(event.get('time_from', '1900-01-01 00:00'), '%Y-%m-%d %H:%M')
+                    t_to = dt.datetime.strptime(event.get('time_to', '1900-01-01 00:00'), '%Y-%m-%d %H:%M')
+                    
+                    duration_s = (t_to - t_from).total_seconds()
+                    if duration_s < 0: duration_s += 86400
+                    
+                    current_time = t_from
+                    while duration_s > 1:
+                        hour, minutes_in_slot = current_time.hour, 60 - current_time.minute
+                        seconds_in_slot = min(minutes_in_slot * 60, duration_s)
+                        if 0 <= hour < 24 and 0 <= day_idx < days:
+                            overtime_matrix[hour][day_idx] += seconds_in_slot / 3600.0
+                        duration_s -= seconds_in_slot
+                        current_time += dt.timedelta(seconds=seconds_in_slot)
+                except (ValueError, IndexError):
+                    continue
 
-# 1. Załaduj dane do tabeli przejściowej (bez zmian)
-df_from_impala.to_sql(staging_table_name, engine, if_exists='replace', index=False)
-print(f"Dane załadowane do tabeli przejściowej: {staging_table_name}")
+        if option == "schedule_only": return schedule_matrix
+        if option == "overtime_only": return overtime_matrix
+        if option == "all":
+            return [[s + o for s, o in zip(s_row, o_row)] for s_row, o_row in zip(schedule_matrix, overtime_matrix)]
+        if option == "events_only": return events_matrix
+        if option == "schedule_minus_events":
+            return [[s - e for s, e in zip(s_row, e_row)] for s_row, e_row in zip(schedule_matrix, events_matrix)]
 
-# 2. Wywołaj procedurę składowaną
-print("Wywoływanie procedury składowanej usp_DynamicMerge...")
+        return [[0.0] * days for _ in range(24)]
 
-# Używamy `text()` z SQLAlchemy, aby bezpiecznie przekazać parametry
-# `connection.execution_options(autocommit=True)` jest ważne, bo DDL/procedury często wymagają tego trybu
-with engine.connect().execution_options(autocommit=True) as connection:
-    procedure_call = text("""
-        EXEC dbo.usp_DynamicMerge 
-            @SourceTable = :source, 
-            @TargetTable = :target, 
-            @KeyColumns = :keys
-    """)
-    
-    connection.execute(procedure_call, {
-        "source": staging_table_name,
-        "target": target_table_name,
-        "keys": key_columns
-    })
+    # ZMIENIONA METODA
+    def _calculate_daily_staffing(self, schedule_data, all_events, option="all", location_filter=None):
+        """Oblicza obsadę dzienną, uwzględniając wszystkie filtry i ignorując godziny z symbolami specjalnymi."""
+        summary_schedule = defaultdict(lambda: defaultdict(float))
+        summary_overtime = defaultdict(lambda: defaultdict(float))
+        summary_events = defaultdict(lambda: defaultdict(float))
 
-print("✅ Operacja MERGE zakończona pomyślnie przez procedurę składowaną!")
+        events_map = self._get_events_duration_per_hour(all_events)
+        location_map = self._get_daily_location_map(schedule_data)
 
-To podejście jest skalowalne, wydajne i zgodne z najlepszymi praktykami inżynierii danych. Teraz możesz używać tego samego skryptu Pythona do synchronizacji wielu różnych tabel, zmieniając jedynie parametry wywołania.
+        for user_key, user_schedule in schedule_data.items():
+            if user_schedule.get('dtn') == 1:
+                continue
+
+            user_id, wydzial = user_key[3], user_key[0] or "Brak"
+            korekta = float(user_schedule.get('korekta', 0.0) or 0.0)
+
+            for day, day_info in user_schedule.get('days', {}).items():
+                parsed = parse_symbol(day_info.get('symbol', ''))
+
+                if parsed.get('special_symbol') is not None and parsed.get('special_symbol').strip() != '':
+                    continue
+
+                shift_location = location_map.get((user_id, day))
+                if location_filter and location_filter != "-Wszystkie-" and shift_location != location_filter:
+                    continue
+
+                start, base_hours = parsed.get('start_hour'), parsed.get('work_hours')
+                final_hours = base_hours + korekta if base_hours is not None else 0
+
+                if start is not None and final_hours > 0:
+                    summary_schedule[wydzial][day - 1] += final_hours
+                    lost_hours = sum(1 for h in range(int(final_hours)) if
+                                     events_map.get(user_id, {}).get(day, {}).get((start + h) % 24, 0) > 30)
+                    if lost_hours > 0:
+                        summary_events[wydzial][day - 1] += lost_hours
+        
+        user_to_dept = {k[3]: k[0] or "Brak" for k in schedule_data.keys()}
+        for event in all_events:
+            if event.get('type') == 'Nadgodziny' and event.get('user_id') in user_to_dept:
+                try:
+                    user_id = event.get('user_id')
+                    user_data = next((data for key, data in schedule_data.items() if key[3] == user_id), None)
+                    if user_data and user_data.get('dtn') == 1:
+                        continue
+                    
+                    day = int(event.get('date_key', '0-0-0').split('-')[2])
+                    event_location = location_map.get((user_id, day))
+                    if location_filter and location_filter != "-Wszystkie-" and event_location != location_filter:
+                        continue
+
+                    # POPRAWKA FORMATU DATY
+                    t_from = dt.datetime.strptime(event.get('time_from', '1900-01-01 00:00'), '%Y-%m-%d %H:%M')
+                    t_to = dt.datetime.strptime(event.get('time_to', '1900-01-01 00:00'), '%Y-%m-%d %H:%M')
+                    
+                    duration = (t_to - t_from).total_seconds() / 3600.0
+                    if duration < 0: duration += 24.0
+                    summary_overtime[user_to_dept[user_id]][day - 1] += duration
+                except (ValueError, IndexError):
+                    continue
+
+        all_depts = set(summary_schedule.keys()) | set(summary_overtime.keys()) | set(summary_events.keys())
+        final_summary = defaultdict(lambda: [0.0] * self._days_in_month)
+        for dept in all_depts:
+            for day_idx in range(self._days_in_month):
+                s = summary_schedule[dept].get(day_idx, 0.0)
+                o = summary_overtime[dept].get(day_idx, 0.0)
+                e = summary_events[dept].get(day_idx, 0.0)
+                if option == "schedule_only": final_summary[dept][day_idx] = s
+                elif option == "overtime_only": final_summary[dept][day_idx] = o
+                elif option == "all": final_summary[dept][day_idx] = s + o
+                elif option == "events_only": final_summary[dept][day_idx] = e
+                elif option == "schedule_minus_events": final_summary[dept][day_idx] = s - e
+        return final_summary
+
+    # ZMIENIONA METODA
+    def _calculate_overtime_summary_detailed(self, schedule_data, all_events):
+        summary = defaultdict(lambda: {"wypłata": 0.0, "odbiór": 0.0, "odpracowanie": 0.0})
+        user_info = {key[3]: (key[0] or "Brak", key[2] or "Brak") for key in schedule_data.keys()}
+        for event in all_events:
+            if event.get('type') == 'Nadgodziny':
+                user_id = event.get('user_id')
+                if user_id in user_info:
+                    try:
+                        # POPRAWKA FORMATU DATY
+                        t_from = dt.datetime.strptime(event.get('time_from', '1900-01-01 00:00'), '%Y-%m-%d %H:%M')
+                        t_to = dt.datetime.strptime(event.get('time_to', '1900-01-01 00:00'), '%Y-%m-%d %H:%M')
+                        
+                        duration = (t_to - t_from).total_seconds() / 3600.0
+                        if duration < 0:
+                            duration += 24.0
+                        status = event.get('status', '').lower()
+                        if 'wypłata' in status:
+                            summary[user_id]['wypłata'] += duration
+                        elif 'odbiór' in status:
+                            summary[user_id]['odbiór'] += duration
+                        elif 'odpracowanie' in status:
+                            summary[user_id]['odpracowanie'] += duration
+                        else:
+                            summary[user_id]['wypłata'] += duration
+                    except (ValueError, IndexError):
+                        continue
+        result = []
+        for user_id, hours in summary.items():
+            if sum(hours.values()) > 0:
+                wydzial, nazwa = user_info.get(user_id, ("N/A", "N/A"))
+                result.append(
+                    [wydzial, nazwa, hours['wypłata'], hours['odbiór'], hours['odpracowanie'], sum(hours.values())])
+        return sorted(result, key=lambda x: (x[0], x[1]))
+
+    # ... (pozostałe metody bez zmian)
