@@ -1,213 +1,89 @@
-# staffing_details_window.py
+# W pliku: styles.py
 
-from PySide6.QtWidgets import (QDialog, QVBoxLayout, QTableView, QPushButton, QComboBox,
-                               QHeaderView, QLabel, QHBoxLayout, QSplitter, QWidget, QTabWidget,
-                               QListWidget, QAbstractItemView, QFrame, QGridLayout, QToolTip)
-from PySide6.QtCore import Qt, QAbstractTableModel, QDate, Signal
-from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QCursor
-from PySide6.QtCharts import QChart, QChartView, QBarSeries, QBarSet, QPieSeries, QLineSeries, QValueAxis, \
-    QBarCategoryAxis, QStackedBarSeries
+    @staticmethod
+    def get_checkable_list_style(theme="dark"):
+        """Zwraca styl dla QListWidget z elementami do zaznaczania (checkbox)."""
+        if theme == "dark":
+            bg = AppStyles.DARK_BACKGROUND_CONTROLS
+            text = AppStyles.DARK_TEXT_PRIMARY
+            border = AppStyles.DARK_BORDER_SECONDARY
+            selection_bg = AppStyles.SELECTION_BACKGROUND_DARK
+            hover_bg = AppStyles.DARK_BACKGROUND_HOVER
+            
+            # Kolory dla wskaźnika (checkboxa)
+            indicator_unchecked_bg = AppStyles.DARK_BACKGROUND_MAIN
+            indicator_unchecked_border = AppStyles.DARK_BORDER_PRIMARY
+            indicator_hover_border = AppStyles.ACCENT_COLOR_DARK
+            indicator_checked_bg = AppStyles.ACCENT_COLOR_DARK
+            indicator_checked_border = AppStyles.ACCENT_COLOR_DARK_HOVER
+        else: # Jasny motyw
+            bg = AppStyles.LIGHT_BACKGROUND_CONTROLS
+            text = AppStyles.LIGHT_TEXT_PRIMARY
+            border = AppStyles.LIGHT_BORDER_PRIMARY
+            selection_bg = AppStyles.SELECTION_BACKGROUND_LIGHT
+            hover_bg = AppStyles.LIGHT_BACKGROUND_HOVER
+            
+            indicator_unchecked_bg = AppStyles.LIGHT_BACKGROUND_CONTROLS
+            indicator_unchecked_border = AppStyles.LIGHT_BORDER_SECONDARY
+            indicator_hover_border = AppStyles.ACCENT_COLOR_LIGHT
+            indicator_checked_bg = AppStyles.ACCENT_COLOR_LIGHT
+            indicator_checked_border = AppStyles.ACCENT_COLOR_LIGHT_HOVER
 
-from collections import defaultdict
-import datetime as dt
-from debug_utils import log_error, debug_print
-from symbol_parser import parse_symbol
-from styles import AppStyles
+        return f"""
+            QListWidget {{
+                background-color: {bg};
+                color: {text};
+                border: 1px solid {border};
+                border-radius: {AppStyles.BORDER_RADIUS};
+            }}
+            QListWidget::item:selected {{
+                background-color: {selection_bg};
+                color: {'white' if theme == 'dark' else AppStyles.LIGHT_BACKGROUND_CONTROLS};
+            }}
+            QListWidget::item:hover {{
+                background-color: {hover_bg};
+            }}
+            QListWidget::indicator {{
+                width: 14px;
+                height: 14px;
+                border-radius: 4px;
+            }}
+            QListWidget::indicator:unchecked {{
+                background-color: {indicator_unchecked_bg};
+                border: 1px solid {indicator_unchecked_border};
+            }}
+            QListWidget::indicator:unchecked:hover {{
+                border: 1px solid {indicator_hover_border};
+            }}
+            QListWidget::indicator:checked {{
+                background-color: {indicator_checked_bg};
+                border: 1px solid {indicator_checked_border};
+                image: none; /* Ukryj domyślną ikonę "ptaszka" */
+            }}
+            QListWidget::indicator:checked:hover {{
+                background-color: {indicator_checked_border};
+            }}
+        """
 
-# Wszystkie klasy Modeli Tabel (HourlyStaffingTableModel, BaseMatrixTableModel, etc.) pozostają bez zmian.
-# Poniżej znajduje się tylko główna klasa okna z poprawionymi metodami obliczeniowymi.
+# W pliku: column_select_dialog.py
 
-class StaffingDetailsWindow(QDialog):
-    # ... (kod __init__, setup_ui, apply_styles i inne metody UI bez zmian)
+    def apply_dialog_theme(self):
+        actual_theme = "dark"
+        if self.parent_widget and hasattr(self.parent_widget, 'is_dark_theme'):
+            actual_theme = "dark" if self.parent_widget.is_dark_theme else "light"
 
-    # ZMIENIONA METODA
-    def _calculate_hourly_staffing(self, schedule_data, all_events, option="all", location_filter=None):
-        """Oblicza obsadę godzina po godzinie dla każdego dnia."""
-        days = self._days_in_month
-        schedule_matrix = [[0.0] * days for _ in range(24)]
-        overtime_matrix = [[0.0] * days for _ in range(24)]
-        events_matrix = [[0.0] * days for _ in range(24)]
-
-        events_map = self._get_events_duration_per_hour(all_events)
-        location_map = self._get_daily_location_map(schedule_data)
-
-        for user_key, user_schedule in schedule_data.items():
-            if user_schedule.get('dtn') == 1:
-                continue
-
-            korekta = float(user_schedule.get('korekta', 0.0) or 0.0)
-
-            for day, day_info in user_schedule.get('days', {}).items():
-                day_idx = day - 1
-                parsed = parse_symbol(day_info.get('symbol', ''))
-
-                if parsed.get('special_symbol') is not None and parsed.get('special_symbol').strip() != '':
-                    continue
-
-                if location_filter and location_filter != "-Wszystkie-" and location_map.get((user_key[3], day)) != location_filter:
-                    continue
-
-                start, base_hours = parsed.get('start_hour'), parsed.get('work_hours')
-
-                if start is not None and base_hours is not None:
-                    final_hours = base_hours + korekta
-                    if final_hours > 0:
-                        for h in range(int(final_hours)):
-                            hour = (start + h) % 24
-                            schedule_matrix[hour][day_idx] += 1.0
-                            if events_map.get(user_key[3], {}).get(day, {}).get(hour, 0) > 30:
-                                events_matrix[hour][day_idx] += 1.0
-
-        user_ids_in_view = {k[3] for k in schedule_data.keys()}
-        for event in all_events:
-            if event.get('type') == 'Nadgodziny' and event.get('user_id') in user_ids_in_view:
-                try:
-                    user_id = event.get('user_id')
-                    user_data = next((data for key, data in schedule_data.items() if key[3] == user_id), None)
-                    if user_data and user_data.get('dtn') == 1:
-                        continue
-                    
-                    day = int(event.get('date_key', '0-0-0').split('-')[2])
-                    if location_filter and location_filter != "-Wszystkie-" and location_map.get((user_id, day)) != location_filter:
-                        continue
-
-                    day_idx = day - 1
-                    # POPRAWKA FORMATU DATY
-                    t_from = dt.datetime.strptime(event.get('time_from', '1900-01-01 00:00'), '%Y-%m-%d %H:%M')
-                    t_to = dt.datetime.strptime(event.get('time_to', '1900-01-01 00:00'), '%Y-%m-%d %H:%M')
-                    
-                    duration_s = (t_to - t_from).total_seconds()
-                    if duration_s < 0: duration_s += 86400
-                    
-                    current_time = t_from
-                    while duration_s > 1:
-                        hour, minutes_in_slot = current_time.hour, 60 - current_time.minute
-                        seconds_in_slot = min(minutes_in_slot * 60, duration_s)
-                        if 0 <= hour < 24 and 0 <= day_idx < days:
-                            overtime_matrix[hour][day_idx] += seconds_in_slot / 3600.0
-                        duration_s -= seconds_in_slot
-                        current_time += dt.timedelta(seconds=seconds_in_slot)
-                except (ValueError, IndexError):
-                    continue
-
-        if option == "schedule_only": return schedule_matrix
-        if option == "overtime_only": return overtime_matrix
-        if option == "all":
-            return [[s + o for s, o in zip(s_row, o_row)] for s_row, o_row in zip(schedule_matrix, overtime_matrix)]
-        if option == "events_only": return events_matrix
-        if option == "schedule_minus_events":
-            return [[s - e for s, e in zip(s_row, e_row)] for s_row, e_row in zip(schedule_matrix, events_matrix)]
-
-        return [[0.0] * days for _ in range(24)]
-
-    # ZMIENIONA METODA
-    def _calculate_daily_staffing(self, schedule_data, all_events, option="all", location_filter=None):
-        """Oblicza obsadę dzienną, uwzględniając wszystkie filtry i ignorując godziny z symbolami specjalnymi."""
-        summary_schedule = defaultdict(lambda: defaultdict(float))
-        summary_overtime = defaultdict(lambda: defaultdict(float))
-        summary_events = defaultdict(lambda: defaultdict(float))
-
-        events_map = self._get_events_duration_per_hour(all_events)
-        location_map = self._get_daily_location_map(schedule_data)
-
-        for user_key, user_schedule in schedule_data.items():
-            if user_schedule.get('dtn') == 1:
-                continue
-
-            user_id, wydzial = user_key[3], user_key[0] or "Brak"
-            korekta = float(user_schedule.get('korekta', 0.0) or 0.0)
-
-            for day, day_info in user_schedule.get('days', {}).items():
-                parsed = parse_symbol(day_info.get('symbol', ''))
-
-                if parsed.get('special_symbol') is not None and parsed.get('special_symbol').strip() != '':
-                    continue
-
-                shift_location = location_map.get((user_id, day))
-                if location_filter and location_filter != "-Wszystkie-" and shift_location != location_filter:
-                    continue
-
-                start, base_hours = parsed.get('start_hour'), parsed.get('work_hours')
-                final_hours = base_hours + korekta if base_hours is not None else 0
-
-                if start is not None and final_hours > 0:
-                    summary_schedule[wydzial][day - 1] += final_hours
-                    lost_hours = sum(1 for h in range(int(final_hours)) if
-                                     events_map.get(user_id, {}).get(day, {}).get((start + h) % 24, 0) > 30)
-                    if lost_hours > 0:
-                        summary_events[wydzial][day - 1] += lost_hours
+        self.setStyleSheet(AppStyles.get_dialog_style(actual_theme))
         
-        user_to_dept = {k[3]: k[0] or "Brak" for k in schedule_data.keys()}
-        for event in all_events:
-            if event.get('type') == 'Nadgodziny' and event.get('user_id') in user_to_dept:
-                try:
-                    user_id = event.get('user_id')
-                    user_data = next((data for key, data in schedule_data.items() if key[3] == user_id), None)
-                    if user_data and user_data.get('dtn') == 1:
-                        continue
-                    
-                    day = int(event.get('date_key', '0-0-0').split('-')[2])
-                    event_location = location_map.get((user_id, day))
-                    if location_filter and location_filter != "-Wszystkie-" and event_location != location_filter:
-                        continue
+        # ZMIANA: Użycie nowej, dedykowanej metody stylu dla listy z checkboxami
+        checkable_list_style = AppStyles.get_checkable_list_style(actual_theme)
+        self.columns_list.setStyleSheet(checkable_list_style)
+        
+        # Style dla pozostałych list i tabeli (bez zmian)
+        list_style = AppStyles.get_list_style(actual_theme)
+        self.available_sort_list.setStyleSheet(list_style)
+        self.applied_sort_list.setStyleSheet(list_style)
+        self.sort_table.setStyleSheet(AppStyles.get_tablewidget_style(actual_theme))
 
-                    # POPRAWKA FORMATU DATY
-                    t_from = dt.datetime.strptime(event.get('time_from', '1900-01-01 00:00'), '%Y-%m-%d %H:%M')
-                    t_to = dt.datetime.strptime(event.get('time_to', '1900-01-01 00:00'), '%Y-%m-%d %H:%M')
-                    
-                    duration = (t_to - t_from).total_seconds() / 3600.0
-                    if duration < 0: duration += 24.0
-                    summary_overtime[user_to_dept[user_id]][day - 1] += duration
-                except (ValueError, IndexError):
-                    continue
-
-        all_depts = set(summary_schedule.keys()) | set(summary_overtime.keys()) | set(summary_events.keys())
-        final_summary = defaultdict(lambda: [0.0] * self._days_in_month)
-        for dept in all_depts:
-            for day_idx in range(self._days_in_month):
-                s = summary_schedule[dept].get(day_idx, 0.0)
-                o = summary_overtime[dept].get(day_idx, 0.0)
-                e = summary_events[dept].get(day_idx, 0.0)
-                if option == "schedule_only": final_summary[dept][day_idx] = s
-                elif option == "overtime_only": final_summary[dept][day_idx] = o
-                elif option == "all": final_summary[dept][day_idx] = s + o
-                elif option == "events_only": final_summary[dept][day_idx] = e
-                elif option == "schedule_minus_events": final_summary[dept][day_idx] = s - e
-        return final_summary
-
-    # ZMIENIONA METODA
-    def _calculate_overtime_summary_detailed(self, schedule_data, all_events):
-        summary = defaultdict(lambda: {"wypłata": 0.0, "odbiór": 0.0, "odpracowanie": 0.0})
-        user_info = {key[3]: (key[0] or "Brak", key[2] or "Brak") for key in schedule_data.keys()}
-        for event in all_events:
-            if event.get('type') == 'Nadgodziny':
-                user_id = event.get('user_id')
-                if user_id in user_info:
-                    try:
-                        # POPRAWKA FORMATU DATY
-                        t_from = dt.datetime.strptime(event.get('time_from', '1900-01-01 00:00'), '%Y-%m-%d %H:%M')
-                        t_to = dt.datetime.strptime(event.get('time_to', '1900-01-01 00:00'), '%Y-%m-%d %H:%M')
-                        
-                        duration = (t_to - t_from).total_seconds() / 3600.0
-                        if duration < 0:
-                            duration += 24.0
-                        status = event.get('status', '').lower()
-                        if 'wypłata' in status:
-                            summary[user_id]['wypłata'] += duration
-                        elif 'odbiór' in status:
-                            summary[user_id]['odbiór'] += duration
-                        elif 'odpracowanie' in status:
-                            summary[user_id]['odpracowanie'] += duration
-                        else:
-                            summary[user_id]['wypłata'] += duration
-                    except (ValueError, IndexError):
-                        continue
-        result = []
-        for user_id, hours in summary.items():
-            if sum(hours.values()) > 0:
-                wydzial, nazwa = user_info.get(user_id, ("N/A", "N/A"))
-                result.append(
-                    [wydzial, nazwa, hours['wypłata'], hours['odbiór'], hours['odpracowanie'], sum(hours.values())])
-        return sorted(result, key=lambda x: (x[0], x[1]))
-
-    # ... (pozostałe metody bez zmian)
+        # Style przycisków i innych kontrolek (bez zmian)
+        button_style = AppStyles.get_button_style(actual_theme)
+        # ... (reszta metody `apply_dialog_theme`)
