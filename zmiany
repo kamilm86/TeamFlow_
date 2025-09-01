@@ -1,99 +1,24 @@
-# W pliku: styles.py
+# W pliku: main.py
 
-    @staticmethod
-    def get_checkable_list_style(theme="dark"):
-        """Zwraca styl dla QListWidget z elementami do zaznaczania (checkbox)."""
-        if theme == "dark":
-            bg = AppStyles.DARK_BACKGROUND_CONTROLS
-            text = AppStyles.DARK_TEXT_PRIMARY
-            border = AppStyles.DARK_BORDER_SECONDARY
-            selection_bg = AppStyles.SELECTION_BACKGROUND_DARK
-            hover_bg = AppStyles.DARK_BACKGROUND_HOVER
-            
-            # Kolory dla wskaźnika (checkboxa)
-            indicator_unchecked_bg = AppStyles.DARK_BACKGROUND_MAIN
-            indicator_unchecked_border = AppStyles.DARK_BORDER_PRIMARY
-            indicator_hover_border = AppStyles.ACCENT_COLOR_DARK
-            indicator_checked_bg = AppStyles.ACCENT_COLOR_DARK
-            indicator_checked_border = AppStyles.ACCENT_COLOR_DARK_HOVER
-        else: # Jasny motyw
-            bg = AppStyles.LIGHT_BACKGROUND_CONTROLS
-            text = AppStyles.LIGHT_TEXT_PRIMARY
-            border = AppStyles.LIGHT_BORDER_PRIMARY
-            selection_bg = AppStyles.SELECTION_BACKGROUND_LIGHT
-            hover_bg = AppStyles.LIGHT_BACKGROUND_HOVER
-            
-            indicator_unchecked_bg = AppStyles.LIGHT_BACKGROUND_CONTROLS
-            indicator_unchecked_border = AppStyles.LIGHT_BORDER_SECONDARY
-            indicator_hover_border = AppStyles.ACCENT_COLOR_LIGHT
-            indicator_checked_bg = AppStyles.ACCENT_COLOR_LIGHT
-            indicator_checked_border = AppStyles.ACCENT_COLOR_LIGHT_HOVER
+    def refresh_data(self):
+        """Wymusza odświeżenie danych z bazy, zapisując stan filtrów i aktualizując widoczność przycisków."""
+        self._save_current_filter_settings()
 
-        return f"""
-            QListWidget {{
-                background-color: {bg};
-                color: {text};
-                border: 1px solid {border};
-                border-radius: {AppStyles.BORDER_RADIUS};
-            }}
-            QListWidget::item:selected {{
-                background-color: {selection_bg};
-                color: {'white' if theme == 'dark' else AppStyles.LIGHT_BACKGROUND_CONTROLS};
-            }}
-            QListWidget::item:hover {{
-                background-color: {hover_bg};
-            }}
-            QListWidget::indicator {{
-                width: 14px;
-                height: 14px;
-                border-radius: 4px;
-            }}
-            QListWidget::indicator:unchecked {{
-                background-color: {indicator_unchecked_bg};
-                border: 1px solid {indicator_unchecked_border};
-            }}
-            QListWidget::indicator:unchecked:hover {{
-                border: 1px solid {indicator_hover_border};
-            }}
-            QListWidget::indicator:checked {{
-                background-color: {indicator_checked_bg};
-                border: 1px solid {indicator_checked_border};
-                image: none; /* Ukryj domyślną ikonę "ptaszka" */
-            }}
-            QListWidget::indicator:checked:hover {{
-                background-color: {indicator_checked_border};
-            }}
-        """
+        self.refresh_button.setText("Odśwież")
+        self.refresh_button.setStyleSheet(AppStyles.get_button_style("dark" if self.is_dark_theme else "light"))
+        self.refresh_button.setToolTip("Odśwież dane")
 
+        current_data = self.date_combo.currentData()
+        if current_data:
+            year, month = current_data
 
-# W pliku: column_select_dialog.py
+            # ZMIANA: Dodano wywołanie funkcji aktualizującej widoczność przycisków
+            self.update_buttons_visibility()
 
-    def apply_dialog_theme(self):
-        actual_theme = "dark"
-        if self.parent_widget and hasattr(self.parent_widget, 'is_dark_theme'):
-            actual_theme = "dark" if self.parent_widget.is_dark_theme else "light"
+            self.data_provider.clear_monthly_cache(year, month)
+            self.update_data(year, month, self.import_grupa, self.import_funkcja, use_async=True)
 
-        self.setStyleSheet(AppStyles.get_dialog_style(actual_theme))
-        
-        # ZMIANA: Użycie nowej, dedykowanej metody stylu dla listy z checkboxami
-        checkable_list_style = AppStyles.get_checkable_list_style(actual_theme)
-        self.columns_list.setStyleSheet(checkable_list_style)
-        
-        # Style dla pozostałych list i tabeli
-        list_style = AppStyles.get_list_style(actual_theme)
-        if hasattr(self, 'available_sort_list'): # Sprawdzenie dla starszej wersji UI
-            self.available_sort_list.setStyleSheet(list_style)
-            self.applied_sort_list.setStyleSheet(list_style)
-        
-        if hasattr(self, 'sort_table'): # Dla nowej wersji UI
-            self.sort_table.setStyleSheet(AppStyles.get_tablewidget_style(actual_theme))
-            for combo in self.sort_table.findChildren(QComboBox):
-                combo.setStyleSheet(AppStyles.get_combobox_style(actual_theme))
-
-        # Style przycisków i innych kontrolek
-        button_style = AppStyles.get_button_style(actual_theme)
-        all_buttons = self.findChildren(QPushButton)
-        for btn in all_buttons:
-            btn.setStyleSheet(button_style)
-        
-        self.komentarz_checkbox.setStyleSheet(AppStyles.get_checkbox_style(actual_theme))
+            self.update_filter_dates()
+            self._update_modification_date()
+            if hasattr(self, 'check_timer'):
+                self.check_timer.start(60000)
