@@ -13,7 +13,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QTableView,
                                QListWidgetItem, QLineEdit, QDialog, QCheckBox, QFrame, QDateEdit,
                                QMessageBox, QSplitter, QStyledItemDelegate, QFileDialog,
                                QGridLayout, QSizePolicy, QScrollArea, QGroupBox, QStyle)
-from PySide6.QtCore import Qt, Signal, QDate, QTimer, QEvent, QObject
+from PySide6.QtCore import Qt, Signal, QDate, QTimer, QEvent, QObject, QItemSelection, QItemSelectionModel
 from packaging.version import parse as parse_version
 from PySide6.QtGui import QShortcut, QKeySequence, QFont, QColor, QStandardItem, QStandardItemModel, QPixmap, QPainter, QPen, QIcon
 
@@ -179,10 +179,10 @@ class ScheduleKeyboardFilter(QObject):
                     updated_info.append((user_id, date_str, result.get('returned_symbol')))
                 else:
                     error_messages.append(
-                        f"👤 {cell_data.get('uzytkownik_dane')}: {result.get('message', 'Błąd zapisu.')}")
+                        f"⑭ {cell_data.get('uzytkownik_dane')}: {result.get('message', 'Błąd zapisu.')}")
             except (ValueError, TypeError) as e:
                 log_warning(f"Błąd modyfikacji godzin dla symbolu '{current_symbol}': {e}")
-                error_messages.append(f"👤 {cell_data.get('uzytkownik_dane')}: Błąd aplikacji: {e}")
+                error_messages.append(f"⑭ {cell_data.get('uzytkownik_dane')}: Błąd aplikacji: {e}")
 
         if permission_denied_count > 0:
             self.main_window.statusBar().showMessage(
@@ -190,7 +190,6 @@ class ScheduleKeyboardFilter(QObject):
 
         if updated_info:
             self.main_window._update_cells_with_new_symbols(updated_info)
-            self.main_window.schedule_model.layoutChanged.emit()
             self.main_window.statusBar().showMessage(f"Zmieniono liczbę godzin dla {len(updated_info)} komórek.", 4000)
 
         if error_messages:
@@ -465,9 +464,9 @@ class UpdateRequiredDialog(QDialog):
 class WorkScheduleWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self._state_to_restore = None
 
         self.settings_db = SettingsDatabase()
-
         try:
             current_windows_user = getpass.getuser().lower()
         except Exception:
@@ -492,16 +491,11 @@ class WorkScheduleWindow(QMainWindow):
 
         self.staffing_details_win = None
         self.current_user_role = None
-        # self.last_left_panel_width = 100
         self.data_provider = DataProvider()
+        self.data_provider.data_changed.connect(self._handle_specific_icons_refresh)
         self.employee_columns = self.column_definitions.get_ui_display_columns()
 
         self.setWindowTitle("TeamFlowApp")
-        if self.user_settings.get('is_maximized'):
-            pass
-        else:
-            width, height = self.user_settings.get('window_size', (1600, 800))
-            self.setGeometry(100, 100, width, height)
 
         self._selection_timer = QTimer()
         self._selection_timer.setSingleShot(True)
@@ -515,11 +509,10 @@ class WorkScheduleWindow(QMainWindow):
         self.schedule_model.set_visible_columns(self.visible_columns)
         self.events_model = EventsTableModel(self)
 
-        self.setup_ui()  # Ta metoda musi być przed setup_table_properties
+        self._create_central_widget()
 
         self.table.set_model(self.schedule_model)
         self.events_table.setModel(self.events_model)
-
         self.manage_columns_button.clicked.connect(self.show_column_select_dialog)
 
         if self.table.employees_view.selectionModel():
@@ -529,7 +522,6 @@ class WorkScheduleWindow(QMainWindow):
 
         self.apply_theme_settings('dark' if self.is_dark_theme else 'light', self.current_font, self.current_font_size)
 
-        # --- POCZĄTEK POPRAWKI: Przywrócenie brakujących skrótów ---
         self.shortcut_f1 = QShortcut(QKeySequence(Qt.Key_F1), self)
         self.shortcut_f1.activated.connect(self.toggle_left_panel)
 
@@ -539,7 +531,6 @@ class WorkScheduleWindow(QMainWindow):
         self.shortcut_f3 = QShortcut(QKeySequence(Qt.Key_F3), self)
         self.shortcut_f3.activated.connect(self.show_insert_change_dialog)
 
-        # Skrót dla "Wstaw nieobecność" jest często F4
         self.shortcut_f4 = QShortcut(QKeySequence(Qt.Key_F4), self)
         self.shortcut_f4.activated.connect(self.show_insert_symbol_dialog)
 
@@ -548,12 +539,19 @@ class WorkScheduleWindow(QMainWindow):
 
         self.shortcut_f12 = QShortcut(QKeySequence(Qt.Key_F12), self)
         self.shortcut_f12.activated.connect(self.clear_special_symbol_from_selected_cells)
-        # --- KONIEC POPRAWKI ---
 
         self.copy_shortcut = QShortcut(QKeySequence.Copy, self)
         self.copy_shortcut.activated.connect(self.copy_selection_to_clipboard)
 
         self.start_full_initialization()
+
+        # PRZENIESIONY BLOK: Ustawienie rozmiaru i pokazanie okna na samym końcu
+        if self.user_settings.get('is_maximized'):
+            self.showMaximized()
+        else:
+            width, height = self.user_settings.get('window_size', (1600, 800))
+            self.setGeometry(100, 100, width, height)
+
         debug_print("=== APLIKACJA URUCHOMIONA W TRYBIE AUTOMATYCZNYM ===")
 
     def manage_ui_state(self, enabled: bool):
@@ -774,26 +772,25 @@ class WorkScheduleWindow(QMainWindow):
                     updated_info.append((user_id, date_str, result.get('returned_symbol')))
                 else:
                     error_messages.append(
-                        f"🧑 {cell_data.get('uzytkownik_dane')}: {result.get('message', 'Błąd zapisu.')}")
+                        f"🗣️ {cell_data.get('uzytkownik_dane')}: {result.get('message', 'Błąd zapisu.')}")
             except Exception as e:
                 log_error(f"Błąd krytyczny w _apply_quick_changes: {e}")
-                error_messages.append(f"🧑 {cell_data.get('uzytkownik_dane')}: Błąd aplikacji: {e}")
+                error_messages.append(f"🗣️ {cell_data.get('uzytkownik_dane')}: Błąd aplikacji: {e}")
 
         if updated_info:
             self._update_cells_with_new_symbols(updated_info)
-            self.schedule_model.layoutChanged.emit()
 
         success_msg = f"Zmieniono godzinę rozpoczęcia dla {len(updated_info)} komórek."
         if skipped_employees:
             QMessageBox.information(self, "Częściowy sukces",
-                                    f"{success_msg}\n\nPominięto {len(skipped_employees)} komórek z powodu braku uprawnień dla:\n"
+                                    f"{success_msg}\\n\\nPominięto {len(skipped_employees)} komórek z powodu braku uprawnień dla:\\n"
                                     f"- {', '.join(set(skipped_employees))}")
         elif updated_info:
             self.statusBar().showMessage(success_msg, 4000)
 
         if error_messages:
             QMessageBox.warning(self, "Błędy podczas zapisu",
-                                "Wystąpiły następujące błędy:\n\n" + "\n".join(error_messages))
+                                "Wystąpiły następujące błędy:\\n\\n" + "\\n".join(error_messages))
 
     def _show_keyboard_edit_results(self, successful_updates, failed_updates, error_messages, start_hour):
         """Pokazuje wyniki edycji klawiatury - uproszczone komunikaty"""
@@ -996,18 +993,21 @@ class WorkScheduleWindow(QMainWindow):
         debug_print(f"[CZAS] {label}: {elapsed:.3f} sekundy")
         return end_time
 
-    def setup_ui(self):
-        """Ustawia interfejs użytkownika"""
+    def _create_central_widget(self):
+        """Tworzy i ustawia główny widget aplikacji."""
         central_widget = QWidget()
         main_layout = QVBoxLayout(central_widget)
         main_layout.setContentsMargins(10, 0, 10, 0)
         main_layout.setSpacing(0)
+
         top_bar = self.setup_top_bar(main_layout)
         main_layout.addWidget(top_bar)
+
         middle_splitter = self.setup_middle_section(main_layout)
         main_layout.addWidget(middle_splitter, 1)
-        self.setCentralWidget(central_widget)
 
+        self.setCentralWidget(central_widget)
+        
     def setup_top_bar(self, main_layout):
         top_bar_frame = QFrame()
         top_bar_frame.setFrameShape(QFrame.StyledPanel)
@@ -1314,15 +1314,33 @@ class WorkScheduleWindow(QMainWindow):
 
         parent_layout.addLayout(filter_layout)
 
-
     def load_initial_data(self):
-        """Uruchamia proces ładowania danych po pierwszym wyświetleniu okna."""
+        """Uruchamia proces ładowania danych i jednorazowo aplikuje zapisane sortowanie."""
         debug_print("Uruchamianie leniwego ładowania danych początkowych...")
         current_data = self.date_combo.currentData()
         if current_data:
             year, month = current_data
-            # Użyj atrybutów obiektu zamiast wartości z kontrolek
+
+            # Tworzymy jednorazową funkcję obsługi, aby zastosować sortowanie po załadowaniu danych
+            def initial_load_handler(data):
+                # Najpierw standardowo zastosuj dane
+                self._on_async_data_loaded(data)
+                # A następnie, tylko ten jeden raz, zastosuj zapisane sortowanie
+                self.apply_custom_sort()
+                # Odłącz ten handler, aby nie został ponownie wywołany
+                if hasattr(self, 'loading_dialog') and self.loading_dialog:
+                    try:
+                        self.loading_dialog.loading_completed.disconnect(initial_load_handler)
+                    except (TypeError, RuntimeError):
+                        pass  # Ignoruj błąd, jeśli sygnał był już odłączony
+
+            # Rozpocznij asynchroniczne ładowanie
             self.update_data(year, month, self.import_grupa, self.import_funkcja, use_async=True)
+
+            # Podłącz nasz jednorazowy handler do sygnału zakończenia ładowania
+            if hasattr(self, 'loading_dialog') and self.loading_dialog:
+                self.loading_dialog.loading_completed.connect(initial_load_handler)
+
             self.update_filter_dates()
 
     def setup_right_panel(self):
@@ -1729,31 +1747,47 @@ class WorkScheduleWindow(QMainWindow):
 
     def apply_custom_sort(self):
         """
-        NOWA METODA: Sortuje dane w modelu na podstawie preferencji użytkownika.
+        Sortuje dane w modelu na podstawie preferencji użytkownika i aktualizuje wskaźnik w nagłówku.
         """
+        debug_print("[DB] Wywołano apply_custom_sort.")
         if not hasattr(self, 'schedule_model') or not self.schedule_model._processed_data:
             return
 
-        sort_prefs = self.user_sort_preferences
-        # Jeśli brak preferencji, użyj sortowania domyślnego
-        if not sort_prefs:
-            self.apply_default_sort()
-            return
-
-        debug_print(f"Aplikowanie sortowania niestandardowego: {sort_prefs}")
-
         self.schedule_model.layoutAboutToBeChanged.emit()
 
+        sort_prefs = self.user_sort_preferences
         keys_to_sort = self.schedule_model._keys
-        # Pythonowe sortowanie jest stabilne. Sortując od ostatniego kryterium do pierwszego,
-        # uzyskujemy poprawny wynik wielopoziomowy.
-        for col_id, direction in reversed(sort_prefs):
-            is_reverse = (direction == 'desc')
-            keys_to_sort.sort(key=lambda k, cid=col_id: self.schedule_model._get_sort_key(k, cid), reverse=is_reverse)
+
+        if sort_prefs:
+            debug_print(f"[DB] Aplikowanie sortowania niestandardowego: {sort_prefs}")
+            for col_id, direction in reversed(sort_prefs):
+                is_reverse = (direction == 'desc')
+                keys_to_sort.sort(key=lambda k, cid=col_id: self.schedule_model._get_sort_key(k, cid),
+                                  reverse=is_reverse)
+        else:
+            debug_print("[DB] Brak zdefiniowanych preferencji, sortowanie nie jest stosowane.")
 
         self.schedule_model._keys = keys_to_sort
         self.schedule_model.layoutChanged.emit()
-        debug_print("Zakończono sortowanie niestandardowe.")
+
+        emp_header = self.table.employees_view.horizontalHeader()
+        sched_header = self.table.schedule_view.horizontalHeader()
+
+        emp_header.setSortIndicator(-1, Qt.AscendingOrder)
+        sched_header.setSortIndicator(-1, Qt.AscendingOrder)
+
+        if sort_prefs:
+            first_col_id, first_direction = sort_prefs[0]
+            order = Qt.DescendingOrder if first_direction == 'desc' else Qt.AscendingOrder
+
+            if hasattr(self, 'visible_columns'):
+                try:
+                    col_index = self.visible_columns.index(first_col_id)
+                    emp_header.setSortIndicator(col_index, order)
+                except ValueError:
+                    pass
+
+        debug_print("[DB] Zakończono apply_custom_sort.")
 
     def _apply_dynamic_sizes(self):
         """Ustawia dynamiczne rozmiary w zależności od rozmiaru czcionki ORAZ zapisanych ustawień."""
@@ -1800,7 +1834,8 @@ class WorkScheduleWindow(QMainWindow):
     def showEvent(self, event):
         """Automatycznie wywoływane przez Qt, gdy okno jest pokazywane po raz pierwszy."""
         super().showEvent(event)
-        if not hasattr(self, '_initial_layout_done'):
+        # Dodano sprawdzenie `hasattr(self, 'table')`, aby upewnić się, że tabela istnieje
+        if not hasattr(self, '_initial_layout_done') and hasattr(self, 'table'):
             debug_print("Wykryto showEvent - jednorazowe ustawianie szerokości splittera.")
             self.table.adjust_employees_table_width()
             self._initial_layout_done = True
@@ -2093,19 +2128,42 @@ class WorkScheduleWindow(QMainWindow):
             return None  # Bezpieczny fallback
 
     def _find_events_to_cancel(self, user_date_pairs):
-        """Znajduje zdarzenia do odwołania dla podanych par użytkownik-data"""
+        """
+        Znajduje zdarzenia do odwołania dla podanych par użytkownik-data.
+        WERSJA ZMODYFIKOWANA: Uwzględnia spotkania/szkolenia tylko w statusie 'Delegowany'.
+        """
         events_to_cancel = []
         for user_id, date_str in user_date_pairs:
-            user_events = self.data_provider.get_events_for_user_date(user_id, date_str)
+            # Pobieramy WSZYSTKIE zdarzenia dla komórki, aby sprawdzić ich dokładny status
+            user_events = self.data_provider.get_events_for_user_date(user_id, date_str, active_only=False)
+
             for event in user_events:
-                event_type, event_id, event_status = event.get('type', ''), event.get('id'), event.get('status')
-                if not event_type or event_id is None: continue
-                if event_status is not None: event_status = str(event_status)
-                if event_type in ['Spotkanie', 'Szkolenie', 'Nadgodziny'] and event_status != '0':
+                event_type = event.get('type')
+                event_status = event.get('status')
+                event_id = event.get('id')
+
+                if not event_type or event_id is None:
+                    continue
+
+                # Warunek 1: Spotkanie lub Szkolenie musi mieć status 'Delegowany'
+                is_cancellable_meeting_or_training = (
+                        event_type in ['Spotkanie', 'Szkolenie'] and event_status == 'Delegowany'
+                )
+
+                # Warunek 2: Nadgodziny muszą być po prostu "aktywne" (status inny niż '0')
+                is_cancellable_overtime = (
+                        event_type == 'Nadgodziny' and str(event_status) != '0'
+                )
+
+                if is_cancellable_meeting_or_training or is_cancellable_overtime:
                     events_to_cancel.append({
-                        'id': event_id, 'type': event_type, 'user_id': user_id, 'date': date_str,
-                        'date_key': event.get('date_key', date_str), 'name': event.get('name', ''),
-                        'user_name': event.get('user_name', ''),
+                        'id': event_id,
+                        'type': event_type,
+                        'user_id': user_id,
+                        'date': date_str,
+                        'date_key': event.get('date_key', date_str),
+                        'name': event.get('name', ''),
+                        'user_name': event.get('UzytkownikDane', ''),
                     })
         return events_to_cancel
 
@@ -2225,10 +2283,9 @@ class WorkScheduleWindow(QMainWindow):
         if updated_info:
             self._update_cells_with_new_symbols(updated_info)
             self.statusBar().showMessage(f"Pomyślnie usunięto symbole specjalne z {len(updated_info)} komórek.", 4000)
-            self.schedule_model.layoutChanged.emit()
         if error_messages:
             QMessageBox.warning(self, "Błędy podczas zapisu",
-                                f"Wystąpiły następujące błędy:\n\n" + "\n".join(error_messages))
+                                f"Wystąpiły następujące błędy:\\n\\n" + "\\n".join(error_messages))
 
     # def _build_new_symbol_with_absence_fixed(self, current_symbol, special_symbol, cell_data):
     #     """Buduje nowy symbol z absencją, poprawnie obsługując puste i wypełnione komórki."""
@@ -2399,23 +2456,22 @@ class WorkScheduleWindow(QMainWindow):
                     updated_info.append((req['user_id'], req['data'], result.get('returned_symbol')))
                 else:
                     error_msg = result.get('message', 'Nieznany błąd')
-                    error_messages.append(f"👤 {req.get('user_name', req['nr_kadrowy'])} ({req['data']}): {error_msg}")
+                    error_messages.append(f"⑭ {req.get('user_name', req['nr_kadrowy'])} ({req['data']}): {error_msg}")
             except Exception as e:
                 log_error(f"Błąd krytyczny podczas przetwarzania żądania zmiany: {req}", exception=e)
-                error_messages.append(f"👤 {req.get('user_name', req['nr_kadrowy'])} ({req['data']}): {e}")
+                error_messages.append(f"⑭ {req.get('user_name', req['nr_kadrowy'])} ({req['data']}): {e}")
 
         # Aktualizuj UI dla udanych operacji
         if updated_info:
             self._update_cells_with_new_symbols(updated_info)
             self.statusBar().showMessage(success_message_template.format(len(updated_info)), 4000)
-            self.schedule_model.layoutChanged.emit()  # Wymuś odświeżenie sum i bilansu
 
         # Wyświetl jedno okno ze wszystkimi błędami
         if error_messages:
             QMessageBox.warning(
                 self,
                 "Błędy podczas zapisu",
-                f"Wystąpiły następujące błędy i niektóre zmiany nie zostały zapisane:\n\n" + "\n".join(error_messages),
+                f"Wystąpiły następujące błędy i niektóre zmiany nie zostały zapisane:\\n\\n" + "\\n".join(error_messages),
                 QMessageBox.Ok
             )
 
@@ -2483,12 +2539,15 @@ class WorkScheduleWindow(QMainWindow):
         user_id = user_ids.pop()
         user_name = selected_cells[0]['uzytkownik_dane']
 
-        # --- ZMIANA: Określ zakres dat z zaznaczenia ---
         dates = [QDate.fromString(cell['date_str'], "yyyy-MM-dd") for cell in selected_cells]
         selection_range = {'start': min(dates), 'end': max(dates)}
 
         dialog = LocationExceptionDialog(self, user_id, user_name, selection_range)
         dialog.data_changed.connect(self.refresh_data)
+
+        # Zapisz stan widoku przed otwarciem dialogu
+        self._state_to_restore = self._save_view_state()
+
         dialog.exec()
 
     def check_for_new_data(self):
@@ -2576,8 +2635,9 @@ class WorkScheduleWindow(QMainWindow):
         debug_print("Zapisano bieżący stan filtrów do bazy danych.")
 
     def refresh_data(self):
-        """Wymusza odświeżenie danych z bazy, zapisując stan filtrów i aktualizując daty."""
-        self._save_current_filter_settings()
+        """Wymusza odświeżenie danych z bazy, zachowując stan filtrów i sortowania."""
+        # Krok 1: Pobierz bieżący stan filtrów do zmiennej.
+        filters_to_preserve = self.get_current_filters_state()
 
         self.refresh_button.setText("Odśwież")
         self.refresh_button.setStyleSheet(AppStyles.get_button_style("dark" if self.is_dark_theme else "light"))
@@ -2587,12 +2647,11 @@ class WorkScheduleWindow(QMainWindow):
         if current_data:
             year, month = current_data
 
+            self.update_buttons_visibility()
             self.data_provider.clear_monthly_cache(year, month)
-            self.update_data(year, month, self.import_grupa, self.import_funkcja, use_async=True)
-
-            # ZMIANA: Dodano wywołanie funkcji aktualizującej daty w filtrze zdarzeń
+            # Krok 2: Przekaż stan filtrów do procesu aktualizacji danych.
+            self.update_data(year, month, self.import_grupa, self.import_funkcja, use_async=True, filters_to_restore=filters_to_preserve)
             self.update_filter_dates()
-
             self._update_modification_date()
             if hasattr(self, 'check_timer'):
                 self.check_timer.start(60000)
@@ -2621,15 +2680,19 @@ class WorkScheduleWindow(QMainWindow):
             log_error(f"Błąd podczas aktualizacji daty modyfikacji: {e}", exception=e)
 
     def filter_data(self):
-        """Filtruje dane grafiku i aktualizuje widok."""
+        """Filtruje dane grafiku i ZAWSZE stosuje sortowanie z ustawień użytkownika."""
         if not hasattr(self, 'schedule_model') or not self.schedule_model or getattr(self, '_updating_filters', False):
             return
         self._updating_filters = True
         try:
+            # Krok 1: Aktualizacja i zastosowanie filtrów
             self.update_cross_filters()
             filtered_data = self.filter_processed_data()
             self.schedule_model.update_filtered_data(filtered_data)
-            self.apply_default_sort()
+
+            # Krok 2: Zawsze po filtrowaniu, zastosuj zapisane sortowanie
+            self.apply_custom_sort()
+
         finally:
             self._updating_filters = False
             current_data = self.date_combo.currentData()
@@ -2921,7 +2984,6 @@ class WorkScheduleWindow(QMainWindow):
                 if result.get("success", False):
                     returned_symbol = result.get('returned_symbol', new_symbol)
                     self._update_cells_with_new_symbols([(user_id, date_str, returned_symbol)])
-                    self.schedule_model.layoutChanged.emit()
                     cell_data['symbol'] = returned_symbol
 
                     if dialog and hasattr(dialog, 'update_status_for_row'):
@@ -2932,13 +2994,104 @@ class WorkScheduleWindow(QMainWindow):
                     if dialog and hasattr(dialog, 'update_status_for_row'):
                         dialog.update_status_for_row(visual_row, 'failure', error_msg)
                     QMessageBox.warning(self, "Błąd",
-                                        f"Błąd dla {user_name} ({self.format_date(date_str)}):\n{error_msg}",
+                                        f"Błąd dla {user_name} ({self.format_date(date_str)}):\\n{error_msg}",
                                         QMessageBox.Ok)
 
             except Exception as e:
                 log_error(f"Błąd krytyczny w handle_schedule_change_request: {e}", exception=e)
                 if dialog and hasattr(dialog, 'update_status_for_row'):
                     dialog.update_status_for_row(visual_row, 'failure', str(e))
+
+    def _save_view_state(self):
+        """Zapisuje stabilne identyfikatory zaznaczenia, sortowanie i pozycję przewijania."""
+        schedule_selection_ids = []
+        if self.table.schedule_view.selectionModel():
+            for index in self.table.schedule_view.selectionModel().selectedIndexes():
+                data = index.data(ROLE_DATA)
+                if isinstance(data, dict) and 'uzytkownik_id' in data and 'date_str' in data:
+                    schedule_selection_ids.append((data['uzytkownik_id'], data['date_str']))
+
+        employees_selection_ids = set()
+        if self.table.employees_view.selectionModel():
+            for index in self.table.employees_view.selectionModel().selectedIndexes():
+                data = index.data(ROLE_DATA)
+                if isinstance(data, dict) and 'uzytkownik_id' in data:
+                    employees_selection_ids.add(data['uzytkownik_id'])
+
+        state = {
+            'schedule_selection_ids': schedule_selection_ids,
+            'employees_selection_ids': list(employees_selection_ids),
+            'emp_sort_col': self.table.employees_view.horizontalHeader().sortIndicatorSection(),
+            'emp_sort_order': self.table.employees_view.horizontalHeader().sortIndicatorOrder(),
+            'sched_sort_col': self.table.schedule_view.horizontalHeader().sortIndicatorSection(),
+            'sched_sort_order': self.table.schedule_view.horizontalHeader().sortIndicatorOrder(),
+            'v_scroll_pos': self.table.schedule_view.verticalScrollBar().value(),
+            'h_scroll_pos': self.table.schedule_view.horizontalScrollBar().value()
+        }
+        debug_print(
+            f"[DB] ZAPISYWANIE STANU: emp_sort_col={state['emp_sort_col']}, sched_sort_col={state['sched_sort_col']}, selections={len(schedule_selection_ids)}")
+        return state
+
+    def _restore_view_state(self, state):
+        """Przywraca sortowanie, zaznaczenie i pozycję przewijania po resecie modelu."""
+        debug_print(f"[DB] ROZPOCZĘTO PRZYWRACANIE STANU...")
+        if not self.schedule_model or self.schedule_model.rowCount() == 0:
+            debug_print("[DB] PRZERWANO PRZYWRACANIE: Model jest pusty.")
+            return
+
+        schedule_sm = self.table.schedule_view.selectionModel()
+        employees_sm = self.table.employees_view.selectionModel()
+        if schedule_sm: schedule_sm.blockSignals(True)
+        if employees_sm: employees_sm.blockSignals(True)
+
+        try:
+            # Krok 1: Zawsze stosuj pełne, wielopoziomowe sortowanie z ustawień użytkownika.
+            # To jest jedyne źródło prawdy o pożądanym porządku po resecie danych.
+            self.apply_custom_sort()
+
+            # Krok 2: Zbuduj mapę do wyszukania nowych indeksów wierszy po posortowaniu.
+            user_id_to_new_row_map = {str(key[3]): i for i, key in enumerate(self.schedule_model._keys)}
+
+            # Krok 3: Odtwórz zaznaczenie na podstawie nowych, prawidłowych indeksów.
+            schedule_selection = QItemSelection()
+            employee_cols_count = len(self.schedule_model.get_visible_columns())
+            for user_id, date_str in state['schedule_selection_ids']:
+                new_row = user_id_to_new_row_map.get(str(user_id))
+                if new_row is not None:
+                    try:
+                        day = int(date_str.split('-')[2])
+                        new_col = employee_cols_count + day - 1
+                        model_index = self.schedule_model.index(new_row, new_col)
+                        if model_index.isValid():
+                            schedule_selection.select(model_index, model_index)
+                    except (ValueError, IndexError):
+                        continue
+
+            employees_selection = QItemSelection()
+            for user_id in state['employees_selection_ids']:
+                new_row = user_id_to_new_row_map.get(str(user_id))
+                if new_row is not None:
+                    top_left = self.schedule_model.index(new_row, 0)
+                    bottom_right = self.schedule_model.index(new_row, employee_cols_count - 1)
+                    if top_left.isValid() and bottom_right.isValid():
+                        employees_selection.select(top_left, bottom_right)
+
+            debug_print(
+                f"[DB] Przywracam zaznaczenie: {len(state['schedule_selection_ids'])} komórek, {len(state['employees_selection_ids'])} wierszy.")
+            if schedule_sm: schedule_sm.select(schedule_selection, QItemSelectionModel.ClearAndSelect)
+            if employees_sm: employees_sm.select(employees_selection,
+                                                 QItemSelectionModel.ClearAndSelect | QItemSelectionModel.Rows)
+
+            # Krok 4: Przywróć pozycję pasków przewijania.
+            self.table.schedule_view.verticalScrollBar().setValue(state['v_scroll_pos'])
+            self.table.schedule_view.horizontalScrollBar().setValue(state['h_scroll_pos'])
+            debug_print(f"[DB] Przywrócono pozycję przewijania: V={state['v_scroll_pos']}, H={state['h_scroll_pos']}")
+
+        finally:
+            # Zawsze włączaj sygnały z powrotem.
+            if schedule_sm: schedule_sm.blockSignals(False)
+            if employees_sm: employees_sm.blockSignals(False)
+        debug_print(f"[DB] ZAKOŃCZONO PRZYWRACANIE STANU.")
 
     def format_date(self, date_str: str) -> str:
         """
@@ -3658,8 +3811,12 @@ class WorkScheduleWindow(QMainWindow):
 
             # Następnie zaawansowany filtr obecności
             if show_only_at_work:
+                # --- NOWA LOGIKA: Wyklucz osoby z DTN=1 z tego filtra ---
+                if data.get('dtn') == 1:
+                    continue
+                # --- KONIEC NOWEJ LOGIKI ---
+
                 selected_date = self.presence_date_edit.date()
-                # ZMIANA: Odczyt wielu zaznaczonych godzin
                 selected_hours_str = self.presence_hour_combo.get_selected_items()
                 selected_hours = {int(h.split(':')[0]) for h in selected_hours_str}
 
@@ -3684,17 +3841,14 @@ class WorkScheduleWindow(QMainWindow):
                 if not is_working_today:
                     continue
 
-                # ZMIANA: Logika sprawdzania wielu godzin
                 if selected_hours:
                     is_working_at_hour = False
-                    # Sprawdź zmianę z grafiku
                     start_hour, work_hours = parsed.get('start_hour'), parsed.get('work_hours')
                     if start_hour is not None and work_hours is not None:
                         shift_hours = {(start_hour + h) % 24 for h in range(int(work_hours))}
                         if not shift_hours.isdisjoint(selected_hours):
                             is_working_at_hour = True
 
-                    # Sprawdź nadgodziny, jeśli nie znaleziono dopasowania w grafiku
                     if not is_working_at_hour and overtime_events:
                         for event in overtime_events:
                             try:
@@ -3717,7 +3871,6 @@ class WorkScheduleWindow(QMainWindow):
                     if not is_working_at_hour:
                         continue
 
-                # Filtr lokalizacji
                 selected_locations_text = self.presence_location_combo.get_selected_items()
                 if selected_locations_text:
                     location_map = {"Home Office (h)": "h", "SBC (s)": "s", "Przystanek (p)": "p",
@@ -3876,40 +4029,30 @@ class WorkScheduleWindow(QMainWindow):
         # Wywołaj filtrowanie tylko RAZ po wszystkich zmianach
         self.filter_events_table()
 
-    def update_data(self, year, month, grupa, funkcja, use_async=True):
+    def update_data(self, year, month, grupa, funkcja, use_async=True, filters_to_restore=None):
         """
-        NOWA WERSJA: Ładowanie danych z opcją async
-
-        Args:
-            year: Rok
-            month: Miesiąc
-            use_async: Czy użyć asynchronicznego ładowania (domyślnie True)
+        NOWA WERSJA: Ładowanie danych z opcją przekazania stanu filtrów do przywrócenia.
         """
         debug_print(f"Rozpoczynam ładowanie danych dla {year}-{month} (async={use_async})")
 
         self.year = year
         self.month = month
 
-        # Sprawdź czy modele zostały zainicjalizowane
         if not hasattr(self, 'schedule_model') or not self.schedule_model:
-            debug_print("Tworzę nowy model grafiku")
             self.schedule_model = ScheduleTableModel(self)
             self.schedule_model.set_theme(self.is_dark_theme)
-
             ui_columns = self.column_definitions.get_ui_display_columns()
             visible_cols = self.visible_columns
             self.schedule_model.set_employee_columns(ui_columns, visible_cols)
 
         if not hasattr(self, 'events_model') or not self.events_model:
-            debug_print("Tworzę nowy model zdarzeń")
             self.events_model = EventsTableModel(self)
             self.events_model.set_theme(self.is_dark_theme)
 
-        # KLUCZOWA ZMIANA: Użyj async loading dla dużych zbiorów danych
         if use_async:
-            self._load_data_async(year, month)
+            self._load_data_async(year, month, filters_to_restore=filters_to_restore)
         else:
-            self._load_data_sync(year, month)
+            self._load_data_sync(year, month, filters_to_restore=filters_to_restore)
 
     def _load_data_sync(self, year, month):
         """
@@ -3950,16 +4093,17 @@ class WorkScheduleWindow(QMainWindow):
             if hasattr(self, 'statusBar'):
                 self.statusBar().clearMessage()
 
-    def _load_data_async(self, year, month):
+    def _load_data_async(self, year, month, filters_to_restore=None):
         """Asynchroniczne ładowanie danych z progress dialogiem."""
-        # Leniwe importowanie
         from progress_dialog import LoadingProgressDialog
+        from functools import partial
 
         debug_print(f"Uruchamiam async ładowanie dla {year}-{month}")
         self.loading_dialog = LoadingProgressDialog(
             self, self.data_provider, year, month, self.import_grupa, self.import_funkcja
         )
-        self.loading_dialog.loading_completed.connect(self._on_async_data_loaded)
+        self.loading_dialog.loading_completed.connect(
+            partial(self._on_async_data_loaded, filters_to_restore=filters_to_restore))
         self.loading_dialog.loading_cancelled.connect(self._on_async_loading_cancelled)
         self.loading_dialog.loading_failed.connect(self._on_async_loading_failed)
         self.loading_dialog.exec()
@@ -3967,12 +4111,21 @@ class WorkScheduleWindow(QMainWindow):
             self.loading_dialog.deleteLater()
             delattr(self, 'loading_dialog')
 
-
-    def _on_async_data_loaded(self, data):
+    def _on_async_data_loaded(self, data, filters_to_restore=None):
         """Obsługuje pomyślne załadowanie danych async."""
         debug_print("Otrzymano dane z async loading")
         try:
-            self._apply_loaded_data(data)
+            is_initial_load = self.schedule_model.rowCount() == 0
+
+            # Zapisz stan widoku (sortowanie i zaznaczenie) przed resetem modelu
+            view_state = self._save_view_state()
+
+            self._apply_loaded_data(data, filters_to_restore=filters_to_restore)
+
+            # Zawsze przywracaj stan widoku, chyba że jest to pierwsze ładowanie
+            if not is_initial_load:
+                self._restore_view_state(view_state)
+
             debug_print("Pomyślnie zastosowano dane z async loading")
         except Exception as e:
             log_error(f"Błąd podczas stosowania załadowanych danych: {e}")
@@ -3991,7 +4144,7 @@ class WorkScheduleWindow(QMainWindow):
         except Exception as e:
             log_error(f"Fallback loading też nie powiódł się: {e}")
 
-    def _apply_loaded_data(self, data):
+    def _apply_loaded_data(self, data, filters_to_restore=None):
         """Aplikuje nowo załadowane dane do modeli i UI."""
         if data is None:
             log_error("Błąd: _apply_loaded_data otrzymało puste dane (None).")
@@ -4011,31 +4164,35 @@ class WorkScheduleWindow(QMainWindow):
         self.all_events_data = events_data
         self.processed_data = processed_data
 
+        is_initial_load = self.schedule_model.rowCount() == 0
         self.schedule_model.update_data(self.processed_data, year, month)
 
-        # Domyślnie wyczyść tabelę zdarzeń (zostanie zapełniona po zaznaczeniu komórki)
         self.events_data = []
         if hasattr(self, 'events_model'):
             self.events_model.update_data([])
-
         self.all_events_data = data.get('events_data', [])
 
-        # Wypełnienie nowego filtra statusu
         if hasattr(self, 'status_filter_combo'):
             all_statuses = sorted(list(set(e.get('status', '') for e in self.all_events_data if e.get('status'))))
             self.status_filter_combo.add_items(all_statuses)
             self.status_filter_combo.select_items(all_statuses)
 
-        # Przywróć ostatnio używane filtry lub zaktualizuj listy dostępnych opcji
-        last_filters = self.user_settings.get('last_filters')
-        if last_filters:
-            self.restore_filters_state(last_filters)
+        # NOWA LOGIKA:
+        # Jeśli przekazano stan filtrów (co dzieje się przy odświeżaniu), użyj go.
+        if filters_to_restore:
+            self.restore_filters_state(filters_to_restore)
         else:
-            self.update_filters()
-            self.filter_data()
+            # W przeciwnym razie (przy pierwszym ładowaniu) użyj filtrów zapisanych w bazie.
+            last_filters = self.user_settings.get('last_filters')
+            if last_filters:
+                self.restore_filters_state(last_filters)
+            else:
+                self.update_filters()
+                self.filter_data()
 
-        # Zastosuj niestandardowe lub domyślne sortowanie
-        self.apply_custom_sort()
+        if is_initial_load:
+            self.apply_custom_sort()
+
         self._apply_dynamic_sizes()
         self.setup_events_table_columns()
 
@@ -5160,229 +5317,99 @@ class WorkScheduleWindow(QMainWindow):
         return cells_data_to_return
 
     def cancel_delegations(self):
-        """
-        POPRAWIONA WERSJA: Odwołuje delegacje z pełnym odświeżaniem ikon i tabeli zdarzeń
-        """
-        debug_print("\n=== ROZPOCZYNAM OPERACJĘ ODWOŁYWANIA DELEGACJI ===")
+        debug_print("\\n=== ROZPOCZYNAM OPERACJĘ ODWOŁYWANIA DELEGACJI ===")
 
         current_data = self.date_combo.currentData()
         if not current_data:
-            QMessageBox.warning(
-                self,
-                "Brak danych",
-                "Nie wybrano miesiąca lub brak dostępnych danych do wyświetlenia.",
-                QMessageBox.Ok
-            )
+            QMessageBox.warning(self, "Brak danych", "Nie wybrano miesiąca.", QMessageBox.Ok)
             return
 
-        year, month = current_data
-
-        # Pobierz zaznaczone komórki
         selected_cells_data = self.get_selected_cells_data()
-
         if not self._can_modify_cells(selected_cells_data):
-            return  # Zatrzymaj operację, jeśli użytkownik nie ma uprawnień
+            return
 
         if not selected_cells_data:
-            QMessageBox.warning(
-                self,
-                "Brak zaznaczenia",
-                "Nie zaznaczono żadnych komórek. Zaznacz komórki, dla których chcesz odwołać delegacje.",
-                QMessageBox.Ok
-            )
+            QMessageBox.warning(self, "Brak zaznaczenia", "Zaznacz komórki, dla których chcesz odwołać delegacje.",
+                                QMessageBox.Ok)
             return
 
-        # Zbierz pary (user_id, date_str) z zaznaczonych komórek
-        user_date_pairs = []
-        for cell_data in selected_cells_data:
-            user_id = cell_data.get('uzytkownik_id')
-            date_str = cell_data.get('date_str')
-            if user_id and date_str:
-                user_date_pairs.append((user_id, date_str))
+        view_state = self._save_view_state()
 
+        user_date_pairs = [(cell.get('uzytkownik_id'), cell.get('date_str')) for cell in selected_cells_data if
+                           cell.get('uzytkownik_id') and cell.get('date_str')]
         if not user_date_pairs:
-            QMessageBox.information(
-                self,
-                "Brak danych",
-                "Nie znaleziono danych dla zaznaczonych komórek.",
-                QMessageBox.Ok
-            )
+            QMessageBox.information(self, "Brak danych", "Nie znaleziono danych dla zaznaczonych komórek.",
+                                    QMessageBox.Ok)
             return
 
-        debug_print(f"Sprawdzam delegacje dla {len(user_date_pairs)} par (użytkownik, data)")
-
-        # Znajdź delegacje do odwołania
-        events_to_cancel = []
-        grouped_events = {}
-
-        for user_id, date_str in user_date_pairs:
-            user_events = self.data_provider.get_events_for_user_date(user_id, date_str)
-
-            for event in user_events:
-                event_type = event.get('type', '')
-                event_id = event.get('id')
-                event_status = event.get('status')
-
-                if not event_type or event_id is None:
-                    continue
-
-                if event_status is not None:
-                    event_status = str(event_status)
-
-                if event_type in ['Spotkanie', 'Szkolenie', 'Nadgodziny'] and event_status != '0':
-                    events_to_cancel.append({
-                        'id': event_id,
-                        'type': event_type,
-                        'user_id': user_id,
-                        'date': date_str,
-                        'date_key': event.get('date_key', date_str),
-                        'name': event.get('name', ''),
-                        'user_name': event.get('user_name', ''),
-                    })
-
-                    key = (user_id, date_str)
-                    if key not in grouped_events:
-                        grouped_events[key] = []
-                    grouped_events[key].append(event)
-
-        debug_print(f"Znaleziono {len(events_to_cancel)} delegacji do odwołania")
-
+        events_to_cancel = self._find_events_to_cancel(user_date_pairs)
         if not events_to_cancel:
-            QMessageBox.information(
-                self,
-                "Brak delegacji",
-                "Nie znaleziono delegacji do odwołania dla zaznaczonych komórek.",
-                QMessageBox.Ok
-            )
+            QMessageBox.information(self, "Brak delegacji",
+                                    "Nie znaleziono delegacji do odwołania dla zaznaczonych komórek.", QMessageBox.Ok)
             return
 
-        # Pokaż potwierdzenie
+        grouped_events = self._group_events_by_user_date(events_to_cancel)
         delegations_info = self._prepare_delegations_description(grouped_events)
-        confirm_message = f"Czy na pewno chcesz odwołać następujące delegacje?\n\n{delegations_info}\n"
+        confirm_message = f"Czy na pewno chcesz odwołać następujące delegacje?\\n\\n{delegations_info}\\n"
         confirm_message += f"Łącznie: {len(events_to_cancel)} delegacji dla {len(user_date_pairs)} komórek"
 
-        reply = QMessageBox.question(
-            self,
-            "Potwierdzenie odwołania delegacji",
-            confirm_message,
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.Yes
-        )
-
+        reply = QMessageBox.question(self, "Potwierdzenie odwołania delegacji", confirm_message,
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
         if reply != QMessageBox.Yes:
             debug_print("=== OPERACJA ANULOWANA PRZEZ UŻYTKOWNIKA ===")
             return
 
         try:
-            # Odwołaj delegacje w bazie danych
             canceled_count = self._cancel_delegations(events_to_cancel)
 
             if canceled_count > 0:
-                # KLUCZOWA ZMIANA 1: Usuń zdarzenia z lokalnych danych
-                affected_pairs = []
-                for event in events_to_cancel:
-                    user_id = event.get('user_id')
-                    date_str = event.get('date_key', event.get('date'))
-                    if user_id and date_str:
-                        affected_pairs.append((user_id, date_str))
+                trainings_to_clear = [evt for evt in events_to_cancel if evt.get('type') == 'Szkolenie']
+                if trainings_to_clear:
+                    pairs_for_trainings = list(
+                        set((e.get('user_id'), e.get('date_key', e.get('date'))) for e in trainings_to_clear))
+                    cells_data = self._get_cell_data_for_user_date_pairs(pairs_for_trainings)
 
-                    # Usuń z events_data (tabela zdarzeń)
-                    if hasattr(self, 'events_data'):
-                        self.events_data = [e for e in self.events_data
-                                            if not (e.get('id') == event.get('id') and
-                                                    e.get('type') == event.get('type'))]
+                    change_requests = []
+                    for cell in cells_data:
+                        current_symbol = cell.get('symbol', '')
+                        if not current_symbol: continue
 
-                    # Usuń z all_events_data
-                    if hasattr(self, 'all_events_data'):
-                        self.all_events_data = [e for e in self.all_events_data
-                                                if not (e.get('id') == event.get('id') and
-                                                        e.get('type') == event.get('type'))]
+                        parsed = parse_symbol(current_symbol)
+                        if parsed.get('special_symbol') and parsed.get('special_symbol').upper() == 'S':
+                            new_symbol = build_symbol(
+                                location=parsed.get('location'), start_hour=parsed.get('start_hour'),
+                                work_hours=parsed.get('work_hours'), special_symbol=None
+                            )
+                            try:
+                                date_str = cell['date_str']
+                                year, month, _ = map(int, date_str.split('-'))
+                                change_requests.append({
+                                    'nr_kadrowy': cell['nr_kadrowy'], 'rok': year, 'miesiac': month,
+                                    'data': date_str, 'symbol': new_symbol, 'user_id': cell['uzytkownik_id'],
+                                    'user_name': cell['uzytkownik_dane']
+                                })
+                            except (ValueError, KeyError) as e:
+                                log_warning(f"Pominięto aktualizację symbolu 'S': {e}")
 
-                # KLUCZOWA ZMIANA 2: Odśwież model zdarzeń
-                if hasattr(self, 'events_model') and hasattr(self, 'events_data'):
-                    self.events_model.update_data(self.events_data)
-                    debug_print(f"Zaktualizowano model zdarzeń - pozostało {len(self.events_data)} zdarzeń")
+                    if change_requests:
+                        self._process_and_apply_changes(change_requests, "Usunięto symbol 'S' z {0} komórek grafiku.")
 
-                # KLUCZOWA ZMIANA 3: Wyczyść cache i odśwież ikony
-                affected_pairs = list(set(affected_pairs))  # Usuń duplikaty
+                affected_pairs = list(
+                    set((e.get('user_id'), e.get('date_key', e.get('date'))) for e in events_to_cancel))
+                self.data_provider.invalidate_complete_cache_for_pairs(affected_pairs)
 
-                # Wyczyść cache zdarzeń w DataProvider
-                self.data_provider.invalidate_icons_cache(year, month)
+                self._restore_view_state(view_state)
 
-                # Odśwież konkretne ikony
-                self.data_provider.invalidate_specific_icons(affected_pairs)
-                debug_print(f"Odświeżono ikony dla {len(affected_pairs)} zmienionych komórek")
-
-                # KLUCZOWA ZMIANA 4: Odśwież model grafiku dla zmienionych komórek
-                if hasattr(self, 'schedule_model'):
-                    for user_id, date_str in affected_pairs:
-                        # Aktualizuj wskaźniki zdarzeń w modelu
-                        self.schedule_model.update_event_indicator(user_id, date_str, 'Spotkanie', False)
-                        self.schedule_model.update_event_indicator(user_id, date_str, 'Szkolenie', False)
-                        self.schedule_model.update_event_indicator(user_id, date_str, 'Nadgodziny', False)
-
-                # KLUCZOWA ZMIANA 5: Wymuś odświeżenie widoków
-                if hasattr(self, 'table'):
-                    if hasattr(self.table, 'schedule_view'):
-                        self.table.schedule_view.viewport().update()
-                    if hasattr(self.table, 'employees_view'):
-                        self.table.employees_view.viewport().update()
-
-                if hasattr(self, 'events_table'):
-                    self.events_table.viewport().update()
-
-                # KLUCZOWA ZMIANA 6: Kompleksowe odświeżenie po odwołaniu delegacji
-                # 1. Kompletne czyszczenie cache
-                if hasattr(self.data_provider, 'invalidate_complete_cache_for_pairs'):
-                    self.data_provider.invalidate_complete_cache_for_pairs(affected_pairs)
-
-                # 2. Aktualizuj ikony w modelu grafiku
-                if hasattr(self, 'schedule_model'):
-                    for user_id, date_str in affected_pairs:
-                        # Sprawdź pozostałe zdarzenia w lokalnych danych
-                        remaining_events = [e for e in self.events_data
-                                            if e.get('user_id') == user_id and e.get('date_key') == date_str]
-
-                        # Oblicz ikony na podstawie pozostałych zdarzeń
-                        has_meetings = any(e.get('type') == 'Spotkanie' for e in remaining_events)
-                        has_trainings = any(e.get('type') == 'Szkolenie' for e in remaining_events)
-                        has_overtime = any(e.get('type') == 'Nadgodziny' for e in remaining_events)
-
-                        # Aktualizuj ikony w modelu
-                        self.schedule_model.update_cell_icons_directly(
-                            user_id, date_str, has_meetings, has_trainings, has_overtime
-                        )
-
-                # 3. Odśwież tabelę zdarzeń dla zaznaczonych komórek
-                selected_cells = self.table.get_data_for_selected_cells()
-                if selected_cells:
-                    self.on_selection_changed()
-                else:
-                    self.events_data = []
-                    if hasattr(self, 'events_model'):
-                        self.events_model.update_data([])
-
-                QMessageBox.information(
-                    self,
-                    "Sukces",
-                    f"Pomyślnie odwołano {canceled_count} delegacji z {len(events_to_cancel)} znalezionych.",
-                    QMessageBox.Ok
-                )
-
-                debug_print(f"=== ZAKOŃCZONO POMYŚLNIE - ODWOŁANO {canceled_count} DELEGACJI ===")
+                self.on_selection_changed()
+                QMessageBox.information(self, "Sukces", f"Pomyślnie odwołano {canceled_count} zdarzeń.", QMessageBox.Ok)
             else:
-                QMessageBox.warning(
-                    self,
-                    "Brak zmian",
-                    "Nie udało się odwołać żadnej delegacji. Sprawdź logi aplikacji.",
-                    QMessageBox.Ok
-                )
+                self._restore_view_state(view_state)
+                QMessageBox.warning(self, "Brak zmian", "Nie udało się odwołać żadnej delegacji.", QMessageBox.Ok)
 
+            debug_print(f"=== ZAKOŃCZONO - ODWOŁANO {canceled_count} DELEGACJI ===")
 
         except Exception as e:
-
-            log_error(f"Błąd podczas odwoływania delegacji: {e}")
-
+            log_error(f"Błąd podczas odwoływania delegacji: {e}", exception=e)
             QMessageBox.critical(self, "Błąd", f"Wystąpił błąd podczas odwoływania delegacji: {str(e)}", QMessageBox.Ok)
 
     def delete_events_for_cells(self, cells_data: list):
@@ -5595,11 +5622,10 @@ class WorkScheduleWindow(QMainWindow):
         return grouped
 
     def delete_event(self, event_id, event_type):
-        """Wersja z weryfikacją uprawnień przed usunięciem."""
-        # Krok 1: Znajdź komórki, których dotyczy zmiana
+        """Wersja z weryfikacją uprawnień oraz usuwaniem symbolu 'S' z grafiku po odwołaniu szkolenia."""
+        debug_print(f"--- ROZPOCZĘTO delete_event DLA ID: {event_id}, TYP: {event_type} ---")
         affected_pairs = []
         event_to_delete = None
-        # Przeszukujemy dane zdarzeń (te aktualnie wyświetlane w tabeli)
         for event in (self.events_data or []):
             if event.get('id') == event_id and event.get('type') == event_type:
                 user_id = event.get('user_id')
@@ -5607,18 +5633,18 @@ class WorkScheduleWindow(QMainWindow):
                 if user_id and date_key:
                     affected_pairs.append((user_id, date_key))
                     event_to_delete = event
-                    break  # Zakładamy unikalne ID, więc możemy przerwać
+                    break
 
         if not event_to_delete:
             QMessageBox.warning(self, "Błąd", "Nie można odnaleźć zdarzenia do usunięcia.")
+            debug_print("[delete_event] Nie znaleziono zdarzenia. Zakończono.")
             return
 
-        # Krok 2: Pobierz pełne dane komórek i przeprowadź walidację uprawnień
         cells_to_check = self._get_cell_data_for_user_date_pairs(affected_pairs)
         if not self._can_modify_cells(cells_to_check):
-            return  # Zatrzymaj, jeśli brak uprawnień
+            debug_print("[delete_event] Brak uprawnień. Zakończono.")
+            return
 
-        # Krok 3: Poproś o potwierdzenie (jeśli walidacja przeszła pomyślnie)
         reply = QMessageBox.question(
             self, "Potwierdzenie",
             f"Czy na pewno chcesz usunąć {event_type.lower()} o ID {event_id}?",
@@ -5627,10 +5653,45 @@ class WorkScheduleWindow(QMainWindow):
         )
 
         if reply != QMessageBox.StandardButton.Yes:
+            debug_print("[delete_event] Użytkownik anulował operację. Zakończono.")
             return
 
-        # Krok 4: Wykonaj operację usunięcia (istniejąca logika)
+        # Krok 1: Zapisz stan widoku PRZED jakąkolwiek modyfikacją.
+        self._state_to_restore = self._save_view_state()
+        debug_print(f"[delete_event] Zapisano stan widoku do self._state_to_restore.")
+
         try:
+            # Krok 2: Jeśli odwołujemy szkolenie, NAJPIERW zajmij się usunięciem symbolu 'S' z grafiku.
+            # Robimy to teraz, gdy dane w `cells_to_check` są wciąż aktualne.
+            if event_type == 'Szkolenie':
+                change_requests = []
+                for cell_data in cells_to_check:
+                    current_symbol = cell_data.get('symbol', '')
+                    if not current_symbol: continue
+
+                    parsed = parse_symbol(current_symbol)
+                    if parsed.get('special_symbol') and parsed.get('special_symbol').upper() == 'S':
+                        debug_print(
+                            f"[delete_event] Znaleziono symbol 'S' w komórce: {current_symbol}. Przygotowuję usunięcie.")
+                        new_symbol = build_symbol(
+                            location=parsed.get('location'), start_hour=parsed.get('start_hour'),
+                            work_hours=parsed.get('work_hours'), special_symbol=None
+                        )
+                        try:
+                            date_str = cell_data['date_str']
+                            year, month, _ = map(int, date_str.split('-'))
+                            change_requests.append({
+                                'nr_kadrowy': cell_data['nr_kadrowy'], 'rok': year, 'miesiac': month,
+                                'data': date_str, 'symbol': new_symbol, 'user_id': cell_data['uzytkownik_id'],
+                                'user_name': cell_data['uzytkownik_dane']
+                            })
+                        except (ValueError, KeyError) as e:
+                            log_warning(f"Pominięto aktualizację symbolu 'S' przy usuwaniu zdarzenia: {e}")
+
+                if change_requests:
+                    self._process_and_apply_changes(change_requests, "Usunięto symbol 'S' z {0} komórki grafiku.")
+
+            # Krok 3: Teraz odwołaj zdarzenie w bazie danych.
             _, user_app_id, _, _, _ = get_modifier_id()
             conn = DatabaseConnector.get_connection()
             cursor = conn.cursor()
@@ -5642,6 +5703,7 @@ class WorkScheduleWindow(QMainWindow):
             elif event_type == "Nadgodziny":
                 table_name = SQL_OBJECTS['nadgodziny']
             else:
+                conn.close()
                 return
 
             if event_type in ["Spotkanie", "Szkolenie"]:
@@ -5653,276 +5715,21 @@ class WorkScheduleWindow(QMainWindow):
 
             conn.commit()
             conn.close()
+            debug_print("[delete_event] Pomyślnie zaktualizowano bazę danych (odwołano zdarzenie).")
             self._update_modification_date()
 
+            # Krok 4: Na samym końcu, zainicjuj odświeżenie danych w interfejsie.
+            debug_print(
+                "[delete_event] Wywołuję invalidate_complete_cache_for_pairs - za chwilę nastąpi refresh i przywrócenie stanu.")
             self.data_provider.invalidate_complete_cache_for_pairs(affected_pairs)
-
-            if hasattr(self, 'schedule_model'):
-                for user_id, date_str in affected_pairs:
-                    remaining_events = self.data_provider.get_events_for_user_date(user_id, date_str)
-                    has_meetings = any(e.get('type') == 'Spotkanie' for e in remaining_events)
-                    has_trainings = any(e.get('type') == 'Szkolenie' for e in remaining_events)
-                    has_overtime = any(e.get('type') == 'Nadgodziny' for e in remaining_events)
-                    self.schedule_model.update_cell_icons_directly(
-                        user_id, date_str, has_meetings, has_trainings, has_overtime
-                    )
             self.statusBar().showMessage(f"Usunięto zdarzenie o ID {event_id}.", 3000)
-
-            self.on_selection_changed()
 
         except Exception as e:
             log_error(f"Błąd podczas usuwania zdarzenia: {e}", exception=e)
             QMessageBox.critical(self, "Błąd", f"Wystąpił błąd podczas usuwania zdarzenia: {str(e)}",
                                  QMessageBox.StandardButton.Ok)
-
-    # def show_add_overtime_dialog(self):
-    #     """
-    #     Pokazuje okno dialogowe do dodawania nadgodzin.
-    #     POPRAWIONA WERSJA - bez duplikacji zdarzeń i z prawidłowym ustawianiem ikon.
-    #     """
-    #     # Pobierz bieżącą datę z tabeli grafiku
-    #     current_data = self.date_combo.currentData()
-    #     if not current_data:
-    #         QMessageBox.warning(
-    #             self,
-    #             "Błąd",
-    #             "Nie wybrano miesiąca. Nie można dodać nadgodzin.",
-    #             QMessageBox.Ok
-    #         )
-    #         return
-    #
-    #     year, month = current_data
-    #
-    #     # Pobierz zaznaczone komórki z modelu
-    #     selected_cells_data = self.table.get_data_for_selected_cells()
-    #
-    #     if not self._can_modify_cells(selected_cells_data):
-    #         return
-    #
-    #     # Sprawdź liczbę zaznaczonych komórek
-    #     if not selected_cells_data:
-    #         QMessageBox.warning(
-    #             self,
-    #             "Brak zaznaczenia",
-    #             "Nie zaznaczono żadnej komórki. Zaznacz dokładnie jedną komórkę, aby dodać nadgodziny.",
-    #             QMessageBox.Ok
-    #         )
-    #         return
-    #
-    #     # Jeśli zaznaczono więcej niż jedną komórkę, wyświetl komunikat i zakończ
-    #     if len(selected_cells_data) > 1:
-    #         QMessageBox.warning(
-    #             self,
-    #             "Zbyt wiele zaznaczonych komórek",
-    #             "Zaznaczono zbyt wiele komórek. Zaznacz dokładnie jedną komórkę, aby dodać nadgodziny.",
-    #             QMessageBox.Ok
-    #         )
-    #         return
-    #
-    #     # Pobierz dane pierwszej (i jedynej) zaznaczonej komórki
-    #     cell_data = selected_cells_data[0]
-    #
-    #     # Pobierz podstawowe informacje o komórce
-    #     selected_user_id = cell_data.get('uzytkownik_id')
-    #     selected_user_name = cell_data.get('uzytkownik_dane')
-    #     day = cell_data.get('day')
-    #     date_str = cell_data.get('date_str')
-    #     nr_kadrowy = cell_data.get('nr_kadrowy')
-    #     start_hour = cell_data.get('start_hour')
-    #     current_symbol = cell_data.get('symbol', '')
-    #
-    #     # NOWE: Pobierz lokalizację domyślną z danych użytkownika
-    #     lokalizacja_domyslna = cell_data.get('lokalizacja_domyslna', 'h')
-    #
-    #     if not selected_user_id or not day or not date_str:
-    #         QMessageBox.warning(
-    #             self,
-    #             "Błąd",
-    #             "Brak wymaganych danych w zaznaczonej komórce.",
-    #             QMessageBox.Ok
-    #         )
-    #         return
-    #
-    #     # Utwórz datę QDate
-    #     selected_date = QDate.fromString(date_str, "yyyy-MM-dd")
-    #
-    #     # Flaga określająca, czy to dzień wolny (brak danych lub pusty symbol)
-    #     is_day_off = not current_symbol or current_symbol.strip() == ''
-    #
-    #     # Jeśli nr_kadrowy jest None, spróbuj znaleźć go w danych użytkownika
-    #     if nr_kadrowy is None and selected_user_id in self.user_info_map:
-    #         nr_kadrowy = self.user_info_map[selected_user_id].get('nr_kadrowy')
-    #
-    #     # Ustaw domyślną godzinę rozpoczęcia
-    #     if start_hour is None:
-    #         start_hour = 9 if is_day_off else 8
-    #
-    #     # POPRAWIONE: Pobierz lokalizację z symbolu lub użyj domyślnej
-    #     current_location = lokalizacja_domyslna  # Domyślna z danych użytkownika
-    #
-    #     if current_symbol and ';' in current_symbol:
-    #         from symbol_parser import parse_symbol
-    #         parsed_symbol = parse_symbol(current_symbol)
-    #         if parsed_symbol['location']:
-    #             current_location = parsed_symbol['location']
-    #
-    #     # Utwórz okno dialogowe
-    #     dialog = QDialog(self)
-    #
-    #     # Nazwy miesięcy po polsku
-    #     polish_months = [
-    #         "stycznia", "lutego", "marca", "kwietnia", "maja", "czerwca",
-    #         "lipca", "sierpnia", "września", "października", "listopada", "grudnia"
-    #     ]
-    #
-    #     month_name = polish_months[selected_date.month() - 1]
-    #     dialog.setWindowTitle(f"Dodaj nadgodziny w dniu {selected_date.day()} {month_name} {selected_date.year()}")
-    #     dialog.setMinimumWidth(300)
-    #
-    #     layout = QVBoxLayout(dialog)
-    #
-    #     # Informacja o pracowniku
-    #     user_info_label = QLabel(f"Pracownik: {selected_user_name}")
-    #     user_info_label.setStyleSheet("font-weight: bold; margin-bottom: 10px;")
-    #     layout.addWidget(user_info_label)
-    #
-    #     # Informacja o numerze kadrowym
-    #     if nr_kadrowy:
-    #         kadrowy_info_label = QLabel(f"Numer kadrowy: {nr_kadrowy}")
-    #         kadrowy_info_label.setStyleSheet("margin-bottom: 10px;")
-    #         layout.addWidget(kadrowy_info_label)
-    #
-    #     # Informacja o miesiącu rozliczenia
-    #     settlement_month = month
-    #     settlement_year = year
-    #     settlement_info = QLabel(f"Miesiąc rozliczenia: {settlement_month:02d}.{settlement_year}")
-    #     settlement_info.setStyleSheet("margin-bottom: 10px;")
-    #     layout.addWidget(settlement_info)
-    #
-    #     # Informacja o dniu wolnym (jeśli to dzień wolny)
-    #     if is_day_off:
-    #         day_off_info = QLabel("Zaznaczony dzień jest dniem wolnym pracownika.")
-    #         day_off_info.setStyleSheet("color: blue; font-weight: bold; margin-bottom: 10px;")
-    #         layout.addWidget(day_off_info)
-    #
-    #     # Formularz wprowadzania
-    #     form_frame = QFrame()
-    #     form_frame.setFrameShape(QFrame.StyledPanel)
-    #     form_frame.setFrameShadow(QFrame.Raised)
-    #     form_layout = QGridLayout(form_frame)
-    #
-    #     # Etykiety
-    #     od_label = QLabel("od kiedy")
-    #     ile_label = QLabel("ile godzin")
-    #     typ_label = QLabel("typ")
-    #     ld_label = QLabel("LD")
-    #     zalegle_label = QLabel("czy zaległe")
-    #
-    #     # Kontrolki wprowadzania
-    #     time_combo = QComboBox()
-    #     time_combo.setMinimumWidth(60)
-    #
-    #     # Ustal domyślny czas
-    #     if is_day_off:
-    #         default_time = "09:00"  # Dla dnia wolnego
-    #     else:
-    #         # Oblicz koniec zmiany (godzina rozpoczęcia + 8 godzin)
-    #         end_hour = (start_hour + 8) % 24
-    #         default_time = f"{end_hour:02d}:00"
-    #
-    #     # Dodaj opcje czasu
-    #     for hour in range(0, 24):
-    #         for minute in [0, 30]:
-    #             time_combo.addItem(f"{hour:02d}:{minute:02d}", f"{hour:02d}:{minute:02d}")
-    #
-    #     # Ustaw domyślny czas
-    #     index = time_combo.findText(default_time)
-    #     if index != -1:
-    #         time_combo.setCurrentIndex(index)
-    #     else:
-    #         time_combo.setCurrentText(default_time)
-    #
-    #     # Combo z liczbą godzin do 13.0
-    #     hours_combo = QComboBox()
-    #     hours_combo.setMinimumWidth(50)
-    #     for hours in [0.5, 1.0, 1.5, 2.0, 2.5, 3.0, 3.5, 4.0, 4.5, 5.0, 5.5, 6.0, 6.5, 7.0, 7.5, 8.0, 8.5, 9.0, 9.5,
-    #                   10.0, 10.5, 11.0, 11.5, 12.0, 12.5, 13.0]:
-    #         hours_combo.addItem(f"{hours:.1f}", hours)
-    #     hours_combo.setCurrentIndex(1)  # Domyślnie 1.0
-    #
-    #     # Typ: wypłata, odbiór, odpracowanie
-    #     type_combo = QComboBox()
-    #     type_combo.addItem("wypłata", "wypłata")
-    #     type_combo.addItem("odbiór", "odbiór")
-    #     type_combo.addItem("odpracowanie", "odpracowanie")
-    #
-    #     # LD (lokalizacja): h, p, s
-    #     ld_combo = QComboBox()
-    #     ld_combo.addItem("h", "h")  # Hybrydowa
-    #     ld_combo.addItem("p", "p")  # Praca zdalna
-    #     ld_combo.addItem("s", "s")  # Stacjonarna
-    #
-    #     # POPRAWIONE: Ustaw domyślną lokalizację na podstawie symbolu lub domyślnej użytkownika
-    #     if current_location == 'h':
-    #         ld_combo.setCurrentIndex(0)
-    #     elif current_location == 'p':
-    #         ld_combo.setCurrentIndex(1)
-    #     elif current_location == 's':
-    #         ld_combo.setCurrentIndex(2)
-    #     else:
-    #         ld_combo.setCurrentIndex(0)  # Domyślnie 'h'
-    #
-    #     # Czy zaległe
-    #     overdue_combo = QComboBox()
-    #     overdue_combo.addItem("nie", 0)
-    #     overdue_combo.addItem("tak", 1)
-    #
-    #     # Przycisk dodawania
-    #     add_button = QPushButton("Dodaj")
-    #     add_button.setStyleSheet("background-color: #333; color: white; font-weight: bold;")
-    #
-    #     # Dodaj kontrolki do layoutu
-    #     form_layout.addWidget(od_label, 0, 0)
-    #     form_layout.addWidget(time_combo, 0, 1)
-    #     form_layout.addWidget(ile_label, 0, 2)
-    #     form_layout.addWidget(hours_combo, 0, 3)
-    #     form_layout.addWidget(typ_label, 0, 4)
-    #     form_layout.addWidget(type_combo, 0, 5)
-    #     form_layout.addWidget(ld_label, 0, 6)
-    #     form_layout.addWidget(ld_combo, 0, 7)
-    #     form_layout.addWidget(zalegle_label, 0, 8)
-    #     form_layout.addWidget(overdue_combo, 0, 9)
-    #     form_layout.addWidget(add_button, 0, 10)
-    #
-    #     # Dodaj formularz do głównego layoutu
-    #     layout.addWidget(form_frame)
-    #
-    #     def add_overtime():
-    #         try:
-    #             result = self.call_add_overtime_procedure_fixed(
-    #                 selected_user_id, selected_date.year(), selected_date.month(),
-    #                 selected_date.toString("yyyy-MM-dd"), time_combo.currentText(),
-    #                 float(hours_combo.currentData()), f"{year}-{month:02d}-01",
-    #                 overdue_combo.currentIndex(), type_combo.currentText(),
-    #                 ld_combo.currentText(), nr_kadrowy
-    #             )
-    #
-    #             if result["success"]:
-    #                 # ZMIANA: Usunięto okno z informacją o sukcesie
-    #                 # QMessageBox.information(dialog, "Sukces", result["message"], QMessageBox.Ok)
-    #                 self.statusBar().showMessage("Pomyślnie dodano nadgodziny.", 3000)
-    #                 dialog.accept()
-    #             else:
-    #                 QMessageBox.warning(dialog, "Błąd", result["message"], QMessageBox.Ok)
-    #
-    #         except Exception as e:
-    #             QMessageBox.critical(dialog, "Błąd", f"Wystąpił błąd: {str(e)}", QMessageBox.Ok)
-    #
-    #     # Podłącz funkcję do przycisku
-    #     add_button.clicked.connect(add_overtime)
-    #
-    #     # Pokaż dialog
-    #     dialog.exec()
+            self._state_to_restore = None
+        debug_print(f"--- ZAKOŃCZONO delete_event DLA ID: {event_id} ---")
 
     def _update_multiple_overtime_locations(self, location_changes):
         """
@@ -6016,20 +5823,37 @@ class WorkScheduleWindow(QMainWindow):
         except Exception as e:
             log_error(f"Błąd podczas aktualizacji ikony nadgodzin: {e}")
 
-    def connect_model_signals(self):
-        """Podłącz sygnały modelu - DODAJ TO DO METODY setup_ui lub __init__"""
-        if hasattr(self, 'data_provider'):
-            self.data_provider.data_changed.connect(self.on_data_changed)
-
-            # NOWE: Podłącz sygnał odświeżania konkretnych ikon
-            if hasattr(self.data_provider, 'data_changed'):
-                self.data_provider.data_changed.connect(self._handle_specific_icons_refresh)
-
     def _handle_specific_icons_refresh(self, data_type, year, month):
-        """NOWA METODA: Obsługuje sygnał odświeżenia konkretnych ikon"""
-        if data_type == "icons" and hasattr(self, 'schedule_model') and self.schedule_model:
-            # Model sam odświeży ikony przy następnym dostępie - nie rób nic więcej
-            debug_print(f"Otrzymano sygnał odświeżenia ikon dla {year}-{month}")
+        """Obsługuje sygnał o zmianie danych ikon z DataProvider i odświeża model."""
+        if data_type == "icons":
+            current_data = self.date_combo.currentData()
+            if current_data and current_data == (year, month):
+                debug_print(f"[DB] Otrzymano sygnał odświeżenia ikon dla {year}-{month}. Odświeżam model grafiku.")
+
+                fresh_processed_data = self.data_provider.get_processed_data(
+                    year, month, self.import_grupa, self.import_funkcja
+                )
+                self.processed_data = fresh_processed_data
+
+                # Zamiast wywoływać filter_data(), które powoduje problemy,
+                # ręcznie przekazujemy przefiltrowane dane do modelu.
+                filtered_data = self.filter_processed_data()
+                self.schedule_model.update_filtered_data(filtered_data)
+
+                debug_print(
+                    f"[DB] W _handle_specific_icons_refresh, sprawdzam flagę self._state_to_restore. Jest ona: {'USTAWIONA' if self._state_to_restore else 'PUSTA (None)'}")
+                if self._state_to_restore:
+                    # Jeśli istnieje stan do przywrócenia, odtwarzamy go.
+                    # Ta funkcja sama zajmie się przywróceniem sortowania i zaznaczenia.
+                    self._restore_view_state(self._state_to_restore)
+                    self._state_to_restore = None  # Wyczyść flagę po użyciu
+                else:
+                    # Jeśli nie ma stanu do przywrócenia, stosujemy domyślne sortowanie z ustawień.
+                    debug_print("[DB] Brak stanu do przywrócenia, aplikuję sortowanie niestandardowe.")
+                    self.apply_custom_sort()
+
+                # Odświeżamy tabelę zdarzeń na samym końcu, gdy zaznaczenie jest już poprawnie przywrócone.
+                self.on_selection_changed()
 
     def call_add_overtime_procedure_fixed(self, user_id, year, month, date_str, start_time, hours,
                                           settlement_date, is_overdue, overtime_type, location,
@@ -6473,18 +6297,16 @@ class WorkScheduleWindow(QMainWindow):
         if not self._can_modify_cells(selected_cells_data):
             return
 
-        # --- ZMIANA 1: Rozszerzona logika filtrowania komórek w zależności od roli ---
+        view_state = self._save_view_state()
+
         processed_cells_to_modify = []
         for cell_data in selected_cells_data:
             parsed_symbol = parse_symbol(cell_data.get('symbol', ''))
             is_empty_cell = parsed_symbol.get('work_hours') is None
 
             if is_empty_cell:
-                # Przypadek 1: Użytkownik to Lider lub Pracownik WPR - pomijamy puste komórki
                 if self.current_user_role in ['Lider', 'Pracownik WPR']:
                     continue
-
-                # Przypadek 2: Użytkownik to Lider OUT - tworzymy domyślną zmianę
                 elif self.current_user_role == 'Lider OUT':
                     try:
                         work_hours = int(float(cell_data.get('etat', 8.0)))
@@ -6501,21 +6323,16 @@ class WorkScheduleWindow(QMainWindow):
                     modified_cell['symbol'] = default_shift_symbol
                     processed_cells_to_modify.append(modified_cell)
                 else:
-                    # Dla innych przyszłych ról, pozwalamy na operację na pustej komórce
                     processed_cells_to_modify.append(cell_data)
             else:
-                # Jeśli komórka nie jest pusta, zawsze ją dodajemy
                 processed_cells_to_modify.append(cell_data)
-        # --- KONIEC ZMIANY 1 ---
 
         if not processed_cells_to_modify:
             QMessageBox.information(self, "Informacja",
                                     "Brak prawidłowych komórek do modyfikacji dla Twojej roli i zaznaczenia.")
             return
 
-        # Logika dla DTN (bez zmian)
         cells_to_modify_final = []
-        # ... (reszta tej metody pozostaje bez zmian, używając `processed_cells_to_modify`)
         skipped_for_dtn = []
         if self.current_user_role in ['Lider', 'Lider OUT']:
             for cell in processed_cells_to_modify:
@@ -6529,7 +6346,7 @@ class WorkScheduleWindow(QMainWindow):
 
         if skipped_for_dtn:
             QMessageBox.warning(self, "Operacja zablokowana",
-                                f"Dla wydziału DTN dozwolony jest tylko symbol 'CO'.\n"
+                                f"Dla wydziału DTN dozwolony jest tylko symbol 'CO'.\\n"
                                 f"Pominięto zmiany dla: {', '.join(set(skipped_for_dtn))}")
 
         if not cells_to_modify_final:
@@ -6544,11 +6361,11 @@ class WorkScheduleWindow(QMainWindow):
         if self._should_ask_for_confirmation():
             grouped_changes = self._group_cells_for_symbol_changes(cells_to_modify_final)
             changes_info = self._prepare_symbol_changes_description(grouped_changes, special_symbol)
-            complete_info = f"Czy na pewno chcesz wprowadzić następujące zmiany?\n\n{changes_info}"
+            complete_info = f"Czy na pewno chcesz wprowadzić następujące zmiany?\\n\\n{changes_info}"
             if events_to_cancel:
                 grouped_events = self._group_events_by_user_date(events_to_cancel)
                 delegations_info = self._prepare_delegations_description(grouped_events)
-                complete_info += f"\n{delegations_info}"
+                complete_info += f"\\n{delegations_info}"
             reply = QMessageBox.question(self, "Potwierdzenie wstawienia symbolu", complete_info,
                                          QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
 
@@ -6557,11 +6374,22 @@ class WorkScheduleWindow(QMainWindow):
             return
 
         if events_to_cancel:
-            self._cancel_delegations(events_to_cancel)
+            self.cancel_delegations()
 
         updated_info, error_messages, skipped_employees = [], [], []
 
         for cell_data in cells_to_modify_final:
+            # --- NOWA LOGIKA: Wyjątek dla Lidera wstawiającego 'U' innemu Liderowi ---
+            if self.current_user_role == 'Lider' and special_symbol.upper() == 'U':
+                target_role = cell_data.get('rola_nazwa', '')
+                target_dept = cell_data.get('wydzial', '')
+                # Lider może wstawić 'U' tylko innemu Liderowi w tym samym wydziale
+                if not (target_role == 'Lider' and target_dept == self.current_user_department):
+                    skipped_employees.append(
+                        f"{cell_data.get('uzytkownik_dane', 'Nieznany')} (nie jest Liderem w tym samym wydziale)")
+                    continue  # Pomiń tego pracownika
+            # --- KONIEC NOWEJ LOGIKI ---
+
             permissions = self._get_permission_for_cell(cell_data)
             if not permissions['can_edit_symbol']:
                 skipped_employees.append(cell_data.get('uzytkownik_dane', 'Nieznany'))
@@ -6588,7 +6416,6 @@ class WorkScheduleWindow(QMainWindow):
             self._update_cells_with_new_symbols(updated_info)
             self.statusBar().showMessage(f"Zastosowano symbol '{special_symbol}' dla {len(updated_info)} komórek.",
                                          4000)
-            self.schedule_model.layoutChanged.emit()
 
         self._show_symbol_change_results(len(updated_info), len(error_messages), error_messages, events_to_cancel,
                                          skipped_employees)
@@ -6608,7 +6435,7 @@ class WorkScheduleWindow(QMainWindow):
         self.setStyleSheet(AppStyles.get_main_window_style(theme))
 
         # Definicje stylów
-        button_style = AppStyles.get_button_style(theme)
+        button_style = AppStyles.get_button_style(theme, font_family, font_size)
         combo_style = AppStyles.get_combobox_style(theme)
         line_edit_style = AppStyles.get_line_edit_style(theme)
         list_style = AppStyles.get_list_style(theme)
@@ -6683,7 +6510,11 @@ class WorkScheduleWindow(QMainWindow):
             'window_size': (self.size().width(), self.size().height()),
             'last_filters': self.get_current_filters_state(),
             'column_widths': self.table.get_column_widths(),
-            'visible_columns': self.visible_columns  # Zapisz również aktualny układ kolumn
+            'visible_columns': self.visible_columns,
+            # DODANE: Jawne zapisanie aktualnych ustawień motywu
+            'theme': 'dark' if self.is_dark_theme else 'light',
+            'font_family': self.current_font,
+            'font_size': self.current_font_size
         }
 
         # Zaktualizuj główny słownik ustawień
