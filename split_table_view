@@ -4,7 +4,7 @@ from PySide6.QtWidgets import (QWidget, QTableView, QVBoxLayout, QHBoxLayout,
                                QSplitter, QHeaderView, QAbstractItemView, QScrollBar, QSizePolicy,
                                QTableWidgetSelectionRange, QApplication)
 from PySide6.QtCore import Qt, Signal, QItemSelectionModel, QEvent, QModelIndex, QItemSelection, QTimer
-from debug_utils import debug_print, log_warning, log_error
+from debug_utils import debug_print
 from styles import AppStyles
 
 
