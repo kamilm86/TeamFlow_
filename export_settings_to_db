@@ -87,7 +87,7 @@ def export_settings():
     # --- NOWA SEKCJA: Definicja uprawnień do poszczególnych symboli ---
     symbol_permissions = {
         # Urlopy - dostępne tylko dla WPR
-        "U": ["Pracownik WPR", "Lider OUT"], "UZ": ["Pracownik WPR", "Lider OUT", "Lider"], "UB": ["Pracownik WPR", "Lider OUT", "Lider"], "UM": ["Pracownik WPR", "Lider OUT", "Lider"],
+        "U": ["Pracownik WPR", "Lider OUT", "Lider"], "UZ": ["Pracownik WPR", "Lider OUT", "Lider"], "UB": ["Pracownik WPR", "Lider OUT", "Lider"], "UM": ["Pracownik WPR", "Lider OUT", "Lider"],
         "UO": ["Pracownik WPR", "Lider OUT", "Lider"], "UOD": ["Pracownik WPR", "Lider OUT", "Lider"], "US": ["Pracownik WPR", "Lider OUT", "Lider"], "UT": ["Pracownik WPR", "Lider OUT", "Lider"],
         "UW": ["Pracownik WPR", "Lider OUT", "Lider"], "UOP": ["Pracownik WPR", "Lider OUT", "Lider"],
         # Zwolnienia - dostępne dla WPR i Liderów
