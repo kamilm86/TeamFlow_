@@ -1,12 +1,56 @@
-# schedule_control_dialog.py (pełna, nowa wersja)
+# schedule_control_dialog.py
 
+import datetime
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
-                               QPushButton, QGroupBox, QFrame, QGridLayout, QMessageBox, QListWidget, QAbstractItemView)
-from PySide6.QtCore import Qt, Signal
+                               QPushButton, QGroupBox, QFrame, QGridLayout, QMessageBox, QListWidget, QAbstractItemView,
+                               QDateEdit, QDateTimeEdit)
+from PySide6.QtCore import Qt, Signal, QDate, QDateTime
 from styles import AppStyles
 from db_connector import DatabaseConnector, get_modifier_id
 from config import SQL_OBJECTS
+from debug_utils import log_error
 
+
+# --- NOWA KLASA: Dialog do wyboru daty blokady ---
+class BlockingDateDialog(QDialog):
+    def __init__(self, parent=None, current_date=None):
+        super().__init__(parent)
+        self.setWindowTitle("Ustaw datę blokady")
+        self.is_dark_theme = getattr(parent, 'is_dark_theme', False)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(QLabel("Wybierz datę, do której plany urlopowe mają być zablokowane:"))
+
+        self.date_edit = QDateEdit(current_date or QDate.currentDate())
+        self.date_edit.setCalendarPopup(True)
+        self.date_edit.setDisplayFormat("yyyy-MM-dd")
+        layout.addWidget(self.date_edit)
+
+        buttons_layout = QHBoxLayout()
+        self.ok_button = QPushButton("OK")
+        self.cancel_button = QPushButton("Anuluj")
+        buttons_layout.addStretch()
+        buttons_layout.addWidget(self.cancel_button)
+        buttons_layout.addWidget(self.ok_button)
+
+        self.ok_button.clicked.connect(self.accept)
+        self.cancel_button.clicked.connect(self.reject)
+
+        layout.addLayout(buttons_layout)
+        self.apply_styles()
+
+    def get_selected_date(self):
+        return self.date_edit.date()
+
+    def apply_styles(self):
+        theme = "dark" if self.is_dark_theme else "light"
+        self.setStyleSheet(AppStyles.get_dialog_style(theme))
+        self.date_edit.setStyleSheet(AppStyles.get_date_edit_style(theme))
+        self.ok_button.setStyleSheet(AppStyles.get_button_style(theme))
+        self.cancel_button.setStyleSheet(AppStyles.get_button_style(theme))
+
+
+# --- ZAKTUALIZOWANA KLASA GŁÓWNEGO OKNA ---
 class ScheduleControlDialog(QDialog):
     data_refresh_needed = Signal()
 
@@ -16,8 +60,9 @@ class ScheduleControlDialog(QDialog):
         self.year = year
         self.month = month
         self.is_dark_theme = getattr(parent, 'is_dark_theme', False)
-        self.login_windows, _, _, _, _= get_modifier_id() # Pobierz nazwę użytkownika Windows
-        self.data_provider = parent.data_provider  # Przechowujemy referencję do data_provider
+        self.user_id, self.login_windows, _, _, _ = get_modifier_id()
+        self.data_provider = parent.data_provider
+        self.blocking_date = None  # Przechowuje aktualną datę blokady
 
         self.setWindowTitle("Sugestie i blokowanie grafiku")
         self.setMinimumWidth(450)
@@ -27,10 +72,10 @@ class ScheduleControlDialog(QDialog):
         self.apply_styles()
         self.load_initial_status()
 
-    # Metoda setup_ui() pozostaje bez zmian (skopiuj ją z Kroku 1)
     def setup_ui(self):
         main_layout = QVBoxLayout(self)
-        status_box = QGroupBox("Aktualny status:")
+        self.status_box = QGroupBox("Aktualny status:")
+
         status_layout = QHBoxLayout()
         self.suggestions_status_label = QLabel("Ładowanie...")
         self.suggestions_status_label.setAlignment(Qt.AlignCenter)
@@ -38,7 +83,8 @@ class ScheduleControlDialog(QDialog):
         self.publish_status_label.setAlignment(Qt.AlignCenter)
         status_layout.addWidget(self.suggestions_status_label)
         status_layout.addWidget(self.publish_status_label)
-        status_box.setLayout(status_layout)
+        self.status_box.setLayout(status_layout)
+
         suggestions_box = QGroupBox("Zmiana statusu sugestii")
         suggestions_layout = QVBoxLayout()
         self.unlock_button = QPushButton("Odblokowane")
@@ -48,6 +94,7 @@ class ScheduleControlDialog(QDialog):
         suggestions_layout.addWidget(self.lock_for_consultants_button)
         suggestions_layout.addWidget(self.lock_for_consultants_support_button)
         suggestions_box.setLayout(suggestions_layout)
+
         publish_box = QGroupBox("Publikacja grafiku")
         publish_layout = QVBoxLayout()
         self.publish_button = QPushButton("Publikacja grafiku")
@@ -55,14 +102,31 @@ class ScheduleControlDialog(QDialog):
         publish_layout.addWidget(self.publish_button)
         publish_layout.addWidget(self.unpublish_button)
         publish_box.setLayout(publish_layout)
+
         right_panel_layout = QVBoxLayout()
-        blocking_box = QGroupBox("Blokowanie PU")
+
+        blocking_box = QGroupBox("Blokowanie Planów Urlopowych (PU)")
         blocking_layout = QVBoxLayout()
+
         self.blocking_date_label = QLabel("Data blokady: Nie ustawiono")
-        self.change_blocking_date_button = QPushButton("Zmień datę blokady")
+        self.blocking_date_label.setStyleSheet("font-weight: bold;")
+
+        blocking_controls_layout = QHBoxLayout()
+
+        # ZMIANA: Użycie QDateTimeEdit zamiast QDateEdit
+        self.blocking_date_edit = QDateTimeEdit(QDateTime.currentDateTime())
+        self.blocking_date_edit.setCalendarPopup(True)
+        self.blocking_date_edit.setDisplayFormat("yyyy-MM-dd HH:mm")  # ZMIANA formatu
+
+        self.save_blocking_date_button = QPushButton("Ustaw datę blokady")
+
+        blocking_controls_layout.addWidget(self.blocking_date_edit)
+        blocking_controls_layout.addWidget(self.save_blocking_date_button)
+
         blocking_layout.addWidget(self.blocking_date_label)
-        blocking_layout.addWidget(self.change_blocking_date_button)
+        blocking_layout.addLayout(blocking_controls_layout)
         blocking_box.setLayout(blocking_layout)
+
         data_box = QGroupBox("Pobieranie danych")
         data_layout = QVBoxLayout()
         self.get_suggestions_button = QPushButton("Pobierz sugestie Konsultantów")
@@ -70,18 +134,22 @@ class ScheduleControlDialog(QDialog):
         data_layout.addWidget(self.get_suggestions_button)
         data_layout.addWidget(self.get_vacation_plans_button)
         data_box.setLayout(data_layout)
+
         right_panel_layout.addWidget(blocking_box)
         right_panel_layout.addWidget(data_box)
+
         grid_layout = QGridLayout()
-        grid_layout.addWidget(status_box, 0, 0, 1, 2)
+        grid_layout.addWidget(self.status_box, 0, 0, 1, 2)
         grid_layout.addWidget(suggestions_box, 1, 0)
         grid_layout.addWidget(publish_box, 2, 0)
         grid_layout.addLayout(right_panel_layout, 1, 1, 2, 1)
         main_layout.addLayout(grid_layout)
+
         separator = QFrame()
         separator.setFrameShape(QFrame.HLine)
         separator.setFrameShadow(QFrame.Sunken)
         main_layout.addWidget(separator)
+
         close_button_layout = QHBoxLayout()
         close_button_layout.addStretch()
         self.close_button = QPushButton("Zamknij")
@@ -97,16 +165,20 @@ class ScheduleControlDialog(QDialog):
         self.unpublish_button.clicked.connect(self.unpublish_schedule)
         self.get_suggestions_button.clicked.connect(self.get_suggestions)
         self.get_vacation_plans_button.clicked.connect(self.get_vacation_plans)
+        # POPRAWKA: Użyto prawidłowej nazwy przycisku i metody
+        self.save_blocking_date_button.clicked.connect(self._save_blocking_date)
+
 
     def apply_styles(self):
         theme = "dark" if self.is_dark_theme else "light"
         self.setStyleSheet(AppStyles.get_dialog_style(theme))
         for button in self.findChildren(QPushButton):
             button.setStyleSheet(AppStyles.get_button_style(theme))
-        for label in self.findChildren(QLabel):
-            label.setStyleSheet(f"color: {'white' if self.is_dark_theme else 'black'}; background-color: transparent;")
         self.suggestions_status_label.setStyleSheet("font-weight: bold; border: 1px solid gray; padding: 5px;")
         self.publish_status_label.setStyleSheet("font-weight: bold; border: 1px solid gray; padding: 5px;")
+        # ZMIANA: Styl dla nowej kontrolki
+        self.blocking_date_edit.setStyleSheet(AppStyles.get_date_edit_style(theme))
+
 
     def get_vacation_plans(self):
         """Obsługuje pobieranie planów urlopowych."""
@@ -145,43 +217,117 @@ class ScheduleControlDialog(QDialog):
             return False
 
     def load_initial_status(self):
-        """Wczytuje i ustawia początkowy status z bazy."""
+        """Wczytuje i ustawia początkowy status z bazy oraz dynamiczny tytuł."""
         try:
+            # Ustawienie dynamicznego tytułu
+            polish_months = [
+                "styczeń", "luty", "marzec", "kwiecień", "maj", "czerwiec",
+                "lipiec", "sierpień", "wrzesień", "październik", "listopad", "grudzień"
+            ]
+            month_name = polish_months[self.month - 1]
+            self.status_box.setTitle(f"Aktualny status grafiku na {month_name} {self.year}:")
+
             conn = DatabaseConnector.get_connection()
             cursor = conn.cursor()
 
-            # Status sugestii
-            query_sug = f"SELECT Status FROM {SQL_OBJECTS['datyblokowaniasugestii']} WHERE Rok={self.year} AND Miesiac={self.month}"
-            sug_status = cursor.execute(query_sug).fetchone()
-            if sug_status:
-                if sug_status[0] == 0: self.suggestions_status_label.setText("Odblokowany")
-                elif sug_status[0] == 1: self.suggestions_status_label.setText("Zablokowany dla Konsultantów")
-                elif sug_status[0] == 2: self.suggestions_status_label.setText("Zablokowany dla Konsultantów i Wsparcia")
-            else:
-                self.suggestions_status_label.setText("Nieustawiony")
+            # --- NOWA LOGIKA Z DWOMA OSOBNYMI ZAPYTANIAMI ---
 
-            # Status publikacji
-            query_pub = f"SELECT TOP 1 Id FROM {SQL_OBJECTS['datypublikacjigrafiku']} WHERE Status=1 AND Rok={self.year} AND Miesiac={self.month}"
-            pub_status = cursor.execute(query_pub).fetchone()
-            if pub_status:
-                self.publish_status_label.setText("Opublikowany")
-                self.unpublish_button.setText("Cofnij publikację")
-            else:
-                self.publish_status_label.setText("Nieopublikowany")
-                self.publish_button.setText("Publikuj")
+            # 1. Pobranie statusu sugestii
+            self.suggestions_status_label.setText("Sugestie: Nieustawiony")
+            query_sug = f"SELECT Status FROM {SQL_OBJECTS['datyblokowaniasugestii']} WHERE Rok=? AND Miesiac=?"
+            sug_result = cursor.execute(query_sug, (self.year, self.month)).fetchone()
+            if sug_result:
+                status_code = sug_result[0]
+                status_map = {
+                    '0': "Sugestie: Odblokowane",
+                    '1': "Sugestie: Zablokowane dla Konsultantów",
+                    '2': "Sugestie: Zablokowane dla Konsultantów i Wsparcia"
+                }
+                self.suggestions_status_label.setText(status_map.get(status_code, "Sugestie: Nieznany status"))
+
+            # 2. Osobne pobranie daty blokady Planów Urlopowych (PU)
+            self.blocking_date_label.setText("Data blokady: Nie ustawiono")
+            self.blocking_date = None
+
+            # Użycie datetime.date, aby upewnić się, że format jest poprawny dla bazy
+            first_day_of_month = datetime.date(self.year, self.month, 1)
+            query_block = f"SELECT DataBlokowania FROM {SQL_OBJECTS['datyblokowaniapu']} WHERE ZablokowanaData = ?"
+            block_date_row = cursor.execute(query_block, (first_day_of_month,)).fetchone()
+
+            if block_date_row and block_date_row[0]:
+                blocking_date = block_date_row[0]
+                # Sprawdzamy, czy zwrócona data jest prawidłowym obiektem datetime
+                if isinstance(blocking_date, datetime.datetime):
+                    self.blocking_date = blocking_date
+                    self.blocking_date_label.setText(f"Data blokady: {blocking_date.strftime('%Y-%m-%d %H:%M')}")
+                    self.blocking_date_edit.setDateTime(QDateTime(blocking_date))
+
+            # 3. Pobranie statusu publikacji (bez zmian)
+            query_pub = f"SELECT TOP 1 Id FROM {SQL_OBJECTS['datypublikacjigrafiku']} WHERE Status=1 AND Rok=? AND Miesiac=?"
+            pub_status = cursor.execute(query_pub, (self.year, self.month)).fetchone()
+            self.publish_status_label.setText("Grafik: Opublikowany" if pub_status else "Grafik: Nieopublikowany")
 
             conn.close()
         except Exception as e:
-            self.suggestions_status_label.setText("Błąd odczytu")
-            self.publish_status_label.setText("Błąd odczytu")
+            self.suggestions_status_label.setText("Sugestie: Błąd odczytu")
+            self.publish_status_label.setText("Grafik: Błąd odczytu")
+            self.blocking_date_label.setText("Data blokady: Błąd odczytu")
+            log_error(f"Nie udało się wczytać statusów: {e}", exception=e)
             QMessageBox.warning(self, "Błąd", f"Nie udało się wczytać statusów: {e}")
 
-    def _set_suggestions_status(self, status_code):
-        """Ustawia status sugestii i odświeża widok."""
-        sql = f"exec {SQL_OBJECTS['p_blokowaniesugestii']} {self.year}, {self.month}, GETDATE(), '{self.login_windows}', {status_code}, 1"
-        if self._execute_procedure(sql):
-            QMessageBox.information(self, "Sukces", "Status sugestii został zmieniony.")
+    def _save_blocking_date(self):
+        """Zapisuje lub aktualizuje datę blokady PU, używając nowej, zunifikowanej procedury."""
+        selected_date = self.blocking_date_edit.date().toString("yyyy-MM-dd")
+        reply = QMessageBox.question(self, "Potwierdzenie",
+                                     f"Czy na pewno chcesz ustawić datę blokady planów urlopowych na {selected_date}?",
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply == QMessageBox.No:
+            return
+
+        try:
+            conn = DatabaseConnector.get_connection()
+            cursor = conn.cursor()
+            sql = f"EXEC {SQL_OBJECTS['p_blokowaniesugestii']} ?, ?, ?, ?, ?, ?"
+            # Parametry: @Rok, @Miesiac, @Data, @Nr_Kadrowy, @Status, @parametr
+            # Dla @Status przekazujemy NULL, bo nie jest używany przy @parametr=2
+            cursor.execute(sql, (self.year, self.month, selected_date, self.user_app_id, None, 2))
+            conn.commit()
+            conn.close()
+
+            QMessageBox.information(self, "Sukces", "Data blokady planów urlopowych została zaktualizowana.")
             self.load_initial_status()
+
+        except Exception as e:
+            log_error(f"Błąd zapisu daty blokady PU: {e}", exception=e)
+            QMessageBox.critical(self, "Błąd Bazy Danych", f"Wystąpił błąd podczas zapisu daty blokady:\n{e}")
+
+    def _save_blocking_date(self):
+        """Zapisuje lub aktualizuje datę i czas blokady PU w bazie danych."""
+        # ZMIANA: Usunięcie sekund z formatu zapisu
+        selected_datetime = self.blocking_date_edit.dateTime().toString("yyyy-MM-dd HH:mm")
+
+        reply = QMessageBox.question(self, "Potwierdzenie",
+                                     f"Czy na pewno chcesz ustawić datę i czas blokady planów urlopowych na {selected_datetime}?",
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        if reply == QMessageBox.No:
+            return
+
+        try:
+            conn = DatabaseConnector.get_connection()
+            cursor = conn.cursor()
+            sql = f"EXEC {SQL_OBJECTS['p_blokowaniesugestii']} ?, ?, ?, ?, ?, ?"
+            # Parametry: @Rok, @Miesiac, @Data, @Nr_Kadrowy, @Status, @parametr
+            # Dla @Status przekazujemy NULL, bo nie jest używany przy @parametr=2
+            cursor.execute(sql, (self.year, self.month, selected_datetime, self.login_windows, None, 2))
+            conn.commit()
+            conn.close()
+
+            QMessageBox.information(self, "Sukces", "Data blokady planów urlopowych została zaktualizowana.")
+            self.load_initial_status()
+
+        except Exception as e:
+            log_error(f"Błąd zapisu daty blokady PU: {e}", exception=e)
+            QMessageBox.critical(self, "Błąd Bazy Danych", f"Wystąpił błąd podczas zapisu daty blokady:\n{e}")
 
     def unlock_suggestions(self):
         self._set_suggestions_status(0)
@@ -191,6 +337,52 @@ class ScheduleControlDialog(QDialog):
 
     def lock_for_support(self):
         self._set_suggestions_status(2)
+
+    def _set_suggestions_status(self, status_code: int):
+        """
+        Zmienia status blokady sugestii w bazie danych, wywołując procedurę składowaną.
+
+        Args:
+            status_code (int): Kod statusu do ustawienia (0, 1, lub 2).
+        """
+        status_map = {
+            0: "Odblokowane",
+            1: "Zablokowane dla Konsultantów",
+            2: "Zablokowane dla Konsultantów i wsparcia"
+        }
+        status_name = status_map.get(status_code, "Nieznany")
+
+        reply = QMessageBox.question(
+            self,
+            "Potwierdzenie zmiany statusu",
+            # POPRAWKA: Użyto <br> zamiast \\n dla poprawnego łamania linii w trybie HTML
+            f"Czy na pewno chcesz zmienić status sugestii na:<br><b>{status_name}</b>?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No
+        )
+
+        if reply == QMessageBox.StandardButton.No:
+            return
+
+        try:
+            conn = DatabaseConnector.get_connection()
+            cursor = conn.cursor()
+            sql = f"EXEC {SQL_OBJECTS['p_blokowaniesugestii']} ?, ?, ?, ?, ?, ?"
+
+            # Parametry: @Rok, @Miesiac, @Data, @Nr_Kadrowy, @Status, @parametr
+            # Dla zmiany statusu sugestii @parametr = 1
+            # @Nr_Kadrowy przechowuje login Windows osoby modyfikującej
+            # @Data jest wypełniana bieżącą datą i godziną
+            cursor.execute(sql, (self.year, self.month, datetime.datetime.now(), self.login_windows, status_code, 1))
+            conn.commit()
+            conn.close()
+
+            QMessageBox.information(self, "Sukces", f"Status sugestii został pomyślnie zmieniony.")
+            self.load_initial_status()  # Odświeża etykiety statusu w oknie dialogowym
+
+        except Exception as e:
+            log_error(f"Błąd podczas zmiany statusu sugestii na {status_code}: {e}", exception=e)
+            QMessageBox.critical(self, "Błąd Bazy Danych", f"Wystąpił błąd podczas zmiany statusu sugestii:\\n{e}")
 
     def publish_schedule(self):
         sql = f"exec {SQL_OBJECTS['p_publikowaniegrafiku']} {self.year}, {self.month}, '{self.login_windows}', 1"
