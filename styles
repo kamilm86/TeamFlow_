@@ -47,7 +47,18 @@ class AppStyles:
     BUTTON_DARK_BORDER = "#2c3136"  # Bardzo ciemna ramka
 
     @staticmethod
-    def get_button_style(theme="dark"):
+    def get_button_style(theme="dark", font_family="Segoe UI", font_size=9):
+        """
+        Zwraca kompletny arkusz stylów (QSS) dla widżetu QPushButton.
+
+        Args:
+            theme (str): Nazwa motywu ("dark" lub "light").
+            font_family (str): Nazwa rodziny czcionek do zastosowania.
+            font_size (int): Rozmiar czcionki w punktach.
+
+        Returns:
+            str: Sformatowany ciąg znaków QSS.
+        """
         if theme == "dark":
             bg_color = AppStyles.BUTTON_DARK_BG
             text_color = AppStyles.BUTTON_DARK_TEXT
@@ -66,25 +77,28 @@ class AppStyles:
             disabled_text = AppStyles.LIGHT_TEXT_SECONDARY
 
         return f"""
-                    QPushButton {{
-                        background-color: {bg_color};
-                        color: {text_color};
-                        border: 1px solid {border_color};
-                        padding: {AppStyles.BUTTON_PADDING};
-                        border-radius: {AppStyles.BORDER_RADIUS};
-                    }}
-                    QPushButton:hover {{
-                        background-color: {hover_bg};
-                        border-color: {border_color};
-                    }}
-                    QPushButton:pressed {{
-                        background-color: {pressed_bg};
-                    }}
-                    QPushButton:disabled {{
-                        background-color: {disabled_bg};
-                        color: {disabled_text};
-                    }}
-                """
+        QPushButton {{
+                background-color: {bg_color};
+                color: {text_color};
+                border: 1px solid {border_color};
+                padding: {AppStyles.BUTTON_PADDING};
+                border-radius: {AppStyles.BORDER_RADIUS};
+                font-family: '{font_family}';
+                font-size: {font_size}pt;
+            }}
+            QPushButton:hover {{
+                background-color: {hover_bg};
+                border-color: {border_color};
+            }}
+            QPushButton:pressed {{
+                background-color: {pressed_bg};
+            }}
+            QPushButton:disabled {{
+                background-color: {disabled_bg};
+                color: {disabled_text};
+            }}
+        """
+
 
     @staticmethod
     def get_list_style(theme="dark"):
@@ -215,174 +229,260 @@ class AppStyles:
     @staticmethod
     def get_date_edit_style(theme="dark"):
         if theme == "dark":
+            control_bg = AppStyles.DARK_BACKGROUND_CONTROLS
+            text_color = AppStyles.DARK_TEXT_PRIMARY
+            border_color = AppStyles.DARK_BORDER_SECONDARY
+        else:  # Jasny motyw
+            control_bg = AppStyles.LIGHT_BACKGROUND_CONTROLS
+            text_color = AppStyles.LIGHT_TEXT_PRIMARY
+            border_color = AppStyles.LIGHT_BORDER_PRIMARY
+
+        return f"""
+                QDateTimeEdit, QDateEdit {{
+                    background-color: {control_bg};
+                    color: {text_color};
+                    border: 1px solid {border_color};
+                    padding: {AppStyles.CONTROL_PADDING};
+                    border-radius: {AppStyles.BORDER_RADIUS};
+                }}
+                QDateTimeEdit::drop-down, QDateEdit::drop-down {{
+                    subcontrol-origin: padding;
+                    subcontrol-position: top right;
+                    width: 20px;
+                    border-left: 1px solid {border_color};
+                }}
+            """
+
+    @staticmethod
+    def get_calendar_style(theme="dark"):
+        """NOWA FUNKCJA: Zwraca globalny styl dla QCalendarWidget."""
+        if theme == "dark":
+            main_bg = AppStyles.DARK_BACKGROUND_MAIN
+            control_bg = AppStyles.DARK_BACKGROUND_CONTROLS
+            text_color = AppStyles.DARK_TEXT_PRIMARY
+            border_color = AppStyles.DARK_BORDER_SECONDARY
+            accent_color = AppStyles.ACCENT_COLOR_DARK
+            selection_bg = AppStyles.SELECTION_BACKGROUND_DARK
+            hover_bg = AppStyles.DARK_BACKGROUND_HOVER
+            disabled_text = AppStyles.DARK_TEXT_SECONDARY
+            today_border = AppStyles.ACCENT_COLOR_DARK
+        else:  # Jasny motyw
+            main_bg = AppStyles.LIGHT_BACKGROUND_MAIN
+            control_bg = AppStyles.LIGHT_BACKGROUND_CONTROLS
+            text_color = AppStyles.LIGHT_TEXT_PRIMARY
+            border_color = AppStyles.LIGHT_BORDER_PRIMARY
+            accent_color = AppStyles.ACCENT_COLOR_LIGHT
+            selection_bg = AppStyles.SELECTION_BACKGROUND_LIGHT
+            hover_bg = AppStyles.LIGHT_BACKGROUND_HOVER
+            disabled_text = AppStyles.LIGHT_TEXT_SECONDARY
+            today_border = AppStyles.ACCENT_COLOR_LIGHT
+
+        return f"""
+        QCalendarWidget {{
+                background-color: {main_bg};
+                color: {text_color};
+                border: 1px solid {accent_color};
+            }}
+            QCalendarWidget QToolButton {{
+                color: {text_color};
+                background-color: transparent;
+                border: none;
+                padding: 5px;
+                margin: 0 2px;
+                font-weight: bold;
+                border-radius: {AppStyles.BORDER_RADIUS};
+            }}
+            QCalendarWidget QToolButton:hover {{
+                background-color: {hover_bg};
+            }}
+            QCalendarWidget QSpinBox, QCalendarWidget QComboBox {{
+                background-color: {control_bg};
+                color: {text_color};
+                border: 1px solid {border_color};
+                border-radius: {AppStyles.BORDER_RADIUS};
+            }}
+            QCalendarWidget QAbstractItemView {{
+                color: {text_color};
+                background-color: {main_bg};
+                selection-background-color: {selection_bg};
+                selection-color: white;
+            }}
+            QCalendarWidget QAbstractItemView:disabled {{
+                color: {disabled_text};
+            }}
+            QCalendarWidget #qt_calendar_navigationbar {{
+                background-color: {control_bg};
+                border-bottom: 1px solid {border_color};
+            }}
+            QCalendarWidget #qt_calendar_weekday-cell {{
+                color: {accent_color};
+                background-color: {hover_bg};
+                font-weight: bold;
+                padding: 4px 0;
+            }}
+            QCalendarWidget #qt_calendar_today_button {{
+                 padding: 5px;
+            }}
+            QCalendarWidget QTableView {{
+                alternate-background-color: {hover_bg};
+            }}
+            QCalendarWidget QTableView::item:selected {{
+                background-color: {selection_bg};
+                color: white;
+            }}
+            QCalendarWidget QTableView::item#qt_calendar_today-cell {{
+                 border: 1px solid {today_border};
+                 border-radius: 2px;
+            }}
+            QCalendarWidget QMenu {{
+                background-color: {main_bg};
+                color: {text_color};
+                border: 1px solid {border_color};
+            }}
+            QCalendarWidget QMenu::item:selected {{
+                background-color: {selection_bg};
+            }}
+"""
+    @staticmethod
+    def get_combobox_style(theme="dark"):
+        """
+        Zwraca kompletny arkusz stylów (QSS) dla widżetu QComboBox.
+        Wersja z niezawodną, ręcznie rysowaną strzałką za pomocą ramek (border).
+
+        Args:
+            theme (str): Nazwa motywu ("dark" lub "light").
+
+        Returns:
+            str: Sformatowany ciąg znaków QSS.
+        """
+        if theme == "dark":
+            arrow_color = AppStyles.DARK_TEXT_PRIMARY
             return f"""
-                QDateEdit {{
+                    QComboBox {{
                     background-color: {AppStyles.DARK_BACKGROUND_CONTROLS};
                     color: {AppStyles.DARK_TEXT_PRIMARY};
                     border: 1px solid {AppStyles.DARK_BORDER_SECONDARY};
                     padding: {AppStyles.CONTROL_PADDING};
                     border-radius: {AppStyles.BORDER_RADIUS};
                 }}
-                QDateEdit::drop-down {{
+                QComboBox:focus {{
+                    border: 1px solid {AppStyles.ACCENT_COLOR_DARK};
+                }}
+                QComboBox::drop-down {{
                     subcontrol-origin: padding;
                     subcontrol-position: top right;
                     width: 20px;
-                    border-left: 1px solid {AppStyles.DARK_BORDER_SECONDARY};
+                    border-left-width: 1px;
+                    border-left-color: {AppStyles.DARK_BORDER_SECONDARY};
+                    border-left-style: solid;
+                    border-top-right-radius: {AppStyles.BORDER_RADIUS};
+                    border-bottom-right-radius: {AppStyles.BORDER_RADIUS};
                 }}
-                QDateEdit QAbstractItemView {{
+                QComboBox::drop-down:hover {{
+                    background-color: {AppStyles.DARK_BACKGROUND_HOVER};
+                }}
+                QComboBox::down-arrow {{
+                    width: 0;
+                    height: 0;
+                    border-left: 5px solid transparent;
+                    border-right: 5px solid transparent;
+                    border-top: 5px solid {arrow_color};
+                    margin: 0px 4px 0px 0px;
+                }}
+                QComboBox QAbstractItemView {{
                     background-color: {AppStyles.DARK_BACKGROUND_CONTROLS};
                     color: {AppStyles.DARK_TEXT_PRIMARY};
-                    selection-background-color: {AppStyles.SELECTION_BACKGROUND_DARK};
-                    selection-color: {AppStyles.DARK_TEXT_PRIMARY};
                     border: 1px solid {AppStyles.DARK_BORDER_PRIMARY};
+                    padding: 2px;
                     outline: 0;
                 }}
-                QDateEdit QCalendarWidget QToolButton {{
-                    color: {AppStyles.DARK_TEXT_PRIMARY};
-                    background-color: transparent;
+                QComboBox QAbstractItemView::item:selected {{
+                    background-color: {AppStyles.DARK_BACKGROUND_HOVER};
+                    border: 1px solid {AppStyles.ACCENT_COLOR_DARK};
+                    border-radius: 2px;
                 }}
-                QDateEdit QCalendarWidget QTableView {{
-                     alternate-background-color: {AppStyles.DARK_BACKGROUND_HOVER};
+                QComboBox QAbstractItemView::indicator {{
+                    width: 13px;
+                    height: 13px;
+                    border-radius: 3px;
                 }}
-            """
+                QComboBox QAbstractItemView::indicator:unchecked {{
+                    background-color: {AppStyles.DARK_BACKGROUND_MAIN};
+                    border: 1px solid {AppStyles.DARK_BORDER_PRIMARY};
+                }}
+                QComboBox QAbstractItemView::indicator:unchecked:hover {{
+                    border: 1px solid {AppStyles.ACCENT_COLOR_DARK};
+                }}
+                QComboBox QAbstractItemView::indicator:checked {{
+                    background-color: {AppStyles.ACCENT_COLOR_DARK};
+                    border: 1px solid {AppStyles.ACCENT_COLOR_DARK_HOVER};
+                    image: none;
+                }}
+                """
         else:
+            arrow_color = AppStyles.LIGHT_TEXT_PRIMARY
             return f"""
-                QDateEdit {{
+                    QComboBox {{
                     background-color: {AppStyles.LIGHT_BACKGROUND_CONTROLS};
                     color: {AppStyles.LIGHT_TEXT_PRIMARY};
                     border: 1px solid {AppStyles.LIGHT_BORDER_PRIMARY};
                     padding: {AppStyles.CONTROL_PADDING};
                     border-radius: {AppStyles.BORDER_RADIUS};
                 }}
-                QDateEdit::drop-down {{
+                QComboBox:focus {{
+                    border: 1px solid {AppStyles.ACCENT_COLOR_LIGHT};
+                }}
+                QComboBox::drop-down {{
                     subcontrol-origin: padding;
                     subcontrol-position: top right;
                     width: 20px;
-                    border-left: 1px solid {AppStyles.LIGHT_BORDER_PRIMARY};
+                    border-left-width: 1px;
+                    border-left-color: {AppStyles.LIGHT_BORDER_PRIMARY};
+                    border-left-style: solid;
+                    border-top-right-radius: {AppStyles.BORDER_RADIUS};
+                    border-bottom-right-radius: {AppStyles.BORDER_RADIUS};
                 }}
-                QDateEdit QAbstractItemView {{
+                QComboBox::drop-down:hover {{
+                    background-color: {AppStyles.LIGHT_BACKGROUND_HOVER};
+                }}
+                QComboBox::down-arrow {{
+                    width: 0;
+                    height: 0;
+                    border-left: 5px solid transparent;
+                    border-right: 5px solid transparent;
+                    border-top: 5px solid {arrow_color};
+                    margin: 0px 4px 0px 0px;
+                }}
+                QComboBox QAbstractItemView {{
                     background-color: {AppStyles.LIGHT_BACKGROUND_CONTROLS};
                     color: {AppStyles.LIGHT_TEXT_PRIMARY};
-                    selection-background-color: {AppStyles.SELECTION_BACKGROUND_LIGHT};
-                    selection-color: {AppStyles.LIGHT_BACKGROUND_CONTROLS};
                     border: 1px solid {AppStyles.LIGHT_BORDER_PRIMARY};
+                    padding: 2px;
                     outline: 0;
                 }}
-                QDateEdit QCalendarWidget QToolButton {{
+                QComboBox QAbstractItemView::item:selected {{
+                    background-color: {AppStyles.LIGHT_BACKGROUND_HOVER};
                     color: {AppStyles.LIGHT_TEXT_PRIMARY};
-                    background-color: transparent;
+                    border: 1px solid {AppStyles.ACCENT_COLOR_LIGHT};
+                    border-radius: 2px;
                 }}
-                QDateEdit QCalendarWidget QTableView {{
-                     alternate-background-color: {AppStyles.LIGHT_BACKGROUND_HOVER};
+                QComboBox QAbstractItemView::indicator {{
+                    width: 13px;
+                    height: 13px;
+                    border-radius: 3px;
                 }}
-            """
-
-    @staticmethod
-    def get_combobox_style(theme="dark"):
-        if theme == "dark":
-            return f"""
-                    QComboBox {{
-                        background-color: {AppStyles.DARK_BACKGROUND_CONTROLS};
-                        color: {AppStyles.DARK_TEXT_PRIMARY};
-                        border: 1px solid {AppStyles.DARK_BORDER_SECONDARY};
-                        padding: {AppStyles.CONTROL_PADDING};
-                        border-radius: {AppStyles.BORDER_RADIUS};
-                    }}
-                    QComboBox:focus {{
-                        border: 1px solid {AppStyles.ACCENT_COLOR_DARK};
-                    }}
-                    QComboBox::drop-down {{
-                        subcontrol-origin: padding;
-                        subcontrol-position: top right;
-                        width: 20px;
-                        border-left-width: 1px;
-                        border-left-color: {AppStyles.DARK_BORDER_SECONDARY};
-                        border-left-style: solid;
-                        border-top-right-radius: {AppStyles.BORDER_RADIUS};
-                        border-bottom-right-radius: {AppStyles.BORDER_RADIUS};
-                    }}
-                    QComboBox QAbstractItemView {{
-                        background-color: {AppStyles.DARK_BACKGROUND_CONTROLS};
-                        color: {AppStyles.DARK_TEXT_PRIMARY};
-                        border: 1px solid {AppStyles.DARK_BORDER_PRIMARY};
-                        padding: 2px;
-                        outline: 0;
-                    }}
-                    QComboBox QAbstractItemView::item:selected {{
-                        background-color: {AppStyles.DARK_BACKGROUND_HOVER};
-                        border: 1px solid {AppStyles.ACCENT_COLOR_DARK};
-                        border-radius: 2px;
-                    }}
-                    QComboBox QAbstractItemView::indicator {{
-                        width: 13px;
-                        height: 13px;
-                        border-radius: 3px;
-                    }}
-                    QComboBox QAbstractItemView::indicator:unchecked {{
-                        background-color: {AppStyles.DARK_BACKGROUND_MAIN};
-                        border: 1px solid {AppStyles.DARK_BORDER_PRIMARY};
-                    }}
-                    QComboBox QAbstractItemView::indicator:unchecked:hover {{
-                        border: 1px solid {AppStyles.ACCENT_COLOR_DARK};
-                    }}
-                    QComboBox QAbstractItemView::indicator:checked {{
-                        background-color: {AppStyles.ACCENT_COLOR_DARK};
-                        border: 1px solid {AppStyles.ACCENT_COLOR_DARK_HOVER};
-                        image: none;
-                    }}
-                """
-        else:
-            return f"""
-                    QComboBox {{
-                        background-color: {AppStyles.LIGHT_BACKGROUND_CONTROLS};
-                        color: {AppStyles.LIGHT_TEXT_PRIMARY};
-                        border: 1px solid {AppStyles.LIGHT_BORDER_PRIMARY};
-                        padding: {AppStyles.CONTROL_PADDING};
-                        border-radius: {AppStyles.BORDER_RADIUS};
-                    }}
-                    QComboBox:focus {{
-                        border: 1px solid {AppStyles.ACCENT_COLOR_LIGHT};
-                    }}
-                    QComboBox::drop-down {{
-                        subcontrol-origin: padding;
-                        subcontrol-position: top right;
-                        width: 20px;
-                        border-left-width: 1px;
-                        border-left-color: {AppStyles.LIGHT_BORDER_PRIMARY};
-                        border-left-style: solid;
-                        border-top-right-radius: {AppStyles.BORDER_RADIUS};
-                        border-bottom-right-radius: {AppStyles.BORDER_RADIUS};
-                    }}
-                    QComboBox QAbstractItemView {{
-                        background-color: {AppStyles.LIGHT_BACKGROUND_CONTROLS};
-                        color: {AppStyles.LIGHT_TEXT_PRIMARY};
-                        border: 1px solid {AppStyles.LIGHT_BORDER_PRIMARY};
-                        padding: 2px;
-                        outline: 0;
-                    }}
-                    QComboBox QAbstractItemView::item:selected {{
-                        background-color: {AppStyles.LIGHT_BACKGROUND_HOVER};
-                        color: {AppStyles.LIGHT_TEXT_PRIMARY};
-                        border: 1px solid {AppStyles.ACCENT_COLOR_LIGHT};
-                        border-radius: 2px;
-                    }}
-                    QComboBox QAbstractItemView::indicator {{
-                        width: 13px;
-                        height: 13px;
-                        border-radius: 3px;
-                    }}
-                    QComboBox QAbstractItemView::indicator:unchecked {{
-                        background-color: {AppStyles.LIGHT_BACKGROUND_CONTROLS};
-                        border: 1px solid {AppStyles.LIGHT_BORDER_SECONDARY};
-                    }}
-                    QComboBox QAbstractItemView::indicator:unchecked:hover {{
-                        border: 1px solid {AppStyles.ACCENT_COLOR_LIGHT};
-                    }}
-                    QComboBox QAbstractItemView::indicator:checked {{
-                        background-color: {AppStyles.ACCENT_COLOR_LIGHT};
-                        border: 1px solid {AppStyles.ACCENT_COLOR_LIGHT_HOVER};
-                        image: none;
-                    }}
+                QComboBox QAbstractItemView::indicator:unchecked {{
+                    background-color: {AppStyles.LIGHT_BACKGROUND_CONTROLS};
+                    border: 1px solid {AppStyles.LIGHT_BORDER_SECONDARY};
+                }}
+                QComboBox QAbstractItemView::indicator:unchecked:hover {{
+                    border: 1px solid {AppStyles.ACCENT_COLOR_LIGHT};
+                }}
+                QComboBox QAbstractItemView::indicator:checked {{
+                    background-color: {AppStyles.ACCENT_COLOR_LIGHT};
+                    border: 1px solid {AppStyles.ACCENT_COLOR_LIGHT_HOVER};
+                    image: none;
+                }}
                 """
 
     @staticmethod
