@@ -1,24 +1,26 @@
-# W pliku: main.py
+def setup_table_properties(self):
+        """Konfiguruje właściwości tabel i tworzy delegatów z ustawieniami."""
+        self.events_table.setSortingEnabled(True)
+        # Usunięto linię resetującą sortowanie tabeli zdarzeń:
+        # self.events_table.sortByColumn(0, Qt.AscendingOrder)
 
-    def refresh_data(self):
-        """Wymusza odświeżenie danych z bazy, zapisując stan filtrów i aktualizując widoczność przycisków."""
-        self._save_current_filter_settings()
+        if hasattr(self, 'table') and hasattr(self.table, 'employees_view'):
+            self.table.employees_view.setSortingEnabled(True)
+            # Usunięto linię, która czyściła sortowanie tabeli grafiku:
+            # self.table.employees_view.sortByColumn(-1, Qt.AscendingOrder)
 
-        self.refresh_button.setText("Odśwież")
-        self.refresh_button.setStyleSheet(AppStyles.get_button_style("dark" if self.is_dark_theme else "light"))
-        self.refresh_button.setToolTip("Odśwież dane")
+        if hasattr(self.table, 'employees_view') and hasattr(self.table.employees_view, 'horizontalHeader'):
+            self.table.employees_view.horizontalHeader().sortIndicatorChanged.connect(self.on_sort_changed)
 
-        current_data = self.date_combo.currentData()
-        if current_data:
-            year, month = current_data
+        if hasattr(self.events_table, 'horizontalHeader'):
+            self.events_table.horizontalHeader().sortIndicatorChanged.connect(self.on_events_sort_changed)
+            self.setup_events_table_columns()
 
-            # ZMIANA: Dodano wywołanie funkcji aktualizującej widoczność przycisków
-            self.update_buttons_visibility()
+        overtime_delegate = OvertimeItemDelegate(settings=self.user_settings)
+        self.table.schedule_view.setItemDelegate(overtime_delegate)
 
-            self.data_provider.clear_monthly_cache(year, month)
-            self.update_data(year, month, self.import_grupa, self.import_funkcja, use_async=True)
-
-            self.update_filter_dates()
-            self._update_modification_date()
-            if hasattr(self, 'check_timer'):
-                self.check_timer.start(60000)
+        button_delegate = ButtonDelegate(parent=self, button_text="Odwołaj", is_dark_theme=self.is_dark_theme)
+        button_delegate.button_clicked.connect(self.delete_event_from_row)
+        self.events_table.setItemDelegateForColumn(10, button_delegate)  # "Akcje" to kolumna 10
+        
+        self.table.day_sort_requested.connect(self.apply_day_sort)
