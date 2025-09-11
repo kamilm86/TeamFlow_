@@ -4,13 +4,14 @@ from PySide6.QtCore import QObject, Signal
 from db_connector import DatabaseConnector
 from datetime import datetime, timedelta
 import time
-from app_settings import app_settings # ZMIANA
+from app_settings import app_settings  # ZMIANA
 from debug_utils import debug_print, log_warning, log_error
 from dataclasses import dataclass, field
 from typing import Dict, List, Tuple, Optional, Any
 from functools import lru_cache
-from symbol_parser import parse_symbols_batch,parse_symbol
+from symbol_parser import parse_symbols_batch, parse_symbol
 from config import SQL_OBJECTS
+
 
 @dataclass
 class MonthlyDataContainer:
@@ -138,7 +139,9 @@ class DataProvider(QObject):
 
     def get_dynamic_icons_for_cell(self, user_id: int, date_str: str) -> Dict:
         """
-        POPRAWIONA WERSJA: Zwraca ikony z cache lub oblicza je na podstawie aktywnych zdarzeń
+        Zwraca ikony z cache lub oblicza je na podstawie zdarzeń.
+        WERSJA ZMODYFIKOWANA: Ikona spotkania/szkolenia (koło) jest pokazywana
+        tylko dla zdarzeń w statusie 'Delegowany'.
         """
         try:
             year, month, _ = date_str.split('-')
@@ -155,20 +158,20 @@ class DataProvider(QObject):
             if cell_key in month_icons_cache:
                 return month_icons_cache[cell_key]
 
-        # Oblicz ikony na podstawie aktywnych zdarzeń (jeśli nie ma w cache)
-        # Ta metoda powinna korzystać z events_cache w odpowiednim kontenerze miesięcznym
+        # Oblicz ikony na podstawie zdarzeń (jeśli nie ma w cache)
         container = self.monthly_cache.get(month_key)
         events = []
         if container and container.events_cache:
             events = container.events_cache.get(cell_key, [])
-        else:  # Fallback jeśli kontenera lub events_cache nie ma (nie powinno się zdarzyć przy poprawnym przepływie)
+        else:
             events = self.get_events_for_user_date(user_id, date_str)
 
-        active_events = [e for e in events if str(e.get('status', '1')) != '0']
+        # NOWA LOGIKA: Ikona koła tylko dla statusu 'Delegowany'
+        has_spotkania = any(e.get('type') == 'Spotkanie' and e.get('status') == 'Delegowany' for e in events)
+        has_szkolenia = any(e.get('type') == 'Szkolenie' and e.get('status') == 'Delegowany' for e in events)
 
-        has_spotkania = any(e.get('type') == 'Spotkanie' for e in active_events)
-        has_szkolenia = any(e.get('type') == 'Szkolenie' for e in active_events)
-        has_nadgodziny = any(e.get('type') == 'Nadgodziny' for e in active_events)
+        # Logika dla nadgodzin pozostaje bez zmian (bazuje na ogólnie aktywnych zdarzeniach)
+        has_nadgodziny = any(e.get('type') == 'Nadgodziny' and str(e.get('status', '1')) != '0' for e in events)
 
         result = {
             'spotkania': 1 if has_spotkania else 0,
@@ -265,7 +268,7 @@ class DataProvider(QObject):
             return []
 
     def _get_or_load_monthly_data(self, year: int, month: int, grupa: int, funkcja: int, use_cache: bool = True) -> \
-    Optional[MonthlyDataContainer]:
+            Optional[MonthlyDataContainer]:
         self._current_year = year
         self._current_month = month
 
@@ -378,14 +381,15 @@ class DataProvider(QObject):
     def _update_dynamic_icons(self, processed_data_target: Dict, events_cache: Dict):
         """
         Nakłada informacje o ikonach na dostarczony słownik `processed_data_target`.
-        WERSJA POPRAWIONA: Obsługuje również zdarzenia (nadgodziny) w dniach wolnych od pracy.
+        WERSJA ZMODYFIKOWANA: Ikona spotkania/szkolenia (koło) jest pokazywana
+        tylko dla zdarzeń w statusie 'Delegowany'.
         """
         if not self._current_year or not self._current_month:
             log_error("DataProvider: _current_year lub _current_month nie jest ustawione w _update_dynamic_icons")
             return
 
         debug_print(
-            f"DataProvider (POPRAWIONA WERSJA): Rozpoczynam _update_dynamic_icons dla {self._current_year}-{self._current_month}...")
+            f"DataProvider (ZMODYFIKOWANA WERSJA): Rozpoczynam _update_dynamic_icons dla {self._current_year}-{self._current_month}...")
 
         user_id_to_key_map = {key[3]: key for key in processed_data_target.keys()}
 
@@ -394,16 +398,19 @@ class DataProvider(QObject):
             days_data = user_data.get('days', {})
 
             for day, day_data_dict in days_data.items():
-                # --- POCZĄTEK POPRAWKI ---
-                # Zmieniono self._month na self._current_month, aby pasowało do reszty kodu
                 date_str = f"{self._current_year}-{self._current_month:02d}-{day:02d}"
-                # --- KONIEC POPRAWKI ---
-
                 events_for_cell = events_cache.get((user_id, date_str), [])
+
+                # Utrzymujemy listę wszystkich aktywnych zdarzeń dla celów ogólnych (np. tooltip)
                 active_events = [e for e in events_for_cell if str(e.get('status', '1')) != '0']
 
-                has_spotkania = any(e.get('type') == 'Spotkanie' for e in active_events)
-                has_szkolenia = any(e.get('type') == 'Szkolenie' for e in active_events)
+                # NOWA LOGIKA DLA IKONY KOŁA: Sprawdzamy status 'Delegowany'
+                has_spotkania = any(
+                    e.get('type') == 'Spotkanie' and e.get('status') == 'Delegowany' for e in events_for_cell)
+                has_szkolenia = any(
+                    e.get('type') == 'Szkolenie' and e.get('status') == 'Delegowany' for e in events_for_cell)
+
+                # Logika dla nadgodzin pozostaje bez zmian (bazuje na ogólnie aktywnych zdarzeniach)
                 has_nadgodziny = any(e.get('type') == 'Nadgodziny' for e in active_events)
 
                 day_data_dict['spotkania'] = 1 if has_spotkania else 0
@@ -411,30 +418,45 @@ class DataProvider(QObject):
                 day_data_dict['nadgodziny'] = 1 if has_nadgodziny else 0
                 day_data_dict['events'] = active_events
 
+        # Pętla dla nadgodzin w dni wolne - również wymaga aktualizacji logiki dla spotkań/szkoleń
         for (user_id, date_str), events_for_cell in events_cache.items():
             try:
+                # Sprawdzamy tylko aktywne nadgodziny (bez zmian)
                 active_overtime = any(
                     e.get('type') == 'Nadgodziny' and str(e.get('status', '1')) != '0' for e in events_for_cell)
                 if not active_overtime:
                     continue
+
                 user_key = user_id_to_key_map.get(user_id)
                 if not user_key:
                     continue
+
                 user_data = processed_data_target[user_key]
                 day = int(date_str.split('-')[2])
+
+                # Dodajemy ikonę tylko, jeśli nie ma jeszcze wpisu dla tego dnia w grafiku
                 if day not in user_data.get('days', {}):
                     day_data_dict = user_data.setdefault('days', {}).setdefault(day, {})
                     day_data_dict['nadgodziny'] = 1
+
+                    # Utrzymujemy listę wszystkich aktywnych zdarzeń
                     active_events = [e for e in events_for_cell if str(e.get('status', '1')) != '0']
-                    day_data_dict['spotkania'] = 1 if any(e.get('type') == 'Spotkanie' for e in active_events) else 0
-                    day_data_dict['szkolenia'] = 1 if any(e.get('type') == 'Szkolenie' for e in active_events) else 0
+
+                    # NOWA LOGIKA DLA IKONY KOŁA (dla dni wolnych)
+                    day_data_dict['spotkania'] = 1 if any(
+                        e.get('type') == 'Spotkanie' and e.get('status') == 'Delegowany' for e in
+                        events_for_cell) else 0
+                    day_data_dict['szkolenia'] = 1 if any(
+                        e.get('type') == 'Szkolenie' and e.get('status') == 'Delegowany' for e in
+                        events_for_cell) else 0
                     day_data_dict['events'] = active_events
                     debug_print(f"Dodano ikonę nadgodzin w dniu wolnym dla user_id: {user_id}, dzień: {day}")
+
             except (ValueError, IndexError) as e:
                 log_warning(f"Błąd przetwarzania zdarzenia dla dnia wolnego ({user_id}, {date_str}): {e}")
                 continue
 
-        debug_print(f"DataProvider (POPRAWIONA WERSJA): Zakończono _update_dynamic_icons.")
+        debug_print(f"DataProvider (ZMODYFIKOWANA WERSJA): Zakończono _update_dynamic_icons.")
 
     def get_performance_stats(self):
         """
@@ -550,9 +572,10 @@ class DataProvider(QObject):
         except Exception as e:
             log_error(f"DataProvider: Błąd czyszczenia cache symboli: {e}")
 
-    def get_events_for_user_date(self, user_id: int, date_str: str) -> List[Dict]:
+    def get_events_for_user_date(self, user_id: int, date_str: str, active_only: bool = True) -> List[Dict]:
         """
-        Zwraca listę *aktywnych* zdarzeń dla danego użytkownika i daty.
+        Zwraca listę zdarzeń dla danego użytkownika i daty.
+        Jeśli active_only=True, zwraca tylko zdarzenia ze statusem innym niż '0'.
         """
         if not date_str or not user_id or date_str.count('-') != 2:
             return []
@@ -563,7 +586,6 @@ class DataProvider(QObject):
         except (ValueError, TypeError):
             return []
 
-        # Używamy prostego klucza, aby znaleźć kontener w pamięci podręcznej.
         cache_key = (year, month)
         container = self.monthly_cache.get(cache_key)
 
@@ -575,8 +597,11 @@ class DataProvider(QObject):
         cache_key_event = (user_id, standardized_date)
 
         events_for_cell = container.events_cache.get(cache_key_event, [])
-        active_events = [e for e in events_for_cell if str(e.get('status', '1')) != '0']
 
+        if not active_only:
+            return events_for_cell
+
+        active_events = [e for e in events_for_cell if str(e.get('status', '1')) != '0']
         return active_events
 
     def _fetch_schedule_data(self, year: int, month: int, grupa: int, funkcja: int) -> List[Dict]:
