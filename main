@@ -6,6 +6,7 @@ from typing import List, Dict
 import openpyxl
 from openpyxl.styles import Font, Alignment, PatternFill
 from openpyxl.utils import get_column_letter
+import functools
 # --- GŁÓWNE IMPORTY (NIEZBĘDNE PRZY STARCIE) ---
 from PySide6.QtWidgets import (QApplication, QMainWindow, QTableView,
                                QVBoxLayout, QHBoxLayout, QWidget, QLabel, QComboBox,
@@ -1524,28 +1525,28 @@ class WorkScheduleWindow(QMainWindow):
     def setup_table_properties(self):
         """Konfiguruje właściwości tabel i tworzy delegatów z ustawieniami."""
         self.events_table.setSortingEnabled(True)
-        self.events_table.sortByColumn(0, Qt.AscendingOrder)
+        # Usunięto linię resetującą sortowanie tabeli zdarzeń:
+        # self.events_table.sortByColumn(0, Qt.AscendingOrder)
 
-        if hasattr(self.table, 'employees_view'):
+        if hasattr(self, 'table') and hasattr(self.table, 'employees_view'):
             self.table.employees_view.setSortingEnabled(True)
-            self.table.employees_view.sortByColumn(-1, Qt.AscendingOrder)
+            # Usunięto linię, która czyściła sortowanie tabeli grafiku:
+            # self.table.employees_view.sortByColumn(-1, Qt.AscendingOrder)
 
         if hasattr(self.table, 'employees_view') and hasattr(self.table.employees_view, 'horizontalHeader'):
             self.table.employees_view.horizontalHeader().sortIndicatorChanged.connect(self.on_sort_changed)
 
         if hasattr(self.events_table, 'horizontalHeader'):
             self.events_table.horizontalHeader().sortIndicatorChanged.connect(self.on_events_sort_changed)
-            # Wywołujemy nową, poprawną konfigurację kolumn
             self.setup_events_table_columns()
 
         overtime_delegate = OvertimeItemDelegate(settings=self.user_settings)
         self.table.schedule_view.setItemDelegate(overtime_delegate)
 
-        # ZMIANA: Przypisanie delegata do POPRAWNEJ kolumny (indeks 10)
         button_delegate = ButtonDelegate(parent=self, button_text="Odwołaj", is_dark_theme=self.is_dark_theme)
         button_delegate.button_clicked.connect(self.delete_event_from_row)
         self.events_table.setItemDelegateForColumn(10, button_delegate)  # "Akcje" to kolumna 10
-        # NOWA LINIA: Podłączenie nowego sygnału z tabeli do metody sortującej
+
         self.table.day_sort_requested.connect(self.apply_day_sort)
 
     def apply_day_sort(self, day: int, order: Qt.SortOrder):
@@ -1747,29 +1748,56 @@ class WorkScheduleWindow(QMainWindow):
 
     def apply_custom_sort(self):
         """
-        Sortuje dane w modelu na podstawie preferencji użytkownika i aktualizuje wskaźnik w nagłówku.
+        Sortuje dane w modelu na podstawie preferencji użytkownika, używając
+        dedykowanej, wielopoziomowej funkcji porównującej.
         """
-        debug_print("[DB] Wywołano apply_custom_sort.")
         if not hasattr(self, 'schedule_model') or not self.schedule_model._processed_data:
             return
-
-        self.schedule_model.layoutAboutToBeChanged.emit()
 
         sort_prefs = self.user_sort_preferences
         keys_to_sort = self.schedule_model._keys
 
-        if sort_prefs:
-            debug_print(f"[DB] Aplikowanie sortowania niestandardowego: {sort_prefs}")
-            for col_id, direction in reversed(sort_prefs):
-                is_reverse = (direction == 'desc')
-                keys_to_sort.sort(key=lambda k, cid=col_id: self.schedule_model._get_sort_key(k, cid),
-                                  reverse=is_reverse)
-        else:
-            debug_print("[DB] Brak zdefiniowanych preferencji, sortowanie nie jest stosowane.")
+        self.schedule_model.layoutAboutToBeChanged.emit()
 
-        self.schedule_model._keys = keys_to_sort
+        if sort_prefs:
+            debug_print(f"Aplikowanie sortowania niestandardowego (compare func): {sort_prefs}")
+
+            def compare_rows(key_a, key_b):
+                """Funkcja porównująca, która analizuje wszystkie kryteria sortowania naraz."""
+                for col_id, direction in sort_prefs:
+                    val_a = self.schedule_model._get_sort_key(key_a, col_id)
+                    val_b = self.schedule_model._get_sort_key(key_b, col_id)
+
+                    # Zabezpieczenie na wypadek porównywania różnych typów (np. None i string)
+                    if type(val_a) is not type(val_b):
+                        val_a, val_b = str(val_a), str(val_b)
+
+                    result = 0
+                    try:
+                        if val_a < val_b:
+                            result = -1
+                        elif val_a > val_b:
+                            result = 1
+                    except TypeError:  # Dodatkowe zabezpieczenie
+                        val_a, val_b = str(val_a), str(val_b)
+                        if val_a < val_b:
+                            result = -1
+                        elif val_a > val_b:
+                            result = 1
+
+                    # Jeśli wartości nie są równe, zwracamy wynik (z uwzględnieniem kierunku)
+                    # i kończymy porównywanie.
+                    if result != 0:
+                        return result * -1 if direction == 'desc' else result
+
+                # Jeśli po sprawdzeniu wszystkich kryteriów wiersze są równe, zwracamy 0.
+                return 0
+
+            keys_to_sort.sort(key=functools.cmp_to_key(compare_rows))
+
         self.schedule_model.layoutChanged.emit()
 
+        # Ustaw wskaźnik wizualny w nagłówku, aby odzwierciedlał sortowanie
         emp_header = self.table.employees_view.horizontalHeader()
         sched_header = self.table.schedule_view.horizontalHeader()
 
@@ -1787,7 +1815,7 @@ class WorkScheduleWindow(QMainWindow):
                 except ValueError:
                     pass
 
-        debug_print("[DB] Zakończono apply_custom_sort.")
+        debug_print("Zakończono sortowanie niestandardowe (compare func).")
 
     def _apply_dynamic_sizes(self):
         """Ustawia dynamiczne rozmiary w zależności od rozmiaru czcionki ORAZ zapisanych ustawień."""
