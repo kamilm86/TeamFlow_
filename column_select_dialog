@@ -231,8 +231,18 @@ class ColumnSelectDialog(QDialog):
         if self.parent_widget and hasattr(self.parent_widget, 'is_dark_theme'):
             actual_theme = "dark" if self.parent_widget.is_dark_theme else "light"
 
-        self.setStyleSheet(AppStyles.get_dialog_style(actual_theme))
-        self.columns_list.setStyleSheet(AppStyles.get_list_style(actual_theme))
+        # --- NOWA LOGIKA: Połączenie stylów dla lepszej spójności ---
+        # Łączymy ogólny styl dialogu ze szczegółowym stylem dla QListWidget.
+        # Ustawienie jednego, bardziej kompletnego arkusza stylów dla całego okna dialogowego
+        # rozwiązuje problemy ze specyficznością i dziedziczeniem stylów w Qt.
+        combined_style = (
+            AppStyles.get_dialog_style(actual_theme) +
+            AppStyles.get_list_style(actual_theme)
+        )
+        self.setStyleSheet(combined_style)
+        # --- KONIEC NOWEJ LOGIKI ---
+
+        # Pozostałe widgety stylujemy indywidualnie, aby uniknąć konfliktów
         self.sort_table.setStyleSheet(AppStyles.get_tablewidget_style(actual_theme))
 
         button_style = AppStyles.get_button_style(actual_theme)
