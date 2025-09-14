@@ -1,8 +1,7 @@
-# settings_dialog.py (poprawiona wersja)
-
+# settings_dialog.py
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                                QPushButton, QComboBox, QGroupBox, QRadioButton,
-                               QFontComboBox, QSpinBox, QCheckBox, QGridLayout, QFormLayout)
+                               QFontComboBox, QSpinBox, QCheckBox, QGridLayout, QLineEdit, QFileDialog, QFormLayout)
 from PySide6.QtCore import Qt, Signal
 from styles import AppStyles
 from debug_utils import debug_print
@@ -10,7 +9,6 @@ from debug_utils import debug_print
 class AppSettingsDialog(QDialog):
     """Dialog do konfiguracji ustawień aplikacji, w tym motywu i importu."""
     live_theme_changed = Signal(str, str, int)
-    # --- NOWY SYGNAŁ ---
     import_requested = Signal(int, int) # Sygnał emitowany z (grupa, funkcja)
 
     def __init__(self, parent=None, settings=None):
@@ -26,8 +24,8 @@ class AppSettingsDialog(QDialog):
     def setup_ui(self):
         main_layout = QVBoxLayout(self)
         theme_group = self._create_theme_group()
-        # --- PRZYWRÓCONO SEKCJĘ IMPORTU ---
         import_group = self._create_import_group()
+        outlook_group = self._create_outlook_group()
         display_options_group = self._create_display_options_group()
 
         self.save_settings_checkbox = QCheckBox("Zapamiętaj ustawienia na stałe")
@@ -41,13 +39,35 @@ class AppSettingsDialog(QDialog):
         buttons_layout.addWidget(self.cancel_button)
 
         main_layout.addWidget(theme_group)
-        main_layout.addWidget(import_group) # <-- Przywrócono
+        main_layout.addWidget(import_group)
+        main_layout.addWidget(outlook_group)
         main_layout.addWidget(display_options_group)
         main_layout.addLayout(buttons_layout)
         main_layout.addWidget(self.save_settings_checkbox, 0, Qt.AlignRight)
 
         self._load_settings_to_widgets()
 
+    def _create_outlook_group(self):
+        """Tworzy grupę kontrolek dla ustawień Outlooka."""
+        group = QGroupBox("Ustawienia Outlook")
+        layout = QGridLayout()
+
+        layout.addWidget(QLabel("Folder z szablonami (.oft):"), 0, 0)
+        self.template_path_edit = QLineEdit()
+        self.template_path_edit.setReadOnly(True)
+        layout.addWidget(self.template_path_edit, 1, 0)
+
+        self.browse_button = QPushButton("Przeglądaj...")
+        layout.addWidget(self.browse_button, 1, 1)
+
+        group.setLayout(layout)
+        return group
+
+    def _browse_for_template_folder(self):
+        """Otwiera dialog wyboru folderu."""
+        folder_path = QFileDialog.getExistingDirectory(self, "Wybierz folder z szablonami .oft")
+        if folder_path:
+            self.template_path_edit.setText(folder_path)
 
     def _create_theme_group(self):
         """Tworzy grupę kontrolek do zmiany motywu i czcionki."""
@@ -150,6 +170,8 @@ class AppSettingsDialog(QDialog):
         location_pos = self.current_settings.get('location_symbol_position', 'top_right')
         self.location_symbol_pos_combo.setCurrentIndex(1 if location_pos == 'top_right' else 0)
 
+        self.template_path_edit.setText(self.current_settings.get('outlook_template_path', ''))
+
     def get_current_settings(self):
         # Przywrócono zwracanie ustawień importu
         font_family = self.font_combo.currentText()
@@ -163,7 +185,8 @@ class AppSettingsDialog(QDialog):
             'show_special_symbol': self.show_special_symbol_check.isChecked(),
             'show_location_symbol': self.show_location_symbol_check.isChecked(),
             'special_symbol_position': 'top_right' if self.special_symbol_pos_combo.currentIndex() == 1 else 'top_left',
-            'location_symbol_position': 'top_right' if self.location_symbol_pos_combo.currentIndex() == 1 else 'top_left'
+            'location_symbol_position': 'top_right' if self.location_symbol_pos_combo.currentIndex() == 1 else 'top_left',
+            'outlook_template_path': self.template_path_edit.text()
         }
 
     def connect_signals(self):
@@ -172,8 +195,8 @@ class AppSettingsDialog(QDialog):
         self.dark_theme_radio.toggled.connect(self._emit_live_preview_changes)
         self.font_combo.currentTextChanged.connect(self._emit_live_preview_changes)
         self.font_size_spin.valueChanged.connect(self._emit_live_preview_changes)
-        # --- PODŁĄCZENIE NOWEGO PRZYCISKU ---
         self.import_now_button.clicked.connect(self._on_import_now_clicked)
+        self.browse_button.clicked.connect(self._browse_for_template_folder)
 
     def _on_import_now_clicked(self):
         # Krok 1: Zapisz aktualne ustawienia (tak jakbyś kliknął OK)
