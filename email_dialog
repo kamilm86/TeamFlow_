@@ -1,0 +1,118 @@
+# email_dialog.py
+import os
+from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
+                               QPushButton, QLineEdit, QTextEdit, QGroupBox,
+                               QRadioButton, QDialogButtonBox, QComboBox)
+from PySide6.QtCore import Qt
+from styles import AppStyles
+
+
+class EmailDialog(QDialog):
+    def __init__(self, parent, recipients: list, template_path: str):
+        super().__init__(parent)
+        self.parent_widget = parent
+        self.recipients = recipients
+        self.template_folder = template_path
+        self.setWindowTitle("Wyślij e-mail")
+        self.setMinimumSize(600, 500)
+
+        self.setup_ui()
+        self.apply_dialog_theme()
+        self._load_templates()
+
+    def setup_ui(self):
+        main_layout = QVBoxLayout(self)
+        recipients_label = QLabel(self._get_recipients_summary_text())
+        recipients_label.setWordWrap(True)
+        main_layout.addWidget(recipients_label)
+
+        template_layout = QHBoxLayout()
+        template_layout.addWidget(QLabel("Wybierz szablon (opcjonalnie):"))
+        self.template_combo = QComboBox()
+        self.template_combo.currentIndexChanged.connect(self._on_template_selected)
+        template_layout.addWidget(self.template_combo)
+        main_layout.addLayout(template_layout)
+
+        options_group = QGroupBox("Opcje wysyłki")
+        options_layout = QHBoxLayout()
+        self.group_radio = QRadioButton("Wiadomość grupowa (wszyscy w 'Do')")
+        self.individual_radio = QRadioButton("Wiadomość indywidualna (każdy w 'UDW')")
+        self.group_radio.setChecked(True)
+        options_layout.addWidget(self.group_radio)
+        options_layout.addWidget(self.individual_radio)
+        options_group.setLayout(options_layout)
+        main_layout.addWidget(options_group)
+
+        self.standard_email_group = QGroupBox("Treść wiadomości")
+        standard_email_layout = QVBoxLayout()
+        standard_email_layout.addWidget(QLabel("Temat:"))
+        self.subject_edit = QLineEdit()
+        standard_email_layout.addWidget(self.subject_edit)
+        standard_email_layout.addWidget(QLabel("Treść:"))
+        self.body_edit = QTextEdit()
+        self.body_edit.setAcceptRichText(False)
+        standard_email_layout.addWidget(self.body_edit)
+        self.standard_email_group.setLayout(standard_email_layout)
+        main_layout.addWidget(self.standard_email_group)
+
+        self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.button_box.button(QDialogButtonBox.Ok).setText("Utwórz e-mail w Outlook")
+        self.button_box.button(QDialogButtonBox.Cancel).setText("Anuluj")
+        self.button_box.accepted.connect(self.accept)
+        self.button_box.rejected.connect(self.reject)
+        main_layout.addWidget(self.button_box)
+
+    def _load_templates(self):
+        self.template_combo.clear()
+        self.template_combo.addItem("- Standardowa wiadomość -", "")
+        if self.template_folder and os.path.isdir(self.template_folder):
+            try:
+                for filename in os.listdir(self.template_folder):
+                    if filename.lower().endswith(".oft"):
+                        full_path = os.path.join(self.template_folder, filename)
+                        self.template_combo.addItem(filename, full_path)
+            except OSError as e:
+                print(f"Błąd odczytu folderu z szablonami: {e}")
+
+    def _on_template_selected(self, index: int):
+        template_path = self.template_combo.itemData(index)
+        is_standard_email = not bool(template_path)
+        self.standard_email_group.setEnabled(is_standard_email)
+
+    def _get_recipients_summary_text(self) -> str:
+        """Tworzy tekst podsumowujący odbiorców."""
+        count = len(self.recipients)
+        if count == 0:
+            return "<b>Brak wybranych odbiorców z poprawnym adresem e-mail.</b>"
+
+        if count == 1:
+            return f"<b>Odbiorca:</b> {self.recipients[0]['name']} ({self.recipients[0]['email']})"
+
+        names_preview = ", ".join([r['name'] for r in self.recipients[:2]])
+
+        if count > 2:
+            suffix = f" (+ {count - 2} innych)"
+        else:
+            suffix = ""
+
+        return f"<b>Odbiorcy ({count}):</b> {names_preview}{suffix}"
+
+    def get_email_details(self) -> dict:
+        recipient_ids = [r['id'] for r in self.recipients]
+        body_text = self.body_edit.toPlainText().replace('\\n', '<br>')
+
+        return {
+            "recipients": recipient_ids,
+            "subject": self.subject_edit.text(),
+            "body": body_text,
+            "send_individually": self.individual_radio.isChecked(),
+            "template_path": self.template_combo.currentData() or ""
+        }
+
+    def apply_dialog_theme(self):
+        theme = "dark" if self.parent_widget.is_dark_theme else "light"
+        self.setStyleSheet(AppStyles.get_dialog_style(theme))
+        self.subject_edit.setStyleSheet(AppStyles.get_line_edit_style(theme))
+        self.body_edit.setStyleSheet(AppStyles.get_list_style(theme))  # Styl QListWidget dobrze pasuje do QTextEdit
+        for button in self.button_box.buttons():
+            button.setStyleSheet(AppStyles.get_button_style(theme))
