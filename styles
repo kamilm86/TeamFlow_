@@ -99,49 +99,69 @@ class AppStyles:
             }}
         """
 
-
     @staticmethod
     def get_list_style(theme="dark"):
         if theme == "dark":
-            return f"""
-                QListWidget {{
-                    background-color: {AppStyles.DARK_BACKGROUND_CONTROLS};
-                    color: {AppStyles.DARK_TEXT_PRIMARY};
-                    border: 1px solid {AppStyles.DARK_BORDER_SECONDARY};
-                    border-radius: {AppStyles.BORDER_RADIUS};
-                }}
-                QListWidget::item {{
-                    padding: 4px;
-                    border-bottom: 1px solid {AppStyles.DARK_BORDER_SECONDARY};
-                }}
-                QListWidget::item:selected {{
-                    background-color: {AppStyles.SELECTION_BACKGROUND_DARK};
-                    color: {AppStyles.DARK_TEXT_PRIMARY};
-                }}
-                QListWidget::item:hover {{
-                    background-color: {AppStyles.DARK_BACKGROUND_HOVER};
-                }}
-            """
-        else:
-            return f"""
-                QListWidget {{
-                    background-color: {AppStyles.LIGHT_BACKGROUND_CONTROLS};
-                    color: {AppStyles.LIGHT_TEXT_PRIMARY};
-                    border: 1px solid {AppStyles.LIGHT_BORDER_PRIMARY};
-                    border-radius: {AppStyles.BORDER_RADIUS};
-                }}
-                QListWidget::item {{
-                    padding: 4px;
-                    border-bottom: 1px solid {AppStyles.LIGHT_BACKGROUND_HOVER};
-                }}
-                QListWidget::item:selected {{
-                    background-color: {AppStyles.SELECTION_BACKGROUND_LIGHT};
-                    color: {AppStyles.LIGHT_BACKGROUND_CONTROLS};
-                }}
-                QListWidget::item:hover {{
-                    background-color: {AppStyles.LIGHT_BACKGROUND_HOVER};
-                }}
-            """
+            bg_color = AppStyles.DARK_BACKGROUND_CONTROLS
+            text_color = AppStyles.DARK_TEXT_PRIMARY
+            border_color = AppStyles.DARK_BORDER_SECONDARY
+            selection_bg = AppStyles.SELECTION_BACKGROUND_DARK
+            hover_bg = AppStyles.DARK_BACKGROUND_HOVER
+            indicator_unchecked_border = AppStyles.DARK_BORDER_PRIMARY
+            indicator_checked_bg = AppStyles.ACCENT_COLOR_DARK
+        else:  # Jasny motyw
+            bg_color = AppStyles.LIGHT_BACKGROUND_CONTROLS
+            text_color = AppStyles.LIGHT_TEXT_PRIMARY
+            border_color = AppStyles.LIGHT_BORDER_PRIMARY
+            selection_bg = AppStyles.SELECTION_BACKGROUND_LIGHT
+            hover_bg = AppStyles.LIGHT_BACKGROUND_HOVER
+            indicator_unchecked_border = AppStyles.LIGHT_BORDER_SECONDARY
+            indicator_checked_bg = AppStyles.ACCENT_COLOR_LIGHT
+
+        indicator_size = "14px"
+        radius = AppStyles.BORDER_RADIUS
+
+        return f"""
+        QListWidget {{
+                background-color: {bg_color};
+                color: {text_color};
+                border: 1px solid {border_color};
+                border-radius: {radius};
+            }}
+            QListWidget::item {{
+                padding: 4px;
+            }}
+            QListWidget::item:selected {{
+                background-color: {selection_bg};
+                color: white;
+                border-radius: {radius};
+            }}
+            QListWidget::item:hover {{
+                background-color: {hover_bg};
+                border-radius: {radius};
+            }}
+
+            /* --- NOWA SEKCJA: Styl dla checkboxów wewnątrz listy --- */
+            QListWidget::indicator {{
+                width: {indicator_size};
+                height: {indicator_size};
+                border-radius: 3px;
+                margin-right: 5px;
+            }}
+            QListWidget::indicator:unchecked {{
+                border: 1px solid {indicator_unchecked_border};
+                background-color: {bg_color};
+            }}
+            QListWidget::indicator:unchecked:hover {{
+                border: 1px solid {indicator_checked_bg};
+            }}
+            QListWidget::indicator:checked {{
+                background-color: {indicator_checked_bg};
+                border: 1px solid {indicator_checked_bg};
+                image: none; /* Usuwa domyślny 'ptaszek', zostawiając samo tło */
+            }}
+
+        """
 
     @staticmethod
     def get_line_edit_style(theme="dark"):
@@ -216,7 +236,7 @@ class AppStyles:
                        background-color: {selection_bg};
                    }}
                    QHeaderView::section {{
-                       background-color: {header_bg}; /* <--- TA LINIA MUSI BYĆ PRZYWRÓCONA */
+                       background-color: {header_bg};
                        border: 1px solid {grid};
                        padding: 4px;
                    }}
@@ -565,36 +585,37 @@ class AppStyles:
             checked_hover_border = AppStyles.ACCENT_COLOR_LIGHT_HOVER
 
         return f"""
-            QCheckBox {{
-                color: {text_color};
-                spacing: {spacing};
-                padding: {padding};
-                background-color: {bg};
-            }}
-            QCheckBox::indicator, QGroupBox::indicator {{
-                width: {indicator_size};
-                height: {indicator_size};
-                border-radius: {radius};
-            }}
-            QCheckBox::indicator:unchecked, QGroupBox::indicator:unchecked {{
-                border: 1px solid {unchecked_border};
-                background: {unchecked_bg};
-            }}
-            QCheckBox::indicator:unchecked:hover, QGroupBox::indicator:unchecked:hover {{
-                border: 1px solid {unchecked_hover_border};
-            }}
-            QCheckBox::indicator:checked, QGroupBox::indicator:checked {{
-                border: 1px solid {checked_border};
-                background: {checked_bg};
-            }}
-            QCheckBox::indicator:checked:hover, QGroupBox::indicator:checked:hover {{
-                background: {checked_hover_bg};
-                border: 1px solid {checked_hover_border};
-            }}
-            QGroupBox::title {{
-                padding-left: 5px; 
-            }}
-        """
+                QCheckBox {{
+                    color: {text_color};
+                    spacing: {spacing};
+                    padding: {padding};
+                    background-color: {bg};
+                }}
+                QCheckBox::indicator, QGroupBox::indicator {{
+                    width: {indicator_size};
+                    height: {indicator_size};
+                    border-radius: {radius};
+                }}
+                QCheckBox::indicator:unchecked, QGroupBox::indicator:unchecked {{
+                    border: 1px solid {unchecked_border};
+                    background-color: {unchecked_bg};
+                }}
+                QCheckBox::indicator:unchecked:hover, QGroupBox::indicator:unchecked:hover {{
+                    border: 1px solid {unchecked_hover_border};
+                }}
+                QCheckBox::indicator:checked, QGroupBox::indicator:checked {{
+                    border: 1px solid {checked_border};
+                    background-color: {checked_bg};
+                    image: none; /* NOWA LINIA: Zapewnia jednolite wypełnienie bez dodatkowego symbolu */
+                }}
+                QCheckBox::indicator:checked:hover, QGroupBox::indicator:checked:hover {{
+                    background-color: {checked_hover_bg};
+                    border: 1px solid {checked_hover_border};
+                }}
+                QGroupBox::title {{
+                    padding-left: 5px; 
+                }}
+            """
 
     @staticmethod
     def get_delegate_button_style(theme="dark"):
