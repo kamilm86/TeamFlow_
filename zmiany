@@ -8,3 +8,17 @@
 # settings_db.py
 # settings_dialog.py 
 export_settings_to_db.py
+    # ... fragment pliku export_settings_to_db.py
+    permissions = {
+        # ... istniejące uprawnienia ...
+
+        # Klucz: 'action_clear_special_symbol'
+        # Opis: Zezwala na użycie funkcji (domyślnie F12) do usunięcia tylko symbolu specjalnego (np. urlopu) bez usuwania godzin pracy.
+        'action_clear_special_symbol': ['Pracownik WPR', 'Lider OUT', 'Lider'],
+
+        # --- NOWA SEKCJA ---
+        # Klucz: 'button_send_email'
+        # Opis: Kontroluje widoczność przycisku "Wyślij e-mail" do zaznaczonych pracowników.
+        'button_send_email': ['Pracownik WPR', 'Lider OUT', 'Lider']
+        # --- KONIEC NOWEJ SEKCJI ---
+    }
