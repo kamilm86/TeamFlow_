@@ -1,96 +1,10 @@
-def apply_dialog_theme(self):
-        actual_theme = "dark"
-        if self.parent_widget and hasattr(self.parent_widget, 'is_dark_theme'):
-            actual_theme = "dark" if self.parent_widget.is_dark_theme else "light"
-
-        # --- NOWA LOGIKA: Połączenie stylów dla lepszej spójności ---
-        # Łączymy ogólny styl dialogu ze szczegółowym stylem dla QListWidget.
-        # Ustawienie jednego, bardziej kompletnego arkusza stylów dla całego okna dialogowego
-        # rozwiązuje problemy ze specyficznością i dziedziczeniem stylów w Qt.
-        combined_style = (
-            AppStyles.get_dialog_style(actual_theme) +
-            AppStyles.get_list_style(actual_theme)
-        )
-        self.setStyleSheet(combined_style)
-        # --- KONIEC NOWEJ LOGIKI ---
-
-        # Pozostałe widgety stylujemy indywidualnie, aby uniknąć konfliktów
-        self.sort_table.setStyleSheet(AppStyles.get_tablewidget_style(actual_theme))
-
-        button_style = AppStyles.get_button_style(actual_theme)
-        for btn in [self.move_up_button, self.move_down_button, self.restore_default_button,
-                    self.ok_button, self.cancel_button, self.add_sort_level_button, self.remove_sort_level_button]:
-            btn.setStyleSheet(button_style)
-
-        for combo in self.sort_table.findChildren(QComboBox):
-            combo.setStyleSheet(AppStyles.get_combobox_style(actual_theme))
-
-        self.komentarz_checkbox.setStyleSheet(AppStyles.get_checkbox_style(actual_theme))
-
-import functools
-def apply_custom_sort(self):
-        """
-        Sortuje dane w modelu na podstawie preferencji użytkownika przy użyciu
-        niezawodnej funkcji porównującej i aktualizuje wskaźnik w nagłówku.
-        """
-        if not hasattr(self, 'schedule_model') or not self.schedule_model._processed_data:
-            return
-
-        sort_prefs = self.user_sort_preferences
-        keys_to_sort = self.schedule_model._keys
-
-        if sort_prefs:
-            debug_print(f"Aplikowanie sortowania niestandardowego: {sort_prefs}")
-
-            def compare_rows(key_a, key_b):
-                """Funkcja porównująca dla wielopoziomowego sortowania z różnymi kierunkami."""
-                for col_id, direction in sort_prefs:
-                    val_a = self.schedule_model._get_sort_key(key_a, col_id)
-                    val_b = self.schedule_model._get_sort_key(key_b, col_id)
-
-                    # Zabezpieczenie na wypadek porównywania różnych typów (np. None i string)
-                    if type(val_a) is not type(val_b):
-                        val_a, val_b = str(val_a), str(val_b)
-                    
-                    result = 0
-                    if val_a < val_b:
-                        result = -1
-                    elif val_a > val_b:
-                        result = 1
-
-                    if result != 0:
-                        # Jeśli kierunek to 'desc', odwróć wynik
-                        if direction == 'desc':
-                            result *= -1
-                        return result
-                return 0 # Równe na wszystkich kryteriach
-
-            self.schedule_model.layoutAboutToBeChanged.emit()
-            keys_to_sort.sort(key=functools.cmp_to_key(compare_rows))
-            self.schedule_model.layoutChanged.emit()
-
-        else:
-             # Jeśli użytkownik usunął wszystkie preferencje, dane pozostaną w domyślnej kolejności
-            debug_print("Brak zdefiniowanych preferencji, sortowanie nie jest stosowane.")
-            self.schedule_model.layoutAboutToBeChanged.emit()
-            self.schedule_model.layoutChanged.emit()
-
-        # Ustaw wskaźnik wizualny w nagłówku, aby odzwierciedlał sortowanie
-        emp_header = self.table.employees_view.horizontalHeader()
-        sched_header = self.table.schedule_view.horizontalHeader()
-        
-        emp_header.setSortIndicator(-1, Qt.AscendingOrder)
-        sched_header.setSortIndicator(-1, Qt.AscendingOrder)
-
-        if sort_prefs:
-            first_col_id, first_direction = sort_prefs[0]
-            order = Qt.DescendingOrder if first_direction == 'desc' else Qt.AscendingOrder
-            
-            if hasattr(self, 'visible_columns'):
-                try:
-                    col_index = self.visible_columns.index(first_col_id)
-                    emp_header.setSortIndicator(col_index, order)
-                except ValueError:
-                    pass
-        
-        debug_print("Zakończono sortowanie niestandardowe.")
+# progress_dialog.py
+# column_select_dialog.py
+# styles.py
+# schedule_delegates.py
+# outlook_connector.py
+# email_dialog.py
+# main.py
+# settings_db.py
+# settings_dialog.py 
+export_settings_to_db.py
