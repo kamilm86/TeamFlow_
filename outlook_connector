@@ -1,0 +1,72 @@
+# outlook_connector.py
+import win32com.client as win32
+from debug_utils import log_error
+
+
+def _get_outlook_instance():
+    """Pomocnicza funkcja do łączenia się z aplikacją Outlook."""
+    try:
+        return win32.GetActiveObject("Outlook.Application")
+    except Exception:
+        try:
+            return win32.Dispatch("Outlook.Application")
+        except Exception as e:
+            log_error(f"Nie można uruchomić programu Outlook: {e}")
+            return None
+
+
+def create_outlook_email(recipients: list, subject: str, body: str, send_individually: bool = False):
+    """Tworzy nową wiadomość e-mail w Outlook, używając Numerów Kadrowych."""
+    if not recipients:
+        return False, "Brak zdefiniowanych odbiorców."
+
+    outlook = _get_outlook_instance()
+    if not outlook:
+        return False, "Nie można połączyć się z programem Outlook. Upewnij się, że jest zainstalowany."
+
+    try:
+        mail = outlook.CreateItem(0)
+
+        if send_individually:
+            for recipient_id in recipients:
+                mail.Recipients.Add(recipient_id)
+            mail.Recipients.ResolveAll()
+            # W trybie indywidualnym czyścimy pole "Do", bo Outlook doda tam adresy po rozwiązaniu UDW
+            mail.To = ""
+            # Ustawiamy adresy w polu UDW (BCC)
+            resolved_recipients = [rec.AddressEntry.GetExchangeUser().PrimarySmtpAddress for rec in mail.Recipients if
+                                   rec.Resolved]
+            mail.BCC = "; ".join(resolved_recipients)
+
+        else:
+            mail.To = "; ".join(recipients)
+
+        mail.Subject = subject
+        mail.HTMLBody = body
+        mail.Display(True)
+        return True, "OK"
+    except Exception as e:
+        log_error(f"Nie udało się stworzyć wiadomości e-mail w Outlook: {e}", exception=e)
+        return False, f"Wystąpił błąd podczas tworzenia wiadomości: {e}"
+
+
+def create_email_from_template(template_path: str, recipients: list, send_individually: bool = False):
+    """Tworzy nową wiadomość e-mail w Outlook na podstawie pliku szablonu (.oft)."""
+    outlook = _get_outlook_instance()
+    if not outlook:
+        return False, "Nie można połączyć się z programem Outlook. Upewnij się, że jest zainstalowany."
+
+    try:
+        mail = outlook.CreateItemFromTemplate(template_path)
+
+        recipient_str = "; ".join(recipients)
+        if send_individually:
+            mail.BCC = f"{mail.BCC}; {recipient_str}" if mail.BCC else recipient_str
+        else:
+            mail.To = f"{mail.To}; {recipient_str}" if mail.To else recipient_str
+
+        mail.Display(True)
+        return True, "OK"
+    except Exception as e:
+        log_error(f"Nie udało się otworzyć szablonu Outlook '{template_path}': {e}", exception=e)
+        return False, f"Nie można otworzyć szablonu '{template_path}'. Upewnij się, że plik istnieje i jest poprawny."
