@@ -1,5 +1,5 @@
 from PySide6.QtWidgets import QStyledItemDelegate, QStyle, QStyleOptionViewItem
-from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QPolygon, QFont
+from PySide6.QtGui import QPainter, QColor, QPen, QBrush, QPolygon, QFont, QPainterPath
 from PySide6.QtCore import Qt, QRect, QPoint
 from schedule_model import ROLE_HAS_MEETING, ROLE_HAS_OVERTIME, ROLE_SPECIAL_SYMBOL, ROLE_LOCATION_SYMBOL, ROLE_ICON_COLOR
 from debug_utils import log_error
@@ -16,17 +16,30 @@ class OvertimeItemDelegate(QStyledItemDelegate):
 
     def paint(self, painter: QPainter, option: QStyleOptionViewItem, index):
         try:
+            painter.save()
+
+            # Krok 1: Utwórz zaokrągloną ścieżkę, która będzie naszą "maską" do rysowania.
+            clip_path = QPainterPath()
+            # Używamy promienia 4px dla wyraźniejszego zaokrąglenia.
+            clip_path.addRoundedRect(option.rect, 4.0, 4.0)
+            painter.setClipPath(clip_path)
+
+            # Krok 2: Pozwól domyślnej implementacji narysować tło (z kolorem) i tekst.
+            # Wszystko, co narysuje, zostanie automatycznie przycięte do naszej zaokrąglonej maski.
             super().paint(painter, option, index)
 
-            special_symbol = index.data(ROLE_SPECIAL_SYMBOL) if self.settings.get('show_special_symbol') else None
-            location_symbol = index.data(ROLE_LOCATION_SYMBOL) if self.settings.get('show_location_symbol') else None
+            # Krok 3: Zdejmij "maskę", aby móc swobodnie rysować ikony na wierzchu.
+            painter.restore()
+
+            # Krok 4: Narysuj nasze niestandardowe ikony (ta logika pozostaje bez zmian).
+            special_symbol = index.data(ROLE_SPECIAL_SYMBOL)
+            location_symbol = index.data(ROLE_LOCATION_SYMBOL)
             has_meeting = index.data(ROLE_HAS_MEETING)
             has_overtime = index.data(ROLE_HAS_OVERTIME)
 
             painter.save()
             painter.setRenderHint(QPainter.Antialiasing)
 
-            # Rysowanie ikon geometrycznych
             if has_meeting:
                 marker_size = 7
                 rect = QRect(option.rect.left() + 2, option.rect.bottom() - marker_size - 1, marker_size, marker_size)
@@ -44,27 +57,17 @@ class OvertimeItemDelegate(QStyledItemDelegate):
                 painter.setPen(QPen(Qt.black, 1.0))
                 painter.drawPolygon(triangle)
 
-            # Rysowanie ikon tekstowych
+            # Usunięto odwołanie do `self.settings`, ponieważ te dane są teraz bezpośrednio w modelu
             if special_symbol:
-                self._draw_text_with_background(
-                    painter,
-                    option,
-                    special_symbol,
-                    self.settings.get('special_symbol_position', 'top_left')
-                )
+                self._draw_text_with_background(painter, option, special_symbol, 'top_left')
 
             if location_symbol:
-                self._draw_text_with_background(
-                    painter,
-                    option,
-                    location_symbol,
-                    self.settings.get('location_symbol_position', 'top_right')
-                )
+                self._draw_text_with_background(painter, option, location_symbol, 'top_right')
 
             painter.restore()
         except Exception as e:
             log_error(f"Błąd podczas rysowania delegata: {e}")
-
+            
     def _draw_text_with_background(self, painter: QPainter, option: QStyleOptionViewItem, text: str, position: str):
         """
         Rysuje tekst z tłem, używając sprawdzonej logiki ręcznego dopasowania rozmiaru.
