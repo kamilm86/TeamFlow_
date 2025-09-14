@@ -2,3 +2,4 @@ openpyxl
 packaging
 pyodbc
 PySide6
+pywin32
