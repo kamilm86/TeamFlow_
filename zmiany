@@ -1,3 +1,229 @@
+
+Jasne, rozumiem zadanie. Działam jako doświadczony analityk danych. Poniżej przedstawiam kompletną analizę w formacie notatnika Jupyter. Zawarłem w niej kod, wizualizacje, a co najważniejsze – interpretację biznesową wyników i rekomendacje, czyli to, czego oczekuje się od starszego analityka.
+Analiza Porównawcza Połączeń z Infolinią Rok do Roku (YoY)
+Data: 16 września 2025
+Autor: Gemini - Analityk Danych
+🎯 1. Cel Analizy
+Głównym celem tej analizy jest przeprowadzenie szczegółowego porównania rocznego (Year-over-Year) kluczowych wskaźników wydajności (KPI) infolinii. Skupimy się na zrozumieniu zmian w wolumenie, efektywności i charakterystyce interakcji klientów. Analiza ma dostarczyć actionable insights, które pomogą w optymalizacji procesów, alokacji zasobów i planowaniu strategicznym.
+Główne pytania badawcze:
+ * Jak zmienił się ogólny wolumen interakcji rok do roku?
+ * Które kanały kontaktu zyskały, a które straciły na popularności?
+ * Jak ewoluowała efektywność operacyjna (np. średni czas rozmowy)?
+ * Czy zmienił się sposób, w jaki klienci trafiają na infolinię (wejscie) i gdzie kończą swoją podróż (gdzie koniec)?
+ * Czy obserwujemy zmiany w sezonowości lub trendach w ciągu roku?
+🤔 2. Założenia i Dodatkowe Pytania
+Zanim przejdziemy do kodu, jako analityk muszę jasno określić założenia i zidentyfikować potencjalne braki w danych. Twoje pytanie "czy o wszystkim napisałem" jest kluczowe.
+Założenia:
+ * Zakładam, że tabela zawiera dane z co najmniej dwóch pełnych, porównywalnych lat.
+ * czas rozmowy to suma czasu w sekundach dla danej grupy.
+ * Tabela, oprócz wymienionych kolumn, musi zawierać liczbę połączeń/interakcji dla każdego wiersza (np. w kolumnie liczba_polaczen). Bez tej metryki nie będziemy w stanie policzyć kluczowych wskaźników, jak średni czas rozmowy (AHT). Jeśli jej nie ma, jest to krytyczny brak.
+Pytania doprecyzowujące (elementy, które warto dodać w przyszłości):
+ * Kluczowa metryka biznesowa: Czy posiadamy dane o kosztach obsługi per kanał? To pozwoliłoby na analizę Cost per Interaction.
+ * Jakość obsługi: Czy zbieramy dane CSAT/NPS (satysfakcja klienta)? Połączenie danych operacyjnych z jakościowymi daje pełen obraz sytuacji.
+ * FCR (First Contact Resolution): Czy mamy flagę określającą, czy problem został rozwiązany przy pierwszym kontakcie? To jeden z najważniejszych wskaźników efektywności infolinii.
+ * Szczegółowość danych: Obecne dane są zagregowane. Dostęp do danych surowych (każdy wiersz = jedna interakcja) pozwoliłby na głębszą analizę, np. dystrybucji czasów rozmów, a nie tylko średniej.
+Przystępuję do analizy, zakładając, że posiadamy kolumnę liczba_polaczen.
+🐍 3. Przygotowanie Środowiska i Wczytanie Danych
+Zaczynamy od importu niezbędnych bibliotek i zdefiniowania połączenia z bazą danych MS SQL Server.
+# Import bibliotek
+import pandas as pd
+import sqlalchemy as sa
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Ustawienia wizualizacji
+sns.set_theme(style="whitegrid")
+plt.rcParams['figure.figsize'] = (12, 6)
+plt.rcParams['axes.titlesize'] = 16
+plt.rcParams['axes.labelsize'] = 12
+
+# --- Ładowanie danych z MS SQL Server ---
+# Wypełnij poniższe zmienne swoimi danymi dostępowymi
+server_name = "TWOJ_SERWER"
+database_name = "TWOJA_BAZA_DANYCH"
+table_name = "NAZWA_TWOJEJ_TABELI"
+# Użyj uwierzytelniania Windows (Integrated Security) lub SQL Server Auth
+# Dla Windows Auth:
+connection_string = f"mssql+pyodbc://{server_name}/{database_name}?driver=ODBC+Driver+17+for+SQL+Server&trusted_connection=yes"
+
+# Stworzenie "silnika" połączenia
+try:
+    engine = sa.create_engine(connection_string)
+    
+    # Zapytanie SQL do wczytania danych
+    query = f"SELECT * FROM {table_name}"
+    
+    # Wczytanie danych do ramki danych Pandas
+    df = pd.read_sql(query, engine)
+    
+    print("✅ Pomyślnie połączono i wczytano dane.")
+    print("Próbka danych:")
+    display(df.head())
+
+except Exception as e:
+    print(f"❌ Błąd podczas połączenia z bazą danych: {e}")
+    # W przypadku błędu, tworzę przykładową ramkę danych, aby kontynuować analizę
+    data = {'Data': ['2023-01-05', '2023-01-05', '2024-01-06', '2024-01-06', '2023-02-10', '2024-02-11'],
+            'Kanal_kontakt': ['voice', 'czat', 'voice', 'czat', 'voice', 'wideo'],
+            'Typ_interakcji': ['telefon', 'aplikacja mobilna', 'telefon', 'aplikacja mobilna', 'telefon', 'aplikacja desktopowa'],
+            'czy_odebrane': [1, 1, 1, 0, 1, 1],
+            'wejscie': ['ivr', 'bot', 'ivr', 'bot', 'ivr', 'vendor'],
+            'gdzie_koniec': ['konsultant', 'konsultant', 'konsultant', 'bot', 'transfer', 'konsultant'],
+            'czas_rozmowy': [18000, 5400, 22000, 0, 15000, 7200],
+            'liczba_polaczen': [100, 60, 110, 50, 90, 30]}
+    df = pd.DataFrame(data)
+    print("⚠️ Utworzono przykładowy zbiór danych do dalszej analizy.")
+    display(df.head())
+
+
+🛠️ 4. Przygotowanie Danych (Data Preprocessing & Feature Engineering)
+Dane w stanie surowym rzadko nadają się do bezpośredniej analizy. Musimy je oczyścić i wzbogacić o dodatkowe, użyteczne cechy.
+# Konwersja kolumny 'Data' na typ daty
+df['Data'] = pd.to_datetime(df['Data'])
+
+# Inżynieria cech - wyciągnięcie roku, miesiąca i dnia tygodnia
+df['Rok'] = df['Data'].dt.year
+df['Miesiac'] = df['Data'].dt.month
+df['Nazwa_Miesiaca'] = df['Data'].dt.strftime('%B')
+df['Dzien_Tygodnia'] = df['Data'].dt.day_name()
+
+# Obliczenie kluczowych metryk
+# AHT - Average Handle Time (Średni Czas Obsługi) w sekundach
+# Używamy .div() i .fillna(0) aby uniknąć dzielenia przez zero, jeśli dla jakiejś grupy odebrane połączenia mają sumaryczny czas 0
+df['AHT_s'] = (df['czas_rozmowy'] / df['liczba_polaczen'].where(df['czy_odebrane'] == 1, 0)).fillna(0)
+
+# Określenie lat do analizy
+current_year = df['Rok'].max()
+previous_year = current_year - 1
+
+df_cy = df[df['Rok'] == current_year]
+df_py = df[df['Rok'] == previous_year]
+
+print(f"Analiza porównawcza dla lat: {current_year} (CY) vs {previous_year} (PY)")
+print("Nowe kolumny i AHT zostały obliczone.")
+
+📊 5. Analiza Porównawcza i Wizualizacja Danych
+Teraz przechodzimy do serca analizy – porównania wyników rok do roku.
+5.1. Ogólny Wolumen Interakcji
+Sprawdźmy, jak zmieniła się całkowita liczba obsługiwanych interakcji.
+# Agregacja roczna
+total_volume = df.groupby('Rok')['liczba_polaczen'].sum().reset_index()
+total_volume_cy = total_volume[total_volume['Rok'] == current_year]['liczba_polaczen'].sum()
+total_volume_py = total_volume[total_volume['Rok'] == previous_year]['liczba_polaczen'].sum()
+
+# Obliczenie zmiany YoY
+yoy_change = ((total_volume_cy - total_volume_py) / total_volume_py) * 100
+
+# Wizualizacja
+plt.figure(figsize=(8, 5))
+ax = sns.barplot(data=total_volume, x='Rok', y='liczba_polaczen', palette='viridis')
+ax.set_title(f'Całkowity Wolumen Interakcji YoY\nZmiana: {yoy_change:.2f}%')
+for p in ax.patches:
+    ax.annotate(f'{int(p.get_height()):,}', (p.get_x() + p.get_width() / 2., p.get_height()),
+                ha='center', va='center', fontsize=12, color='black', xytext=(0, 5),
+                textcoords='offset points')
+plt.ylabel('Liczba Połączeń')
+plt.xlabel('Rok')
+plt.show()
+
+Wnioski:
+ * Na podstawie wykresu widać [trend wzrostowy/spadkowy].
+ * Całkowity wolumen interakcji zmienił się o yoy_change%. Taka zmiana może wynikać ze wzrostu bazy klientów, problemów z produktem lub skuteczności kampanii marketingowych. Należy to skorelować z działaniami biznesowymi firmy w analizowanym okresie.
+5.2. Analiza Wolumenu w Podziale na Kanały
+Które kanały napędzają zmianę w wolumenie?
+# Agregacja po roku i kanale
+channel_volume = df.groupby(['Rok', 'Kanal_kontakt'])['liczba_polaczen'].sum().reset_index()
+
+# Wizualizacja
+plt.figure(figsize=(14, 7))
+sns.barplot(data=channel_volume, x='Kanal_kontakt', y='liczba_polaczen', hue='Rok', palette='mako')
+plt.title('Wolumen Interakcji w Podziale na Kanały (YoY)')
+plt.ylabel('Liczba Połączeń')
+plt.xlabel('Kanał Kontaktu')
+plt.legend(title='Rok')
+plt.show()
+
+Wnioski:
+ * Ten wykres pokazuje, które kanały zyskują na popularności. Widzimy wyraźny wzrost/spadek dla kanału X, podczas gdy kanał Y pozostaje stabilny/traci.
+ * Rekomendacja: Jeśli obserwujemy silny wzrost na kanale czat, warto zainwestować w rozwój bota lub zwiększyć liczbę agentów obsługujących ten kanał. Jeśli kanał voice maleje, można rozważyć optymalizację zasobów w tym obszarze.
+5.3. Analiza Średniego Czasu Obsługi (AHT)
+Czy nasza efektywność rośnie czy maleje? AHT jest kluczowym wskaźnikiem.
+# Agregacja AHT dla połączeń odebranych
+aht_analysis = df[df['czy_odebrane'] == 1].copy()
+# Obliczamy średnią ważoną AHT
+aht_yearly = aht_analysis.groupby('Rok').apply(lambda x: (x['czas_rozmowy']).sum() / x['liczba_polaczen'].sum()).reset_index(name='Sredni_AHT_s')
+
+
+# Wizualizacja AHT
+plt.figure(figsize=(8, 5))
+ax = sns.barplot(data=aht_yearly, x='Rok', y='Sredni_AHT_s', palette='coolwarm')
+ax.set_title('Średni Czas Obsługi (AHT) YoY')
+for p in ax.patches:
+    ax.annotate(f'{p.get_height():.1f}s', (p.get_x() + p.get_width() / 2., p.get_height()),
+                ha='center', va='center', fontsize=12, color='black', xytext=(0, 5),
+                textcoords='offset points')
+plt.ylabel('AHT (w sekundach)')
+plt.xlabel('Rok')
+plt.show()
+
+Wnioski:
+ * Wzrost AHT może świadczyć o bardziej skomplikowanych problemach zgłaszanych przez klientów, niedostatecznym szkoleniu agentów lub problemach systemowych.
+ * Spadek AHT to generalnie dobry znak, o ile nie odbywa się kosztem jakości (dlatego potrzebne są dane CSAT!). Może być wynikiem lepszych narzędzi dla konsultantów lub skuteczniejszego sortowania zapytań przez IVR/bota.
+5.4. Analiza Ścieżki Klienta: Wejście i Zakończenie Interakcji
+Gdzie klienci zaczynają i kończą swoją podróż? Czy bot/IVR skutecznie filtruje połączenia?
+fig, axes = plt.subplots(1, 2, figsize=(18, 7))
+
+# Analiza punktów wejścia
+entry_points = df.groupby(['Rok', 'wejscie'])['liczba_polaczen'].sum().reset_index()
+sns.barplot(ax=axes[0], data=entry_points, x='wejscie', y='liczba_polaczen', hue='Rok', palette='viridis')
+axes[0].set_title('Punkty Wejścia Interakcji (YoY)')
+axes[0].set_xlabel('Punkt Wejścia')
+axes[0].set_ylabel('Liczba Połączeń')
+
+# Analiza punktów zakończenia
+exit_points = df.groupby(['Rok', 'gdzie_koniec'])['liczba_polaczen'].sum().reset_index()
+sns.barplot(ax=axes[1], data=exit_points, x='gdzie_koniec', y='liczba_polaczen', hue='Rok', palette='plasma')
+axes[1].set_title('Punkty Zakończenia Interakcji (YoY)')
+axes[1].set_xlabel('Punkt Zakończenia')
+axes[1].set_ylabel('Liczba Połączeń')
+
+plt.tight_layout()
+plt.show()
+
+Wnioski:
+ * Po lewej (Wejścia): Analizujemy, czy np. więcej klientów korzysta z bota jako pierwszego punktu kontaktu.
+ * Po prawej (Zakończenia): Kluczowe jest tu porównanie liczby interakcji kończących się na bocie/IVR w stosunku do tych trafiających do konsultanta. Jeśli rok do roku rośnie liczba spraw załatwianych w pełni automatycznie, to jest to duży sukces i oszczędność kosztów. Jeśli rośnie liczba transferów (transfer), może to wskazywać na złą konfigurację IVR lub bota.
+5.5. Analiza Sezonowości i Trendów Miesięcznych
+Jak rozkłada się ruch w ciągu roku? Czy występują podobne piki w obu latach?
+# Agregacja miesięczna
+monthly_trends = df.groupby(['Rok', 'Miesiac'])['liczba_polaczen'].sum().reset_index()
+
+# Wizualizacja
+plt.figure(figsize=(14, 7))
+sns.lineplot(data=monthly_trends, x='Miesiac', y='liczba_polaczen', hue='Rok', palette='Set1', marker='o', linewidth=2.5)
+plt.title('Miesięczne Trendy Wolumenu Połączeń (YoY)')
+plt.xlabel('Miesiąc')
+plt.ylabel('Liczba Połączeń')
+plt.xticks(ticks=range(1, 13), labels=['Sty', 'Lut', 'Mar', 'Kwi', 'Maj', 'Cze', 'Lip', 'Sie', 'Wrz', 'Paź', 'Lis', 'Gru'])
+plt.legend(title='Rok')
+plt.show()
+
+Wnioski:
+ * Wykres liniowy doskonale uwidacznia sezonowość. Możemy zidentyfikować miesiące o największym obciążeniu (np. okresy świąteczne, początek/koniec roku, daty związane z cyklem życia produktu).
+ * Porównanie linii dla obu lat pozwala sprawdzić, czy piki sezonowe się powtarzają i czy różnica w wolumenie między latami jest stała, czy może rośnie w określonych miesiącach.
+ * Rekomendacja: Wiedza o sezonowości jest kluczowa dla planowania grafików pracy konsultantów (Workforce Management).
+💡 6. Podsumowanie i Rekomendacje Biznesowe
+Na podstawie przeprowadzonej analizy wyłaniają się następujące kluczowe wnioski:
+ * Ogólny Trend: W roku {current_year} zaobserwowaliśmy [wzrost/spadek] całkowitego wolumenu interakcji o yoy_change% w stosunku do roku {previous_year}.
+ * Główny Motor Zmian: Największy wpływ na tę zmianę miał kanał [nazwa kanału], którego popularność [wzrosła/zmalała]. Wskazuje to na zmieniające się preferencje klientów w sposobie kontaktu z nami.
+ * Efektywność Operacyjna: Średni czas obsługi (AHT) [wzrósł/zmniejszył się], co sugeruje, że interakcje stają się [bardziej/mniej] skomplikowane lub nasza efektywność uległa zmianie. Należy to zbadać w kontekście konkretnych typów zgłoszeń.
+ * Automatyzacja i Self-Service: Analiza ścieżki klienta pokazała, że odsetek interakcji kończących się w kanałach automatycznych (bot, IVR) [wzrósł/zmniejszył się]. To kluczowy wskaźnik sukcesu naszej strategii automatyzacji.
+Rekomendacje:
+ * Inwestycja w kanały rosnące: Zwiększyć zasoby (ludzkie i technologiczne) dla kanału [nazwa rosnącego kanału], aby utrzymać wysoką jakość obsługi przy rosnącym wolumenie.
+ * Dogłębna analiza AHT: Przeprowadzić analizę "drill-down" dla interakcji z rosnącym AHT. Zidentyfikować konkretne przyczyny (np. typy zgłoszeń) i zorganizować dodatkowe szkolenia dla agentów lub usprawnić bazę wiedzy.
+ * Optymalizacja ścieżki klienta: Jeśli zbyt wiele interakcji z bota/IVR trafia do konsultanta, należy przeanalizować logi i zidentyfikować miejsca, w których proces się "zrywa". Celem jest zwiększenie wskaźnika FCR w kanałach automatycznych.
+ * Prognozowanie i planowanie: Wykorzystać zidentyfikowane trendy miesięczne do stworzenia bardziej dokładnego modelu prognozowania wolumenu, co pozwoli na lepszą optymalizację grafików pracy.
+
 Doskonale, to bardzo ważna i częsta sytuacja w analizie danych! Praca na danych surowych (per połączenie) daje nam znacznie większe możliwości. Porównanie niepełnego roku do adekwatnego okresu w przeszłości to standard "best practice".
 Przygotowałem zaktualizowaną wersję notatnika, która uwzględnia nową strukturę danych i logikę porównawczą "rok do dziś" (Year-to-Date, YTD).
 Analiza Porównawcza Połączeń z Infolinią - Wersja YTD (Year-to-Date)
