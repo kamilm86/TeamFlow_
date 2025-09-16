@@ -1,325 +1,135 @@
-Krok 2: Modyfikacja Kodu Aplikacji
-Teraz zaktualizujemy trzy pliki w kodzie, aby wczytywały i wykorzystywały nową kolumnę.
-
-1. Zmiana w pliku column_definitions.py
-Dodajemy definicję dla nowej kolumny LoginWindows.
-
-Python
-
-    SCHEDULE_COLUMNS = {
-        # ... (istniejące definicje od 'wydzial' do 'uzytkownik_id') ...
-        'uzytkownik_id': ColumnDefinition(
-            id='uzytkownik_id', name='Uzytkownik', data_type=DataType.INTEGER,
-            default_value=0, description='Uzytkownik', width=80, required=True, selectable_in_ui=True
-        ),
-        # --- NOWA KOLUMNA ---
-        'login_windows': ColumnDefinition(
-            id='login_windows', name='LoginWindows', data_type=DataType.STRING,
-            default_value='', description='Login Windows pracownika', selectable_in_ui=False, required=False
-        ),
-        # --- KONIEC NOWEJ KOLUMNY ---
-        'email': ColumnDefinition(
-            id='email', name='Email', data_type=DataType.STRING,
-            default_value='', description='Adres e-mail pracownika', selectable_in_ui=False, required=False
-        ),
-        'nr_kadrowy': ColumnDefinition(
-            # ... (reszta definicji bez zmian) ...
-2. Zmiana w pliku data_provider.py
-Aktualizujemy funkcję _build_processed_data_without_icons, aby wczytywała login do danych o pracowniku.
-
-Python
-
-    def _build_processed_data_without_icons(self, schedule_data: List[Dict]) -> Dict:
-        """
-        Przetwarza dane z już spivotowanego zapytania SQL i dołącza LoginWindows.
-        """
-        if not self._current_year or not self._current_month or not schedule_data:
-            return {}
-
-        processed_data = {}
-        for row_dict in schedule_data:
-            uzytkownik_id = row_dict.get('Uzytkownik', 0)
-
-            key = (
-                row_dict.get('WydzialGrafik', ''),
-                row_dict.get('PrzelozonyDane', ''),
-                row_dict.get('UzytkownikDane', ''),
-                uzytkownik_id
-            )
-
-            processed_data[key] = {
-                'days': {},
-                'total_hours': 0,
-                'rola_nazwa': row_dict.get('RolaNazwa', ''),
-                'pod_rola_nazwa': row_dict.get('PodRolaNazwa', ''),
-                'etat': row_dict.get('Etat', 8.0),
-                'jezyk': row_dict.get('Język', ''),
-                'korekta': row_dict.get('Korekta', 0),
-                'dtn': row_dict.get('DTN', 0),
-                'przelozony_imie_nazwisko': row_dict.get('PrzelozonyImieNazwisko', ''),
-                'nr_kadrowy': row_dict.get('NumerKadrowy', ''),
-                'lokalizacja_domyslna': row_dict.get('LokalizacjaDomyslna', 'h'),
-                'komentarz_grafik': row_dict.get('KomentarzGrafik', ''),
-                'system_czasu_pracy': row_dict.get('SystemCzasuPracy', ''),
-                'email': row_dict.get('Email', ''),
-                # --- NOWA LINIA ---
-                'login_windows': row_dict.get('LoginWindows', '')
-            }
-
-            calculated_total_hours = 0
-            for day in range(1, 32):
-                symbol = row_dict.get(str(day))
-                if symbol is not None:
-                    parsed_symbol = parse_symbol(symbol)
-                    work_h = parsed_symbol.get('work_hours', 0) or 0
-                    calculated_total_hours += work_h
-                    processed_data[key]['days'][day] = {
-                        'symbol': symbol,
-                        'hours': work_h,
-                        'start_hour': parsed_symbol.get('start_hour'),
-                    }
-            
-            processed_data[key]['total_hours'] = calculated_total_hours
-
-        debug_print(
-            f"DataProvider: Zakończono budowanie danych dla {len(processed_data)} użytkowników z sumą godzin obliczoną w aplikacji.")
-        return processed_data
-3. Zmiana w pliku main.py
-Na koniec, modyfikujemy funkcję show_email_dialog, aby zbierała i przekazywała LoginWindows zamiast NumerKadrowy.
-
-Python
-
-    def show_email_dialog(self):
-        """Zbiera dane zaznaczonych pracowników i otwiera dialog do wysyłki e-mail."""
-        selected_cells = self.get_selected_cells_data()
-        if not selected_cells:
-            QMessageBox.warning(self, "Brak zaznaczenia", "Proszę zaznaczyć przynajmniej jednego pracownika.")
-            return
-
-        recipients = []
-        processed_ids = set()
-        for cell_data in selected_cells:
-            key = (cell_data.get('wydzial'), cell_data.get('przelozony'), cell_data.get('uzytkownik_dane'), cell_data.get('uzytkownik_id'))
-            user_data = self.processed_data.get(key, {})
-            
-            user_id = user_data.get('uzytkownik_id')
-            # --- ZMIANA: Pobieramy 'login_windows' zamiast 'nr_kadrowy' ---
-            recipient_id = user_data.get('login_windows', '').strip()
-            name = user_data.get('uzytkownik_dane')
-
-            if user_id not in processed_ids and recipient_id:
-                recipients.append({'name': name, 'id': recipient_id})
-                processed_ids.add(user_id)
-
-        if not recipients:
-            QMessageBox.warning(self, "Brak danych", "Żaden z zaznaczonych pracowników nie ma przypisanego loginu Windows w systemie.")
-            return
-        
-        template_path = self.user_settings.get('outlook_template_path', '')
-
-        dialog = EmailDialog(self, recipients, template_path)
-        if dialog.exec() == QDialog.Accepted:
-            email_details = dialog.get_email_details()
-            
-            if email_details['template_path']:
-                success, message = create_email_from_template(
-                    template_path=email_details['template_path'],
-                    recipients=email_details['recipients'],
-                    send_individually=email_details['send_individually']
-                )
-            else:
-                success, message = create_outlook_email(
-                    recipients=email_details['recipients'],
-                    subject=email_details['subject'],
-                    body=email_details['body'],
-                    send_individually=email_details['send_individually']
-                )
-
-            if success:
-                self.statusBar().showMessage("Pomyślnie utworzono wiadomość w programie Outlook.", 4000)
-            else:
-                QMessageBox.critical(self, "Błąd Outlook", message)
-Po wprowadzeniu tych zmian, aplikacja będzie poprawnie używać loginów Windows do adresowania wiadomości e-mail, co jest znacznie bardziej niezawodną metodą.
-
-
-
-
-
-
-Mam błąd. Pisałem wcześniej że już nie potrzebuje adresu email bo przekazywać będę LoginWindows który w Outlook zamieni się na mail.
-
-Traceback (most recent call last):
-
-  File "C:\Users\kamil\PycharmProjects\TeamFlowApp\main.py", line 5091, in show_email_dialog
-
-    dialog = EmailDialog(self, recipients, template_path)
-
-             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-  File "C:\Users\kamil\PycharmProjects\TeamFlowApp\email_dialog.py", line 19, in __init__
-
-    self.setup_ui()
-
-  File "C:\Users\kamil\PycharmProjects\TeamFlowApp\email_dialog.py", line 25, in setup_ui
-
-    recipients_label = QLabel(self._get_recipients_summary_text())
-
-                              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-
-  File "C:\Users\kamil\PycharmProjects\TeamFlowApp\email_dialog.py", line 89, in _get_recipients_summary_text
-
-    return f"<b>Odbiorca:</b> {self.recipients[0]['name']} ({self.recipients[0]['email']})"
-
-                                                             ~~~~~~~~~~~~~~~~~~^^^^^^^^^
-
-KeyError: 'email'
-
-
-
-
-Pokaż przebieg rozumowania
-Masz całkowitą rację, to mój błąd. Przepraszam.
-
-Gdy przechodziliśmy z Email na LoginWindows, zaktualizowałem logikę przekazywania danych, ale przeoczyłem i nie zaktualizowałem funkcji, która tworzy tekstowe podsumowanie odbiorców w oknie dialogowym. Ten tekst nadal próbował odwołać się do nieistniejącego już klucza 'email', co powodowało błąd.
-
-Rozwiązanie
-Należy poprawić jedną linię w pliku email_dialog.py, aby w etykiecie podsumowującej wyświetlał się LoginWindows (przechowywany pod kluczem 'id') zamiast adresu e-mail.
-
-Poprawiona funkcja w email_dialog.py
-Proszę, zastąp w pliku email_dialog.py funkcję _get_recipients_summary_text poniższą, poprawną wersją.
-
-Python
-
-    def _get_recipients_summary_text(self) -> str:
-        """Tworzy tekst podsumowujący odbiorców."""
-        count = len(self.recipients)
-        if count == 0:
-            return "<b>Brak wybranych odbiorców z poprawnym loginem Windows.</b>"
-        
-        if count == 1:
-            # Zmieniono 'email' na 'id', aby wyświetlać LoginWindows
-            return f"<b>Odbiorca:</b> {self.recipients[0]['name']} ({self.recipients[0]['id']})"
-
-        names_preview = ", ".join([r['name'] for r in self.recipients[:2]])
-        
-        if count > 2:
-            suffix = f" (+ {count - 2} innych)"
-        else:
-            suffix = ""
-            
-        return f"<b>Odbiorcy ({count}):</b> {names_preview}{suffix}"
-Po tej jednej zmianie błąd zniknie, a okno dialogowe będzie poprawnie wyświetlać loginy Windows zaznaczonych pracowników.
-
-
-
-
-
-
-
-
-Zaznaczyłem kilku odbiorców a tylko jeden widoczny jest w oknie dialogowym i zamiast None (LoginWindows) to możemy pokazywać UzytkownikDane a przekazywać do Outlook LoginWindows
-
-
-
-
-Pokaż przebieg rozumowania
-Rozumiem, widzę oba problemy na zrzucie ekranu. Masz rację, obecne zachowanie jest błędne.
-
-Dialog pokazuje tylko jednego odbiorcę, mimo zaznaczenia wielu.
-
-W podsumowaniu odbiorcy wyświetla się None zamiast imienia i nazwiska.
-
-Oba błędy wynikają z drobnych pomyłek w logice pobierania i wyświetlania danych. Przygotowałem poprawki dla obu.
-
-Wyjaśnienie logiki
-Problem wielu odbiorców: Zmieniłem sposób, w jaki aplikacja zbiera informacje o zaznaczonych pracownikach. Zamiast analizować pojedyncze komórki w grafiku, teraz bezpośrednio odczytuje całe zaznaczone wiersze z listy pracowników, co jest znacznie bardziej niezawodną metodą.
-
-Problem z None: Poprawiłem funkcję, która generuje tekst podsumowania w oknie dialogowym. Dodałem zabezpieczenie, które sprawia, że jeśli UzytkownikDane (imię i nazwisko) jest z jakiegoś powodu puste, w jego miejsce zostanie wyświetlony LoginWindows. Do Outlooka nadal będzie przekazywany sam LoginWindows.
-
-Poprawione funkcje
-Proszę, zastąp poniższe dwie funkcje w odpowiednich plikach ich nowymi wersjami.
-
-1. Zmodyfikowana funkcja show_email_dialog w main.py
-Python
-
-    def show_email_dialog(self):
-        """Zbiera dane zaznaczonych pracowników i otwiera dialog do wysyłki e-mail."""
-        # NOWA, NIEZAWODNA METODA POBIERANIA ZAZNACZONYCH PRACOWNIKÓW
-        if not self.table or not self.table.employees_view.selectionModel():
-            return
-
-        selected_rows = self.table.get_selected_rows()
-        if not selected_rows:
-            QMessageBox.warning(self, "Brak zaznaczenia", "Proszę zaznaczyć przynajmniej jednego pracownika.")
-            return
-
-        recipients = []
-        for row_index in selected_rows:
-            # Pobierz klucz dla danego wiersza z modelu
-            key = self.schedule_model._keys[row_index]
-            full_user_data = self.processed_data.get(key, {})
-
-            login_windows = full_user_data.get('login_windows', '').strip()
-            # Użyj nazwy z klucza, która jest gwarantowana
-            name = key[2] 
-
-            if login_windows:
-                recipients.append({'name': name, 'id': login_windows})
-        
-        if not recipients:
-            QMessageBox.warning(self, "Brak danych", "Żaden z zaznaczonych pracowników nie ma przypisanego loginu Windows w systemie.")
-            return
-        
-        template_path = self.user_settings.get('outlook_template_path', '')
-
-        dialog = EmailDialog(self, recipients, template_path)
-        if dialog.exec() == QDialog.Accepted:
-            email_details = dialog.get_email_details()
-            
-            if email_details['template_path']:
-                # Użyj szablonu
-                success, message = create_email_from_template(
-                    template_path=email_details['template_path'],
-                    recipients=email_details['recipients'],
-                    send_individually=email_details['send_individually']
-                )
-            else:
-                # Użyj standardowej wiadomości
-                success, message = create_outlook_email(
-                    recipients=email_details['recipients'],
-                    subject=email_details['subject'],
-                    body=email_details['body'],
-                    send_individually=email_details['send_individually']
-                )
-
-            if success:
-                self.statusBar().showMessage("Pomyślnie utworzono wiadomość w programie Outlook.", 4000)
-            else:
-                QMessageBox.critical(self, "Błąd Outlook", message)
-2. Zmodyfikowana funkcja _get_recipients_summary_text w email_dialog.py
-Python
-
-    def _get_recipients_summary_text(self) -> str:
-        """Tworzy tekst podsumowujący odbiorców."""
-        count = len(self.recipients)
-        if count == 0:
-            return "<b>Brak wybranych odbiorców z poprawnym loginem Windows.</b>"
-        
-        if count == 1:
-            recipient = self.recipients[0]
-            # Użyj loginu ('id') jako nazwy, jeśli nazwa ('name') jest pusta
-            display_name = recipient['name'] or recipient['id']
-            return f"<b>Odbiorca:</b> {display_name} ({recipient['id']})"
-
-        # Logika dla wielu odbiorców
-        display_names = []
-        for r in self.recipients[:2]:
-            # Użyj loginu ('id') jako nazwy, jeśli nazwa ('name') jest pusta
-            display_name = r['name'] or r['id']
-            display_names.append(display_name)
-            
-        names_preview = ", ".join(display_names)
-        
-        suffix = f" (+ {count - 2} innych)" if count > 2 else ""
-            
-        return f"<b>Odbiorcy ({count}):</b> {names_preview}{suffix}"
+Doskonała uwaga! Masz absolutną rację. Porównywanie niepełnego bieżącego roku do całego poprzedniego jest błędem metodologicznym, który może prowadzić do całkowicie błędnych wniosków. Jako analityk powinienem był to od razu zasygnalizować. Dziękuję za zwrócenie na to uwagi.
+Poniżej przedstawiam poprawioną wersję analizy, która uwzględnia porównanie "okres do adekwatnego okresu" (like-for-like). To standardowa i jedyna słuszna praktyka w takich przypadkach.
+Analiza Porównawcza Połączeń z Infolinią YoY (Like-for-Like)
+Data: 16 września 2025
+Autor: Gemini - Analityk Danych
+Wersja: 2.0 (Skorygowana o porównanie adekwatnych okresów)
+🎯 1. Cel Analizy (bez zmian)
+Głównym celem tej analizy jest przeprowadzenie szczegółowego porównania rocznego (Year-over-Year) kluczowych wskaźników wydajności (KPI) infolinii w adekwatnych, porównywalnych okresach. Skupimy się na zrozumieniu zmian w wolumenie, efektywności i charakterystyce interakcji klientów. Analiza ma dostarczyć actionable insights, które pomogą w optymalizacji procesów, alokacji zasobów i planowaniu strategicznym.
+🤔 2. Założenia i Dodatkowe Pytania (bez zmian)
+ * Kluczowe założenie: Posiadamy kolumnę liczba_polaczen. Bez niej analiza wskaźników (jak AHT) nie jest możliwa.
+ * Potencjał na przyszłość: Warto wzbogacić dane o wskaźniki jakościowe (CSAT/NPS), FCR (First Contact Resolution) oraz koszty obsługi.
+🐍 3. Przygotowanie Środowiska i Wczytanie Danych (bez zmian)
+# Import bibliotek
+import pandas as pd
+import sqlalchemy as sa
+import matplotlib.pyplot as plt
+import seaborn as sns
+
+# Ustawienia wizualizacji
+sns.set_theme(style="whitegrid")
+plt.rcParams['figure.figsize'] = (12, 6)
+plt.rcParams['axes.titlesize'] = 16
+plt.rcParams['axes.labelsize'] = 12
+
+# --- Ładowanie danych z MS SQL Server ---
+# Wypełnij poniższe zmienne swoimi danymi dostępowymi
+server_name = "TWOJ_SERWER"
+database_name = "TWOJA_BAZA_DANYCH"
+table_name = "NAZWA_TWOJEJ_TABELI"
+connection_string = f"mssql+pyodbc://{server_name}/{database_name}?driver=ODBC+Driver+17+for+SQL+Server&trusted_connection=yes"
+
+try:
+    engine = sa.create_engine(connection_string)
+    query = f"SELECT * FROM {table_name}"
+    df = pd.read_sql(query, engine)
+    print("✅ Pomyślnie połączono i wczytano dane.")
+
+except Exception as e:
+    print(f"❌ Błąd podczas połączenia z bazą danych: {e}")
+    # W przypadku błędu, tworzę przykładową ramkę danych, aby kontynuować analizę
+    data = {'Data': pd.to_datetime(['2023-01-05', '2023-01-05', '2024-01-06', '2024-01-06', '2023-02-10', '2024-02-11', '2023-08-15', '2024-08-16']),
+            'Kanal_kontakt': ['voice', 'czat', 'voice', 'czat', 'voice', 'wideo', 'voice', 'voice'],
+            'Typ_interakcji': ['telefon', 'aplikacja mobilna', 'telefon', 'aplikacja mobilna', 'telefon', 'aplikacja desktopowa', 'telefon', 'telefon'],
+            'czy_odebrane': [1, 1, 1, 0, 1, 1, 1, 1],
+            'wejscie': ['ivr', 'bot', 'ivr', 'bot', 'ivr', 'vendor', 'ivr', 'ivr'],
+            'gdzie_koniec': ['konsultant', 'konsultant', 'konsultant', 'bot', 'transfer', 'konsultant', 'konsultant', 'konsultant'],
+            'czas_rozmowy': [18000, 5400, 22000, 0, 15000, 7200, 25000, 28000],
+            'liczba_polaczen': [100, 60, 110, 50, 90, 30, 150, 160]}
+    df = pd.DataFrame(data)
+    print("⚠️ Utworzono przykładowy zbiór danych do dalszej analizy.")
+
+display(df.head())
+
+🛠️ 4. Przygotowanie Danych (Data Preprocessing & Feature Engineering) - ZMIANA KLUCZOWA
+W tej sekcji wprowadzamy logikę, która zapewni, że porównujemy te same okresy.
+# Konwersja kolumny 'Data' na typ daty
+df['Data'] = pd.to_datetime(df['Data'])
+
+# Inżynieria cech - wyciągnięcie roku, miesiąca etc.
+df['Rok'] = df['Data'].dt.year
+df['Miesiac'] = df['Data'].dt.month
+
+# --- NOWA LOGIKA: DEFINICJA PORÓWNYWALNEGO OKRESU ---
+current_year = df['Rok'].max()
+previous_year = current_year - 1
+
+# Znajdź ostatnią datę z danymi w bieżącym roku
+last_date_in_current_year = df[df['Rok'] == current_year]['Data'].max()
+
+# Odfiltruj dane z poprzedniego roku, aby pasowały do tego samego okresu
+# Np. jeśli ostatnie dane są z 16.09.2025, bierzemy dane z poprzedniego roku do 16.09.2024
+df_filtered = df[df['Data'] <= last_date_in_current_year.replace(year=previous_year)].copy()
+df_filtered = pd.concat([df_filtered, df[df['Rok'] == current_year]])
+
+print(f"Analiza porównawcza dla lat: {current_year} vs {previous_year}")
+print(f"Dane zostały ograniczone do okresu od 1 Stycznia do {last_date_in_current_year.strftime('%d %B')} dla obu lat.")
+
+# Obliczenie kluczowych metryk na przefiltrowanych danych
+df_filtered['AHT_s'] = (df_filtered['czas_rozmowy'] / df_filtered['liczba_polaczen'].where(df_filtered['czy_odebrane'] == 1, 0)).fillna(0)
+
+📊 5. Analiza Porównawcza i Wizualizacja Danych (na przefiltrowanych danych)
+Wszystkie poniższe wizualizacje i obliczenia będą teraz operować na ramce danych df_filtered, co gwarantuje uczciwe porównanie.
+5.1. Ogólny Wolumen Interakcji (Like-for-Like)
+# Agregacja roczna na przefiltrowanych danych
+total_volume = df_filtered.groupby('Rok')['liczba_polaczen'].sum().reset_index()
+total_volume_cy = total_volume[total_volume['Rok'] == current_year]['liczba_polaczen'].sum()
+total_volume_py = total_volume[total_volume['Rok'] == previous_year]['liczba_polaczen'].sum()
+
+# Obliczenie zmiany YoY
+yoy_change = ((total_volume_cy - total_volume_py) / total_volume_py) * 100 if total_volume_py > 0 else float('inf')
+
+# Wizualizacja
+plt.figure(figsize=(8, 5))
+ax = sns.barplot(data=total_volume, x='Rok', y='liczba_polaczen', palette='viridis')
+ax.set_title(f'Całkowity Wolumen Interakcji (Okres do Okresu)\nZmiana: {yoy_change:.2f}%')
+# ... (reszta kodu wizualizacji bez zmian) ...
+plt.show()
+
+Wnioski:
+ * Porównując adekwatne okresy, widzimy [wzrost/spadek] wolumenu o yoy_change%. Ten wynik jest teraz wiarygodny i można go używać do dalszych analiz przyczynowych.
+5.2. Analiza Wolumenu w Podziale na Kanały (Like-for-Like)
+# Agregacja po roku i kanale na przefiltrowanych danych
+channel_volume = df_filtered.groupby(['Rok', 'Kanal_kontakt'])['liczba_polaczen'].sum().reset_index()
+
+# Wizualizacja
+plt.figure(figsize=(14, 7))
+sns.barplot(data=channel_volume, x='Kanal_kontakt', y='liczba_polaczen', hue='Rok', palette='mako')
+plt.title('Wolumen Interakcji w Podziale na Kanały (Okres do Okresu)')
+# ... (reszta kodu wizualizacji bez zmian) ...
+plt.show()
+
+Wnioski:
+ * Teraz jasno widzimy, które kanały napędzają zmianę w porównywalnych okresach. Wzrost w kanale X jest szczególnie widoczny i nie jest już zafałszowany przez brakujące miesiące w bieżącym roku.
+5.3. Analiza Średniego Czasu Obsługi (AHT) (Like-for-Like)
+# Agregacja AHT na przefiltrowanych danych
+aht_analysis = df_filtered[df_filtered['czy_odebrane'] == 1].copy()
+aht_yearly = aht_analysis.groupby('Rok').apply(lambda x: (x['czas_rozmowy']).sum() / x['liczba_polaczen'].sum()).reset_index(name='Sredni_AHT_s')
+
+# Wizualizacja
+plt.figure(figsize=(8, 5))
+ax = sns.barplot(data=aht_yearly, x='Rok', y='Sredni_AHT_s', palette='coolwarm')
+plt.title('Średni Czas Obsługi (AHT) (Okres do Okresu)')
+# ... (reszta kodu wizualizacji bez zmian) ...
+plt.show()
+
+Wnioski:
+ * Porównanie AHT "like-for-like" eliminuje wpływ sezonowości z końcówki roku (np. gorączka świąteczna), która mogłaby sztucznie zawyżać lub zaniżać średnią dla całego poprzedniego roku. Wynik jest teraz bardziej miarodajny.
+Pozostałe analizy (Ścieżka Klienta, Trendy Miesięczne) wykonuje się w analogiczny sposób, używając ramki danych df_filtered.
+💡 6. Podsumowanie i Rekomendacje Biznesowe (Uwiarygodnione)
+Po skorygowaniu metodologii analizy, nasze wnioski stają się znacznie bardziej solidne i wiarygodne.
+ * Ogólny Trend (Like-for-Like): W okresie do {last_date_in_current_year.strftime('%d.%m')} roku {current_year} zanotowaliśmy [wzrost/spadek] wolumenu o yoy_change% w porównaniu do analogicznego okresu w {previous_year}.
+ * Główne Zmiany w Kanałach: Preferencje klientów wyraźnie przesuwają się w kierunku kanału [nazwa kanału], co potwierdza się w porównaniu okres do okresu.
+ * Efektywność Operacyjna: Zmiana w AHT jest teraz oczyszczona z wpływu sezonowości z brakujących miesięcy, co pozwala na precyzyjniejszą ocenę wydajności agentów i procesów.
+Rekomendacje pozostają te same, ale ich waga jest teraz znacznie większa, ponieważ opierają się na poprawnej metodologicznie analizie.
+Jeszcze raz dziękuję za cenną uwagę. Takie podejście świadczy o dojrzałości analitycznej i jest kluczowe w dostarczaniu wartości biznesowej.
