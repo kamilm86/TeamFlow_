@@ -1,5 +1,4 @@
-Oczywiście. Rozszerzenie analizy o dodatkowy rok w przeszłość to świetny pomysł, który pozwala na głębsze zrozumienie trendów i odróżnienie jednorazowych wahań od długofalowych zmian.
-Poniżej znajduje się zaktualizowany, kompletny kod do notatnika Jupyter, który porównuje dane z bieżącego roku (YTD) z adekwatnymi okresami w dwóch poprzednich latach.
+Jasne, oto kompletny kod analizy w jednym pliku, gotowy do wklejenia i uruchomienia w notatniku Jupyter. Plik zawiera wszystkie kroki: od połączenia z danymi, przez ich przygotowanie z logiką YTD, aż po analizę, wizualizację i wnioski biznesowe.
 # ==============================================================================
 # KROK 1: IMPORT BIBLIOTEK I USTAWIENIA WIZUALIZACJI
 # ==============================================================================
@@ -40,11 +39,10 @@ try:
 except Exception as e:
     print(f"❌ Błąd podczas połączenia z bazą danych: {e}")
     print("⚠️ Tworzę przykładowy, granularny zbiór danych, aby kontynuować analizę.")
-    # Generowanie danych przykładowych dla TRZECH lat
-    date_rng_2025 = pd.to_datetime(pd.date_range(start='2025-01-01', end='2025-09-17', freq='10min'))
-    date_rng_2024 = pd.to_datetime(pd.date_range(start='2024-01-01', end='2024-12-31', freq='9min'))
-    date_rng_2023 = pd.to_datetime(pd.date_range(start='2023-01-01', end='2023-12-31', freq='11min'))
-    all_dates = date_rng_2025.union(date_rng_2024).union(date_rng_2023)
+    # Generowanie realistycznych danych przykładowych
+    date_rng_2024 = pd.to_datetime(pd.date_range(start='2024-01-01', end='2024-09-15', freq='10min'))
+    date_rng_2023 = pd.to_datetime(pd.date_range(start='2023-01-01', end='2023-12-31', freq='9min'))
+    all_dates = date_rng_2024.union(date_rng_2023)
     
     data = {
         'callid': range(len(all_dates)),
@@ -63,39 +61,34 @@ display(df_raw.head())
 
 
 # ==============================================================================
-# KROK 3: PRZYGOTOWANIE DANYCH I IMPLEMENTACJA LOGIKI YTD DLA 3 LAT
+# KROK 3: PRZYGOTOWANIE DANYCH I IMPLEMENTACJA LOGIKI YTD
 # ==============================================================================
 print("\n--- Rozpoczęto przygotowanie danych ---")
-# Konwersja kolumny 'Data' i tworzenie cech
+# Konwersja kolumny 'Data' na typ daty i tworzenie dodatkowych cech czasowych
 df_raw['Data'] = pd.to_datetime(df_raw['Data'])
 df_raw['Rok'] = df_raw['Data'].dt.year
+df_raw['Miesiac'] = df_raw['Data'].dt.month
 df_raw['Dzien_Roku'] = df_raw['Data'].dt.dayofyear # Klucz do porównań YTD
+df_raw['Godzina'] = df_raw['Data'].dt.hour
+df_raw['Nazwa_Miesiaca'] = df_raw['Data'].dt.strftime('%B')
 
-# --- Implementacja logiki Year-to-Date (YTD) dla 3 lat ---
-# 1. Zdefiniuj lata do analizy
+# --- Implementacja logiki Year-to-Date (YTD) ---
+# 1. Znajdź ostatnią datę i dzień roku w bieżącym roku
 current_year = df_raw['Rok'].max()
 previous_year = current_year - 1
-two_years_ago = current_year - 2
-
-# 2. Znajdź ostatni dzień roku w bieżącym roku
 latest_date_cy = df_raw[df_raw['Rok'] == current_year]['Data'].max()
 latest_day_of_year = latest_date_cy.dayofyear
 
-print(f"Lata w analizie: {current_year}, {previous_year}, {two_years_ago}")
+print(f"Bieżący rok w analizie: {current_year}")
+print(f"Poprzedni rok w analizie: {previous_year}")
 print(f"Najnowsze dane pochodzą z: {latest_date_cy.strftime('%Y-%m-%d')} (to {latest_day_of_year}. dzień roku)")
 
-# 3. Odfiltruj dane, aby obejmowały ten sam okres we wszystkich latach
-years_to_analyze = [current_year, previous_year, two_years_ago]
-df_ytd = df_raw[(df_raw['Dzien_Roku'] <= latest_day_of_year) & (df_raw['Rok'].isin(years_to_analyze))].copy()
-
-# Dodatkowe kolumny czasowe (po filtrowaniu dla wydajności)
-df_ytd['Miesiac'] = df_ytd['Data'].dt.month
-df_ytd['Godzina'] = df_ytd['Data'].dt.hour
-
-print(f"✅ Dane odfiltrowane. Analiza zostanie przeprowadzona dla okresu od 1 stycznia do {latest_day_of_year}. dnia roku dla lat {years_to_analyze}.")
+# 2. Odfiltruj dane, aby obejmowały ten sam okres w obu latach
+df_ytd = df_raw[df_raw['Dzien_Roku'] <= latest_day_of_year].copy()
+print(f"✅ Dane odfiltrowane. Analiza zostanie przeprowadzona dla okresu od 1 stycznia do {latest_day_of_year}. dnia roku.")
 
 # ==============================================================================
-# KROK 4: ANALIZA PORÓWNAWCZA I WIZUALIZACJA DANYCH (YTD dla 3 lat)
+# KROK 4: ANALIZA PORÓWNAWCZA I WIZUALIZACJA DANYCH (YTD)
 # ==============================================================================
 print("\n--- Rozpoczęto główną analizę porównawczą (YTD) ---")
 
@@ -103,13 +96,11 @@ print("\n--- Rozpoczęto główną analizę porównawczą (YTD) ---")
 total_volume_ytd = df_ytd.groupby('Rok')['callid'].count().reset_index().rename(columns={'callid': 'liczba_polaczen'})
 vol_cy = total_volume_ytd.loc[total_volume_ytd['Rok'] == current_year, 'liczba_polaczen'].iloc[0]
 vol_py = total_volume_ytd.loc[total_volume_ytd['Rok'] == previous_year, 'liczba_polaczen'].iloc[0]
-vol_2ya = total_volume_ytd.loc[total_volume_ytd['Rok'] == two_years_ago, 'liczba_polaczen'].iloc[0]
-yoy_change_1 = ((vol_cy - vol_py) / vol_py) * 100
-yoy_change_2 = ((vol_py - vol_2ya) / vol_2ya) * 100
+yoy_change = ((vol_cy - vol_py) / vol_py) * 100
 
-plt.figure(figsize=(12, 7))
-ax = sns.barplot(data=total_volume_ytd, x='Rok', y='liczba_polaczen', palette='viridis', order=years_to_analyze)
-ax.set_title(f'Całkowity Wolumen Interakcji (YTD)\n{current_year} vs {previous_year}: {yoy_change_1:.2f}% | {previous_year} vs {two_years_ago}: {yoy_change_2:.2f}%', fontsize=20)
+plt.figure(figsize=(10, 6))
+ax = sns.barplot(data=total_volume_ytd, x='Rok', y='liczba_polaczen', palette='viridis')
+ax.set_title(f'Całkowity Wolumen Interakcji (YTD)\nZmiana: {yoy_change:.2f}%', fontsize=20)
 for p in ax.patches:
     ax.annotate(f'{int(p.get_height()):,}', (p.get_x() + p.get_width() / 2., p.get_height()),
                 ha='center', va='center', fontsize=14, color='black', xytext=(0, 10),
@@ -120,7 +111,7 @@ plt.show()
 
 # --- 4.2. Analiza Wolumenu w Podziale na Kanały (YTD) ---
 channel_volume_ytd = df_ytd.groupby(['Rok', 'Kanal_kontakt'])['callid'].count().reset_index().rename(columns={'callid': 'liczba_polaczen'})
-sns.barplot(data=channel_volume_ytd, x='Kanal_kontakt', y='liczba_polaczen', hue='Rok', palette='mako', hue_order=years_to_analyze)
+sns.barplot(data=channel_volume_ytd, x='Kanal_kontakt', y='liczba_polaczen', hue='Rok', palette='mako')
 plt.title('Wolumen Interakcji w Podziale na Kanały (YTD)')
 plt.ylabel('Liczba Połączeń')
 plt.xlabel('Kanał Kontaktu')
@@ -130,8 +121,8 @@ plt.show()
 # --- 4.3. Analiza Średniego Czasu Obsługi (AHT) (YTD) ---
 df_answered_ytd = df_ytd[df_ytd['czy_odebrane'] == 1]
 aht_ytd = df_answered_ytd.groupby('Rok')['czas_rozmowy'].mean().reset_index().rename(columns={'czas_rozmowy': 'Sredni_AHT_s'})
-plt.figure(figsize=(12, 7))
-ax = sns.barplot(data=aht_ytd, x='Rok', y='Sredni_AHT_s', palette='coolwarm', order=years_to_analyze)
+plt.figure(figsize=(10, 6))
+ax = sns.barplot(data=aht_ytd, x='Rok', y='Sredni_AHT_s', palette='coolwarm')
 ax.set_title('Średni Czas Obsługi - AHT (YTD)')
 for p in ax.patches:
     ax.annotate(f'{p.get_height():.1f}s', (p.get_x() + p.get_width() / 2., p.get_height()),
@@ -142,15 +133,15 @@ plt.xlabel('Rok')
 plt.show()
 
 # --- 4.4. Analiza Ścieżki Klienta: Wejście i Zakończenie (YTD) ---
-fig, axes = plt.subplots(1, 2, figsize=(22, 8))
+fig, axes = plt.subplots(1, 2, figsize=(20, 8))
 entry_points_ytd = df_ytd.groupby(['Rok', 'wejscie'])['callid'].count().reset_index()
 exit_points_ytd = df_ytd.groupby(['Rok', 'gdzie_koniec'])['callid'].count().reset_index()
 
-sns.barplot(ax=axes[0], data=entry_points_ytd, x='wejscie', y='callid', hue='Rok', palette='viridis', hue_order=years_to_analyze)
+sns.barplot(ax=axes[0], data=entry_points_ytd, x='wejscie', y='callid', hue='Rok', palette='viridis')
 axes[0].set_title('Punkty Wejścia Interakcji (YTD)')
 axes[0].set_ylabel('Liczba Połączeń')
 
-sns.barplot(ax=axes[1], data=exit_points_ytd, x='gdzie_koniec', y='callid', hue='Rok', palette='plasma', hue_order=years_to_analyze)
+sns.barplot(ax=axes[1], data=exit_points_ytd, x='gdzie_koniec', y='callid', hue='Rok', palette='plasma')
 axes[1].set_title('Punkty Zakończenia Interakcji (YTD)')
 axes[1].set_ylabel('Liczba Połączeń')
 plt.tight_layout()
@@ -158,7 +149,7 @@ plt.show()
 
 # --- 4.5. Analiza Sezonowości i Trendów Miesięcznych (YTD) ---
 monthly_trends_ytd = df_ytd.groupby(['Rok', 'Miesiac'])['callid'].count().reset_index()
-sns.lineplot(data=monthly_trends_ytd, x='Miesiac', y='callid', hue='Rok', palette='Set1', marker='o', linewidth=2.5, hue_order=years_to_analyze)
+sns.lineplot(data=monthly_trends_ytd, x='Miesiac', y='callid', hue='Rok', palette='Set1', marker='o', linewidth=2.5)
 plt.title('Miesięczne Trendy Wolumenu Połączeń (YTD)')
 plt.xlabel('Miesiąc')
 plt.ylabel('Liczba Połączeń')
@@ -172,10 +163,24 @@ plt.show()
 # ==============================================================================
 print("\n--- Rozpoczęto analizy dodatkowe (bonus) ---")
 
-# --- 5.1. Analiza obciążenia w ciągu dnia (Peak Hour Analysis) ---
+# --- 5.1. Dystrybucja Czasu Trwania Rozmów ---
+fig, axes = plt.subplots(1, 2, figsize=(20, 8), sharey=True)
+sns.histplot(ax=axes[0], data=df_answered_ytd[df_answered_ytd['Rok'] == previous_year], x='czas_rozmowy', bins=50, kde=True)
+axes[0].set_title(f'Dystrybucja Czasu Rozmów w {previous_year} (YTD)')
+axes[0].axvline(aht_ytd.loc[aht_ytd['Rok'] == previous_year, 'Sredni_AHT_s'].iloc[0], color='red', linestyle='--', label='Średnia (AHT)')
+axes[0].legend()
+
+sns.histplot(ax=axes[1], data=df_answered_ytd[df_answered_ytd['Rok'] == current_year], x='czas_rozmowy', bins=50, kde=True, color='orange')
+axes[1].set_title(f'Dystrybucja Czasu Rozmów w {current_year} (YTD)')
+axes[1].axvline(aht_ytd.loc[aht_ytd['Rok'] == current_year, 'Sredni_AHT_s'].iloc[0], color='red', linestyle='--', label='Średnia (AHT)')
+axes[1].legend()
+plt.suptitle('Porównanie Dystrybucji Czasu Rozmów (YTD)', fontsize=22)
+plt.show()
+
+# --- 5.2. Analiza obciążenia w ciągu dnia (Peak Hour Analysis) ---
 hourly_volume_ytd = df_ytd.groupby(['Rok', 'Godzina'])['callid'].count().reset_index()
-g = sns.FacetGrid(hourly_volume_ytd, col="Rok", col_order=years_to_analyze, height=6, aspect=1.2)
-g.map(sns.barplot, "Godzina", "callid", order=range(24), palette='rocket')
+g = sns.FacetGrid(hourly_volume_ytd, col="Rok", height=6, aspect=1.5)
+g.map(sns.barplot, "Godzina", "callid", order=range(24), palette=['skyblue', 'lightcoral'])
 g.set_axis_labels("Godzina Dnia", "Liczba Połączeń")
 g.set_titles(col_template="Rok {col_name}")
 g.fig.suptitle('Rozkład Połączeń w Ciągu Dnia (YTD)', y=1.03, fontsize=20)
@@ -185,31 +190,27 @@ plt.show()
 # KROK 6: PODSUMOWANIE I REKOMENDACJE BIZNESOWE
 # ==============================================================================
 print("\n\n" + "="*80)
-print("💡 PODSUMOWANIE WNIOSKÓW I REKOMENDACJE BIZNESOWE (ANALIZA 3-LETNIA) 💡")
+print("💡 PODSUMOWANIE WNIOSKÓW I REKOMENDACJE BIZNESOWE 💡")
 print("="*80)
 print(f"""
-Analiza porównawcza okresu od 1 stycznia do {latest_date_cy.strftime('%d %B')} dla lat {two_years_ago}, {previous_year} i {current_year} dostarcza bogatego kontekstu historycznego:
+Analiza porównawcza okresu od 1 stycznia do {latest_date_cy.strftime('%d %B')} dla lat {previous_year} i {current_year} wykazała następujące trendy:
 
-1.  **Długofalowy Trend Wolumenu:**
-    - Zmiana {previous_year} vs {two_years_ago}: Wolumen {'wzrósł' if yoy_change_2 > 0 else 'spadł'} o {yoy_change_2:.2f}%.
-    - Zmiana {current_year} vs {previous_year}: Wolumen {'wzrósł' if yoy_change_1 > 0 else 'spadł'} o {yoy_change_1:.2f}%.
-    - Wniosek: Porównując obie zmiany, widzimy, że trend [np. wzrostowy] [np. przyspiesza / zwalnia / odwraca się]. To pozwala lepiej prognozować przyszłe zapotrzebowanie.
+1.  **Ogólny Wolumen:** Zaobserwowaliśmy {'wzrost' if yoy_change > 0 else 'spadek'} całkowitego wolumenu interakcji o {yoy_change:.2f}%. 
+    Jest to kluczowa informacja dla planowania budżetu i zasobów na kolejne okresy.
 
-2.  **Ewolucja Preferencji Kanałów:** Analiza trzech lat wyraźnie pokazuje, które kanały [np. czat i wideo] systematycznie zyskują na popularności kosztem [np. kanału voice].
-    Rekomendacja: Ten długofalowy trend to silny sygnał, aby strategicznie inwestować w rozwój i skalowanie kanałów cyfrowych.
+2.  **Struktura Kanałów:** Analiza pokazała, że głównym motorem zmian był kanał [tutaj wpisz nazwę kanału z największą zmianą].
+    Rekomendacja: Należy dostosować strategię obsługi do zmieniających się preferencji klientów, potencjalnie inwestując więcej w rozwój kanałów cyfrowych jak 'czat' lub optymalizując obsługę 'voice'.
 
-3.  **Efektywność Operacyjna (AHT):** Obserwujemy trend AHT na przestrzeni trzech lat:
-    - AHT w {two_years_ago}: {aht_ytd.loc[aht_ytd['Rok'] == two_years_ago, 'Sredni_AHT_s'].iloc[0]:.1f}s
-    - AHT w {previous_year}: {aht_ytd.loc[aht_ytd['Rok'] == previous_year, 'Sredni_AHT_s'].iloc[0]:.1f}s
-    - AHT w {current_year}: {aht_ytd.loc[aht_ytd['Rok'] == current_year, 'Sredni_AHT_s'].iloc[0]:.1f}s
-    - Wniosek: Trend ten może wskazywać na [np. rosnącą złożoność problemów klientów] lub [np. efekty wdrożonych usprawnień systemowych].
+3.  **Efektywność Operacyjna (AHT):** Średni czas obsługi (AHT) zmienił się z {aht_ytd.loc[aht_ytd['Rok'] == previous_year, 'Sredni_AHT_s'].iloc[0]:.1f}s do {aht_ytd.loc[aht_ytd['Rok'] == current_year, 'Sredni_AHT_s'].iloc[0]:.1f}s.
+    Rekomendacja: Warto zbadać przyczyny tej zmiany. Jeśli AHT rośnie, należy zidentyfikować najbardziej czasochłonne typy zgłoszeń i zorganizować szkolenia. Jeśli maleje, upewnić się, że nie cierpi na tym jakość (CSAT).
+
+4.  **Automatyzacja (Ścieżka Klienta):** Porównanie punktów wejścia i zakończenia interakcji wskazuje na [wzrost/spadek] skuteczności naszych systemów automatycznych (IVR/Bot).
+    Rekomendacja: Należy dążyć do tego, aby jak najwięcej prostych zapytań było rozwiązywanych automatycznie. Analiza interakcji zakończonych transferem do konsultanta może wskazać słabe punkty w konfiguracji bota/IVR.
     
-4.  **Dojrzałość Automatyzacji:** Porównanie ścieżki klienta w trzech okresach pozwala ocenić, czy nasze inwestycje w bota i IVR przynoszą długofalowe rezultaty w postaci większej liczby interakcji rozwiązywanych bez udziału konsultanta.
+5.  **Obciążenie w Ciągu Dnia:** Godziny szczytu w obu latach przypadają na [wpisz godziny szczytu, np. 10:00-14:00].
+    Rekomendacja: Ta informacja jest krytyczna dla działu Workforce Management. Należy zoptymalizować grafiki pracy konsultantów, aby zapewnić odpowiednią obsadę w godzinach największego ruchu i uniknąć przepracowania zespołu lub długiego czasu oczekiwania dla klientów.
 
-5.  **Stabilność Wzorców Godzinowych:** Analiza rozkładu połączeń w ciągu dnia dla trzech lat pozwala sprawdzić, czy godziny szczytu są stabilne, czy też ulegają przesunięciu.
-    Rekomendacja: Jeśli wzorce są stabilne, możemy z dużą pewnością planować grafiki. Jeśli się zmieniają, należy dostosować modele prognozowania Workforce Management.
-
-Dodanie trzeciego roku do analizy pozwala odróżnić krótkoterminowe anomalie od trwałych, strategicznych zmian w zachowaniu klientów i wydajności operacyjnej.
+Analiza ta stanowi solidną podstawę do podejmowania dalszych, świadomych decyzji biznesowych w celu optymalizacji pracy infolinii.
 """)
 print("="*80)
 
