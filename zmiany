@@ -99,17 +99,34 @@ print(f"✅ Dane odfiltrowane. Analiza zostanie przeprowadzona dla okresu od 1 s
 # ==============================================================================
 print("\n--- Rozpoczęto główną analizę porównawczą (YTD) ---")
 
-# --- 4.1. Ogólny Wolumen Interakcji (YTD) ---
-total_volume_ytd = df_ytd.groupby('Rok')['callid'].count().reset_index().rename(columns={'callid': 'liczba_polaczen'})
-vol_cy = total_volume_ytd.loc[total_volume_ytd['Rok'] == current_year, 'liczba_polaczen'].iloc[0]
-vol_py = total_volume_ytd.loc[total_volume_ytd['Rok'] == previous_year, 'liczba_polaczen'].iloc[0]
-vol_2ya = total_volume_ytd.loc[total_volume_ytd['Rok'] == two_years_ago, 'liczba_polaczen'].iloc[0]
-yoy_change_1 = ((vol_cy - vol_py) / vol_py) * 100
-yoy_change_2 = ((vol_py - vol_2ya) / vol_2ya) * 100
+# --- 4.1. Ogólny Wolumen Interakcji (YTD) --- [WERSJA POPRAWIONA]
 
+# Agregacja pozostaje bez zmian
+total_volume_ytd = df_ytd.groupby('Rok')['callid'].count().reset_index().rename(columns={'callid': 'liczba_polaczen'})
+
+# --- BEZPIECZNE POBIERANIE DANYCH ---
+# Tworzymy słownik z wynikami, np. {2025: 15000, 2024: 12000}
+volume_dict = pd.Series(total_volume_ytd.liczba_polaczen.values, index=total_volume_ytd.Rok).to_dict()
+
+# Używamy metody .get(rok, 0), która zwróci 0, jeśli dany rok nie istnieje w słowniku
+vol_cy = volume_dict.get(current_year, 0)
+vol_py = volume_dict.get(previous_year, 0)
+vol_2ya = volume_dict.get(two_years_ago, 0)
+
+# --- BEZPIECZNE OBLICZANIE PROCENTÓW (unikamy dzielenia przez zero) ---
+yoy_change_1 = ((vol_cy - vol_py) / vol_py) * 100 if vol_py > 0 else float('inf')
+yoy_change_2 = ((vol_py - vol_2ya) / vol_2ya) * 100 if vol_2ya > 0 else float('inf')
+
+# Wizualizacja
 plt.figure(figsize=(12, 7))
 ax = sns.barplot(data=total_volume_ytd, x='Rok', y='liczba_polaczen', palette='viridis', order=years_to_analyze)
-ax.set_title(f'Całkowity Wolumen Interakcji (YTD)\n{current_year} vs {previous_year}: {yoy_change_1:.2f}% | {previous_year} vs {two_years_ago}: {yoy_change_2:.2f}%', fontsize=20)
+
+# Tworzymy dynamiczny tytuł, który pokaże zmiany tylko jeśli miały sens
+title_cy_vs_py = f'{current_year} vs {previous_year}: {yoy_change_1:.2f}%' if vol_py > 0 else f'{current_year} vs {previous_year}: Brak danych z {previous_year}'
+title_py_vs_2ya = f'{previous_year} vs {two_years_ago}: {yoy_change_2:.2f}%' if vol_2ya > 0 else f'{previous_year} vs {two_years_ago}: Brak danych z {two_years_ago}'
+
+ax.set_title(f'Całkowity Wolumen Interakcji (YTD)\n{title_cy_vs_py} | {title_py_vs_2ya}', fontsize=18)
+
 for p in ax.patches:
     ax.annotate(f'{int(p.get_height()):,}', (p.get_x() + p.get_width() / 2., p.get_height()),
                 ha='center', va='center', fontsize=14, color='black', xytext=(0, 10),
@@ -117,6 +134,8 @@ for p in ax.patches:
 plt.ylabel('Liczba Połączeń')
 plt.xlabel('Rok')
 plt.show()
+
+
 
 # --- 4.2. Analiza Wolumenu w Podziale na Kanały (YTD) ---
 channel_volume_ytd = df_ytd.groupby(['Rok', 'Kanal_kontakt'])['callid'].count().reset_index().rename(columns={'callid': 'liczba_polaczen'})
