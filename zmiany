@@ -1,135 +1,161 @@
-Doskonała uwaga! Masz absolutną rację. Porównywanie niepełnego bieżącego roku do całego poprzedniego jest błędem metodologicznym, który może prowadzić do całkowicie błędnych wniosków. Jako analityk powinienem był to od razu zasygnalizować. Dziękuję za zwrócenie na to uwagi.
-Poniżej przedstawiam poprawioną wersję analizy, która uwzględnia porównanie "okres do adekwatnego okresu" (like-for-like). To standardowa i jedyna słuszna praktyka w takich przypadkach.
-Analiza Porównawcza Połączeń z Infolinią YoY (Like-for-Like)
+Doskonale, to bardzo ważna i częsta sytuacja w analizie danych! Praca na danych surowych (per połączenie) daje nam znacznie większe możliwości. Porównanie niepełnego roku do adekwatnego okresu w przeszłości to standard "best practice".
+Przygotowałem zaktualizowaną wersję notatnika, która uwzględnia nową strukturę danych i logikę porównawczą "rok do dziś" (Year-to-Date, YTD).
+Analiza Porównawcza Połączeń z Infolinią - Wersja YTD (Year-to-Date)
 Data: 16 września 2025
 Autor: Gemini - Analityk Danych
-Wersja: 2.0 (Skorygowana o porównanie adekwatnych okresów)
-🎯 1. Cel Analizy (bez zmian)
-Głównym celem tej analizy jest przeprowadzenie szczegółowego porównania rocznego (Year-over-Year) kluczowych wskaźników wydajności (KPI) infolinii w adekwatnych, porównywalnych okresach. Skupimy się na zrozumieniu zmian w wolumenie, efektywności i charakterystyce interakcji klientów. Analiza ma dostarczyć actionable insights, które pomogą w optymalizacji procesów, alokacji zasobów i planowaniu strategicznym.
-🤔 2. Założenia i Dodatkowe Pytania (bez zmian)
- * Kluczowe założenie: Posiadamy kolumnę liczba_polaczen. Bez niej analiza wskaźników (jak AHT) nie jest możliwa.
- * Potencjał na przyszłość: Warto wzbogacić dane o wskaźniki jakościowe (CSAT/NPS), FCR (First Contact Resolution) oraz koszty obsługi.
-🐍 3. Przygotowanie Środowiska i Wczytanie Danych (bez zmian)
+🎯 1. Cel Analizy (Bez Zmian)
+Głównym celem tej analizy jest przeprowadzenie szczegółowego porównania rocznego (Year-over-Year) kluczowych wskaźników wydajności (KPI) infolinii dla porównywalnych okresów. Skupimy się na zrozumieniu zmian w wolumenie, efektywności i charakterystyce interakcji klientów.
+🤔 2. Założenia i Dane
+Kluczowa zmiana: Pracujemy na danych granularnych, gdzie każdy wiersz to jedna, unikalna interakcja identyfikowana przez callid. Tabela nie jest już pogrupowana.
+Struktura danych:
+ * callid: Unikalny identyfikator każdej interakcji.
+ * Data: Data interakcji (zakładam, że zawiera również czas, jeśli nie, analiza godzinowa będzie niemożliwa).
+ * Pozostałe kolumny bez zmian: Kanal_kontakt, Typ_interakcji, czy_odebrane, wejscie, gdzie_koniec, czas_rozmowy.
+Logika porównawcza:
+Analiza będzie porównywać okres od początku roku do ostatniej dostępnej daty w bieżącym roku z dokładnie tym samym okresem w roku poprzednim. Na przykład, jeśli najnowsze dane są z 15 września 2024, porównamy okres 01.01.2024 - 15.09.2024 z 01.01.2023 - 15.09.2023.
+🐍 3. Przygotowanie Środowiska i Wczytanie Danych
+Kod do połączenia pozostaje ten sam, ale tworzę nowy, bardziej realistyczny przykład danych.
 # Import bibliotek
 import pandas as pd
 import sqlalchemy as sa
 import matplotlib.pyplot as plt
 import seaborn as sns
+import numpy as np # Dodajemy numpy do obliczeń
 
 # Ustawienia wizualizacji
 sns.set_theme(style="whitegrid")
 plt.rcParams['figure.figsize'] = (12, 6)
-plt.rcParams['axes.titlesize'] = 16
-plt.rcParams['axes.labelsize'] = 12
 
 # --- Ładowanie danych z MS SQL Server ---
 # Wypełnij poniższe zmienne swoimi danymi dostępowymi
 server_name = "TWOJ_SERWER"
 database_name = "TWOJA_BAZA_DANYCH"
-table_name = "NAZWA_TWOJEJ_TABELI"
-connection_string = f"mssql+pyodbc://{server_name}/{database_name}?driver=ODBC+Driver+17+for+SQL+Server&trusted_connection=yes"
+table_name = "NAZWA_TWOJEJ_TABELI_RAW"
 
 try:
-    engine = sa.create_engine(connection_string)
+    # ... (kod połączenia taki sam jak poprzednio) ...
     query = f"SELECT * FROM {table_name}"
-    df = pd.read_sql(query, engine)
-    print("✅ Pomyślnie połączono i wczytano dane.")
+    df_raw = pd.read_sql(query, engine)
+    print("✅ Pomyślnie wczytano dane granularne.")
 
 except Exception as e:
-    print(f"❌ Błąd podczas połączenia z bazą danych: {e}")
-    # W przypadku błędu, tworzę przykładową ramkę danych, aby kontynuować analizę
-    data = {'Data': pd.to_datetime(['2023-01-05', '2023-01-05', '2024-01-06', '2024-01-06', '2023-02-10', '2024-02-11', '2023-08-15', '2024-08-16']),
-            'Kanal_kontakt': ['voice', 'czat', 'voice', 'czat', 'voice', 'wideo', 'voice', 'voice'],
-            'Typ_interakcji': ['telefon', 'aplikacja mobilna', 'telefon', 'aplikacja mobilna', 'telefon', 'aplikacja desktopowa', 'telefon', 'telefon'],
-            'czy_odebrane': [1, 1, 1, 0, 1, 1, 1, 1],
-            'wejscie': ['ivr', 'bot', 'ivr', 'bot', 'ivr', 'vendor', 'ivr', 'ivr'],
-            'gdzie_koniec': ['konsultant', 'konsultant', 'konsultant', 'bot', 'transfer', 'konsultant', 'konsultant', 'konsultant'],
-            'czas_rozmowy': [18000, 5400, 22000, 0, 15000, 7200, 25000, 28000],
-            'liczba_polaczen': [100, 60, 110, 50, 90, 30, 150, 160]}
-    df = pd.DataFrame(data)
-    print("⚠️ Utworzono przykładowy zbiór danych do dalszej analizy.")
+    print(f"❌ Błąd: {e}")
+    # Nowy, przykładowy zbiór danych granularnych
+    data = {'callid': range(1000),
+            'Data': pd.to_datetime(pd.date_range(start='2023-01-01', periods=500, freq='D').tolist() + 
+                                   pd.date_range(start='2024-01-01', periods=500, freq='D').tolist()),
+            'Kanal_kontakt': np.random.choice(['voice', 'czat', 'wideo'], 1000),
+            'czy_odebrane': np.random.choice([1, 0], 1000, p=[0.8, 0.2]),
+            'wejscie': np.random.choice(['ivr', 'bot', 'vendor'], 1000),
+            'gdzie_koniec': np.random.choice(['konsultant', 'bot', 'transfer'], 1000),
+            'czas_rozmowy': np.random.randint(30, 600, 1000)}
+    df_raw = pd.DataFrame(data)
+    # Ustawiamy niektóre czasy na 0 dla nieodebranych
+    df_raw.loc[df_raw['czy_odebrane'] == 0, 'czas_rozmowy'] = 0
+    print("⚠️ Utworzono przykładowy, granularny zbiór danych.")
+    
+display(df_raw.head())
 
-display(df.head())
+🛠️ 4. Przygotowanie Danych (Logika YTD)
+To jest kluczowy, nowy krok. Tworzymy porównywalne zbiory danych.
+# Konwersja kolumny 'Data' i tworzenie cech
+df_raw['Data'] = pd.to_datetime(df_raw['Data'])
+df_raw['Rok'] = df_raw['Data'].dt.year
+df_raw['Miesiac'] = df_raw['Data'].dt.month
+df_raw['Dzien_Roku'] = df_raw['Data'].dt.dayofyear # Dzień roku (1-366) jest idealny do porównań YTD
 
-🛠️ 4. Przygotowanie Danych (Data Preprocessing & Feature Engineering) - ZMIANA KLUCZOWA
-W tej sekcji wprowadzamy logikę, która zapewni, że porównujemy te same okresy.
-# Konwersja kolumny 'Data' na typ daty
-df['Data'] = pd.to_datetime(df['Data'])
+# --- Implementacja logiki Year-to-Date (YTD) ---
 
-# Inżynieria cech - wyciągnięcie roku, miesiąca etc.
-df['Rok'] = df['Data'].dt.year
-df['Miesiac'] = df['Data'].dt.month
+# 1. Znajdź ostatnią datę w bieżącym roku
+current_year = df_raw['Rok'].max()
+latest_date_cy = df_raw[df_raw['Rok'] == current_year]['Data'].max()
+latest_day_of_year = latest_date_cy.dayofyear
 
-# --- NOWA LOGIKA: DEFINICJA PORÓWNYWALNEGO OKRESU ---
-current_year = df['Rok'].max()
-previous_year = current_year - 1
+print(f"Najnowsze dane pochodzą z: {latest_date_cy.strftime('%Y-%m-%d')}")
+print(f"Analiza zostanie przeprowadzona do {latest_day_of_year}. dnia roku.")
 
-# Znajdź ostatnią datę z danymi w bieżącym roku
-last_date_in_current_year = df[df['Rok'] == current_year]['Data'].max()
+# 2. Odfiltruj dane z obu lat, aby obejmowały ten sam okres
+df_ytd = df_raw[df_raw['Dzien_Roku'] <= latest_day_of_year].copy()
 
-# Odfiltruj dane z poprzedniego roku, aby pasowały do tego samego okresu
-# Np. jeśli ostatnie dane są z 16.09.2025, bierzemy dane z poprzedniego roku do 16.09.2024
-df_filtered = df[df['Data'] <= last_date_in_current_year.replace(year=previous_year)].copy()
-df_filtered = pd.concat([df_filtered, df[df['Rok'] == current_year]])
+# 3. Sprawdzenie
+print("\nZakres dat w analizowanym zbiorze:")
+print(f"Bieżący rok: {df_ytd[df_ytd['Rok'] == current_year]['Data'].min().date()} - {df_ytd[df_ytd['Rok'] == current_year]['Data'].max().date()}")
+print(f"Poprzedni rok: {df_ytd[df_ytd['Rok'] == current_year-1]['Data'].min().date()} - {df_ytd[df_ytd['Rok'] == current_year-1]['Data'].max().date()}")
 
-print(f"Analiza porównawcza dla lat: {current_year} vs {previous_year}")
-print(f"Dane zostały ograniczone do okresu od 1 Stycznia do {last_date_in_current_year.strftime('%d %B')} dla obu lat.")
 
-# Obliczenie kluczowych metryk na przefiltrowanych danych
-df_filtered['AHT_s'] = (df_filtered['czas_rozmowy'] / df_filtered['liczba_polaczen'].where(df_filtered['czy_odebrane'] == 1, 0)).fillna(0)
+📊 5. Analiza Porównawcza i Wizualizacja Danych (YTD)
+Wszystkie poniższe analizy używają już przefiltrowanego zbioru df_ytd.
+5.1. Ogólny Wolumen Interakcji (YTD)
+# Agregacja YTD - liczymy callid
+total_volume_ytd = df_ytd.groupby('Rok')['callid'].count().reset_index().rename(columns={'callid': 'liczba_polaczen'})
 
-📊 5. Analiza Porównawcza i Wizualizacja Danych (na przefiltrowanych danych)
-Wszystkie poniższe wizualizacje i obliczenia będą teraz operować na ramce danych df_filtered, co gwarantuje uczciwe porównanie.
-5.1. Ogólny Wolumen Interakcji (Like-for-Like)
-# Agregacja roczna na przefiltrowanych danych
-total_volume = df_filtered.groupby('Rok')['liczba_polaczen'].sum().reset_index()
-total_volume_cy = total_volume[total_volume['Rok'] == current_year]['liczba_polaczen'].sum()
-total_volume_py = total_volume[total_volume['Rok'] == previous_year]['liczba_polaczen'].sum()
+# Obliczenia i wizualizacja (kod wizualizacji pozostaje bardzo podobny)
+# ... (użyj kodu z poprzedniej odpowiedzi, ale na ramce total_volume_ytd) ...
+# Pamiętaj o zmianie tytułu na 'Całkowity Wolumen Interakcji (YTD)'
 
-# Obliczenie zmiany YoY
-yoy_change = ((total_volume_cy - total_volume_py) / total_volume_py) * 100 if total_volume_py > 0 else float('inf')
+Wnioski (YTD):
+ * Porównując adekwatne okresy, widzimy [wzrost/spadek] wolumenu. Dzięki temu podejściu eliminujemy wpływ sezonowości z pozostałej części roku, dając bardziej rzetelny obraz sytuacji.
+5.2. Analiza Wolumenu w Podziale na Kanały (YTD)
+# Agregacja YTD po kanałach
+channel_volume_ytd = df_ytd.groupby(['Rok', 'Kanal_kontakt'])['callid'].count().reset_index().rename(columns={'callid': 'liczba_polaczen'})
 
-# Wizualizacja
-plt.figure(figsize=(8, 5))
-ax = sns.barplot(data=total_volume, x='Rok', y='liczba_polaczen', palette='viridis')
-ax.set_title(f'Całkowity Wolumen Interakcji (Okres do Okresu)\nZmiana: {yoy_change:.2f}%')
-# ... (reszta kodu wizualizacji bez zmian) ...
-plt.show()
+# Wizualizacja (kod podobny, zmień tytuł na '... (YTD)')
+# ...
 
-Wnioski:
- * Porównując adekwatne okresy, widzimy [wzrost/spadek] wolumenu o yoy_change%. Ten wynik jest teraz wiarygodny i można go używać do dalszych analiz przyczynowych.
-5.2. Analiza Wolumenu w Podziale na Kanały (Like-for-Like)
-# Agregacja po roku i kanale na przefiltrowanych danych
-channel_volume = df_filtered.groupby(['Rok', 'Kanal_kontakt'])['liczba_polaczen'].sum().reset_index()
+Wnioski (YTD):
+ * Analiza YTD potwierdza/zmienia obraz z analizy całorocznej. Być może wzrost na kanale czat nastąpił dopiero w drugiej połowie poprzedniego roku, a porównanie YTD pokazuje bardziej wyrównany poziom.
+5.3. Analiza Średniego Czasu Obsługi (AHT) (YTD)
+Teraz AHT liczymy jako prostą średnią z czas_rozmowy dla połączeń odebranych.
+# Filtrujemy tylko odebrane połączenia
+df_answered_ytd = df_ytd[df_ytd['czy_odebrane'] == 1]
 
-# Wizualizacja
+# Agregacja YTD AHT
+aht_ytd = df_answered_ytd.groupby('Rok')['czas_rozmowy'].mean().reset_index().rename(columns={'czas_rozmowy': 'Sredni_AHT_s'})
+
+# Wizualizacja (kod podobny, zmień tytuł na '... (YTD)')
+# ...
+
+Wnioski (YTD):
+ * Analiza AHT w okresach porównywalnych jest kluczowa. Być może w poprzednim roku pod koniec roku mieliśmy serię trudnych zgłoszeń, które zawyżyły średnią roczną, a analiza YTD pokazuje, że nasza efektywność faktycznie się poprawiła.
+(Pozostałe analizy 5.4 i 5.5 wykonuje się analogicznie, zawsze grupując dane z df_ytd i licząc callid za pomocą .count())
+💎 6. Głębsza Analiza Dzięki Danym Granularnym (Bonus)
+Praca na surowych danych otwiera drzwi do analiz, które wcześniej były niemożliwe.
+6.1. Dystrybucja Czasu Trwania Rozmów
+Średnia (AHT) to nie wszystko. Czy większość rozmów jest krótka, a kilka ekstremalnie długich zawyża średnią?
 plt.figure(figsize=(14, 7))
-sns.barplot(data=channel_volume, x='Kanal_kontakt', y='liczba_polaczen', hue='Rok', palette='mako')
-plt.title('Wolumen Interakcji w Podziale na Kanały (Okres do Okresu)')
-# ... (reszta kodu wizualizacji bez zmian) ...
+# Używamy danych z bieżącego roku jako przykład
+sns.histplot(data=df_answered_ytd[df_answered_ytd['Rok'] == current_year], x='czas_rozmowy', bins=50, kde=True)
+plt.title(f'Dystrybucja Czasu Trwania Rozmów (Histogram) w {current_year} (YTD)')
+plt.xlabel('Czas rozmowy (sekundy)')
+plt.ylabel('Liczba połączeń')
+plt.axvline(df_answered_ytd[df_answered_ytd['Rok'] == current_year]['czas_rozmowy'].mean(), color='red', linestyle='--', label='Średnia (AHT)')
+plt.legend()
 plt.show()
 
 Wnioski:
- * Teraz jasno widzimy, które kanały napędzają zmianę w porównywalnych okresach. Wzrost w kanale X jest szczególnie widoczny i nie jest już zafałszowany przez brakujące miesiące w bieżącym roku.
-5.3. Analiza Średniego Czasu Obsługi (AHT) (Like-for-Like)
-# Agregacja AHT na przefiltrowanych danych
-aht_analysis = df_filtered[df_filtered['czy_odebrane'] == 1].copy()
-aht_yearly = aht_analysis.groupby('Rok').apply(lambda x: (x['czas_rozmowy']).sum() / x['liczba_polaczen'].sum()).reset_index(name='Sredni_AHT_s')
+ * Histogram pokazuje faktyczny rozkład czasów rozmów. Jeśli jest on prawostronnie skośny (co jest typowe), oznacza to, że większość rozmów jest krótsza niż średnia, ale mamy "ogon" bardzo długich rozmów.
+ * Rekomendacja: Zamiast skupiać się tylko na obniżaniu średniej, warto zidentyfikować te najdłuższe rozmowy (callid z top 5% czas_rozmowy) i zbadać ich przyczyny. Być może są to złożone problemy techniczne lub nowi agenci, którzy potrzebują wsparcia.
+6.2. Analiza obciążenia w ciągu dnia (Peak Hour Analysis)
+Jeśli kolumna Data zawiera czas, możemy sprawdzić, o której godzinie mamy najwięcej połączeń.
+# Wzbogacenie danych o godzinę
+df_ytd['Godzina'] = df_ytd['Data'].dt.hour
 
-# Wizualizacja
-plt.figure(figsize=(8, 5))
-ax = sns.barplot(data=aht_yearly, x='Rok', y='Sredni_AHT_s', palette='coolwarm')
-plt.title('Średni Czas Obsługi (AHT) (Okres do Okresu)')
-# ... (reszta kodu wizualizacji bez zmian) ...
+# Agregacja godzinowa dla bieżącego roku
+hourly_volume = df_ytd[df_ytd['Rok'] == current_year].groupby('Godzina')['callid'].count().reset_index()
+
+plt.figure(figsize=(14, 7))
+sns.barplot(data=hourly_volume, x='Godzina', y='callid', color='skyblue')
+plt.title(f'Rozkład Połączeń w Ciągu Dnia w {current_year} (YTD)')
+plt.xlabel('Godzina Dnia')
+plt.ylabel('Liczba Połączeń')
 plt.show()
 
 Wnioski:
- * Porównanie AHT "like-for-like" eliminuje wpływ sezonowości z końcówki roku (np. gorączka świąteczna), która mogłaby sztucznie zawyżać lub zaniżać średnią dla całego poprzedniego roku. Wynik jest teraz bardziej miarodajny.
-Pozostałe analizy (Ścieżka Klienta, Trendy Miesięczne) wykonuje się w analogiczny sposób, używając ramki danych df_filtered.
-💡 6. Podsumowanie i Rekomendacje Biznesowe (Uwiarygodnione)
-Po skorygowaniu metodologii analizy, nasze wnioski stają się znacznie bardziej solidne i wiarygodne.
- * Ogólny Trend (Like-for-Like): W okresie do {last_date_in_current_year.strftime('%d.%m')} roku {current_year} zanotowaliśmy [wzrost/spadek] wolumenu o yoy_change% w porównaniu do analogicznego okresu w {previous_year}.
- * Główne Zmiany w Kanałach: Preferencje klientów wyraźnie przesuwają się w kierunku kanału [nazwa kanału], co potwierdza się w porównaniu okres do okresu.
- * Efektywność Operacyjna: Zmiana w AHT jest teraz oczyszczona z wpływu sezonowości z brakujących miesięcy, co pozwala na precyzyjniejszą ocenę wydajności agentów i procesów.
-Rekomendacje pozostają te same, ale ich waga jest teraz znacznie większa, ponieważ opierają się na poprawnej metodologicznie analizie.
-Jeszcze raz dziękuję za cenną uwagę. Takie podejście świadczy o dojrzałości analitycznej i jest kluczowe w dostarczaniu wartości biznesowej.
+ * Ten wykres jest absolutnie kluczowy dla Workforce Managementu. Pozwala zidentyfikować godziny szczytu (np. 10:00-12:00) oraz okresy mniejszego ruchu.
+ * Rekomendacja: Dopasować grafiki konsultantów do faktycznego obciążenia. W godzinach szczytu zapewnić pełną obsadę, a w godzinach o mniejszym ruchu zaplanować czas na szkolenia, spotkania czy odpisywanie na maile.
+💡 7. Podsumowanie i Rekomendacje (Wersja YTD)
+Ta zaktualizowana analiza, oparta na danych granularnych i porównaniu YTD, daje znacznie dokładniejszy i bardziej wiarygodny obraz sytuacji.
+Kluczowe zmiany w stosunku do poprzedniej analizy:
+ * Wiarygodność: Porównujemy te same, adekwatne okresy, co eliminuje błędy wynikające z sezonowości w późniejszych miesiącach.
+ * Głębia: Analiza dystrybucji AHT i obciążenia godzinowego dostarcza nowych, praktycznych wniosków, które były niemożliwe do uzyskania na danych zagregowanych.
+Rekomendacje z poprzedniej analizy pozostają w mocy, ale teraz są poparte solidniejszymi danymi i wzbogacone o nowe, bardziej szczegółowe sugestie dotyczące zarządzania najdłuższymi rozmowami i planowania grafików pracy.
