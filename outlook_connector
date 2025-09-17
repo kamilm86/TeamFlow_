@@ -15,8 +15,10 @@ def _get_outlook_instance():
             return None
 
 
-def create_outlook_email(recipients: list, subject: str, body: str, send_individually: bool = False):
-    """Tworzy nową wiadomość e-mail w Outlook, używając Numerów Kadrowych."""
+def create_outlook_email(recipients: list, subject: str = "", body: str = "", send_individually: bool = False):
+    """
+    Tworzy i wyświetla nową wiadomość e-mail w Outlook, zachowując domyślną stopkę.
+    """
     if not recipients:
         return False, "Brak zdefiniowanych odbiorców."
 
@@ -27,23 +29,23 @@ def create_outlook_email(recipients: list, subject: str, body: str, send_individ
     try:
         mail = outlook.CreateItem(0)
 
-        if send_individually:
-            for recipient_id in recipients:
-                mail.Recipients.Add(recipient_id)
-            mail.Recipients.ResolveAll()
-            # W trybie indywidualnym czyścimy pole "Do", bo Outlook doda tam adresy po rozwiązaniu UDW
-            mail.To = ""
-            # Ustawiamy adresy w polu UDW (BCC)
-            resolved_recipients = [rec.AddressEntry.GetExchangeUser().PrimarySmtpAddress for rec in mail.Recipients if
-                                   rec.Resolved]
-            mail.BCC = "; ".join(resolved_recipients)
+        # Pobierz domyślną stopkę (Outlook wstawia ją automatycznie do pustej wiadomości)
+        original_body = mail.HTMLBody
 
+        # Ustaw odbiorców
+        if send_individually:
+            mail.BCC = "; ".join(recipients)
         else:
             mail.To = "; ".join(recipients)
 
         mail.Subject = subject
-        mail.HTMLBody = body
-        mail.Display(True)
+
+        # Wstaw nową treść PRZED istniejącą stopką.
+        # Jeśli `body` jest puste, w wiadomości zostanie tylko stopka.
+        mail.HTMLBody = body + original_body
+
+        mail.Display(True)  # Pokaż okno użytkownikowi
+
         return True, "OK"
     except Exception as e:
         log_error(f"Nie udało się stworzyć wiadomości e-mail w Outlook: {e}", exception=e)
