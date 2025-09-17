@@ -33,7 +33,6 @@ from schedule_edit_dialogs import ScheduleChangeDialog, ReasonDialog, OvertimeLo
 from events_delegates import ButtonDelegate
 from debug_utils import debug_print, log_warning, log_error, setup_logging, close_log_file
 from symbol_parser import parse_symbol, build_symbol, get_symbol_description
-from email_dialog import EmailDialog
 from outlook_connector import create_outlook_email, create_email_from_template
 
 
@@ -1069,8 +1068,8 @@ class WorkScheduleWindow(QMainWindow):
 
         self.send_email_button = QPushButton("Wyślij e-mail")
         self.send_email_button.setToolTip("Wyślij wiadomość e-mail do zaznaczonych pracowników")
-        self.send_email_button.clicked.connect(self.show_email_dialog)
-        self.send_email_button.setEnabled(False)  # Domyślnie wyłączony
+        self.send_email_button.clicked.connect(self.send_email_to_selection)
+        self.send_email_button.setEnabled(False)
         top_bar_layout.addWidget(self.send_email_button)
 
         top_bar_layout.addStretch()
@@ -5058,55 +5057,34 @@ class WorkScheduleWindow(QMainWindow):
         # Wymuś odświeżenie z nowymi filtrami
         self.filter_events_table()
 
-    def show_email_dialog(self):
-        """Zbiera dane zaznaczonych pracowników i otwiera dialog do wysyłki e-mail."""
-        selected_cells = self.get_selected_cells_data()
-        if not selected_cells:
+    def send_email_to_selection(self):
+        """Zbiera dane zaznaczonych pracowników i otwiera okno nowej wiadomości w Outlook."""
+        if not self.table or not self.table.employees_view.selectionModel():
+            return
+
+        selected_rows = self.table.get_selected_rows()
+        if not selected_rows:
             QMessageBox.warning(self, "Brak zaznaczenia", "Proszę zaznaczyć przynajmniej jednego pracownika.")
             return
 
         recipients = []
-        processed_ids = set()
-        for cell_data in selected_cells:
-            user_id = cell_data.get('uzytkownik_id')
-            nr_kadrowy = cell_data.get('nr_kadrowy', '').strip()
-            name = cell_data.get('uzytkownik_dane')
-
-            if user_id not in processed_ids and nr_kadrowy:
-                recipients.append({'name': name, 'id': nr_kadrowy})
-                processed_ids.add(user_id)
+        for row_index in selected_rows:
+            key = self.schedule_model._keys[row_index]
+            full_user_data = self.processed_data.get(key, {})
+            login_windows = full_user_data.get('login_windows', '').strip()
+            if login_windows:
+                recipients.append(login_windows)
 
         if not recipients:
             QMessageBox.warning(self, "Brak danych",
-                                "Żaden z zaznaczonych pracowników nie ma przypisanego numeru kadrowego.")
+                                "Żaden z zaznaczonych pracowników nie ma przypisanego loginu Windows.")
             return
 
-        template_path = self.user_settings.get('outlook_template_path', '')
+        # Wywołaj funkcję z outlook_connector z pustym tematem i treścią
+        success, message = create_outlook_email(recipients=recipients)
 
-        dialog = EmailDialog(self, recipients, template_path)
-        if dialog.exec() == QDialog.Accepted:
-            email_details = dialog.get_email_details()
-
-            if email_details['template_path']:
-                # Użyj szablonu
-                success, message = create_email_from_template(
-                    template_path=email_details['template_path'],
-                    recipients=email_details['recipients'],
-                    send_individually=email_details['send_individually']
-                )
-            else:
-                # Użyj standardowej wiadomości
-                success, message = create_outlook_email(
-                    recipients=email_details['recipients'],
-                    subject=email_details['subject'],
-                    body=email_details['body'],
-                    send_individually=email_details['send_individually']
-                )
-
-            if success:
-                self.statusBar().showMessage("Pomyślnie utworzono wiadomość w programie Outlook.", 4000)
-            else:
-                QMessageBox.critical(self, "Błąd Outlook", message)
+        if not success:
+            QMessageBox.critical(self, "Błąd Outlook", message)
 
     def standardize_date(self, date_obj):
         """
@@ -5359,7 +5337,7 @@ class WorkScheduleWindow(QMainWindow):
 
         return cells_data_to_return
 
-    def cancel_delegations(self):
+    def cancel_delegations(self, ask_for_confirmation: bool = True):
         debug_print("\\n=== ROZPOCZYNAM OPERACJĘ ODWOŁYWANIA DELEGACJI ===")
 
         current_data = self.date_combo.currentData()
@@ -5391,63 +5369,53 @@ class WorkScheduleWindow(QMainWindow):
                                     "Nie znaleziono delegacji do odwołania dla zaznaczonych komórek.", QMessageBox.Ok)
             return
 
-        grouped_events = self._group_events_by_user_date(events_to_cancel)
-        delegations_info = self._prepare_delegations_description(grouped_events)
-        confirm_message = f"Czy na pewno chcesz odwołać następujące delegacje?\\n\\n{delegations_info}\\n"
-        confirm_message += f"Łącznie: {len(events_to_cancel)} delegacji dla {len(user_date_pairs)} komórek"
+        reply = QMessageBox.Yes
+        # NOWA LOGIKA: Pytaj o potwierdzenie tylko wtedy, gdy jest to wymagane
+        if ask_for_confirmation:
+            grouped_events = self._group_events_by_user_date(events_to_cancel)
+            delegations_info = self._prepare_delegations_description(grouped_events)
+            confirm_message = f"Czy na pewno chcesz odwołać następujące delegacje?\\n\\n{delegations_info}\\n"
+            confirm_message += f"Łącznie: {len(events_to_cancel)} delegacji dla {len(user_date_pairs)} komórek"
 
-        reply = QMessageBox.question(self, "Potwierdzenie odwołania delegacji", confirm_message,
-                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+            reply = QMessageBox.question(self, "Potwierdzenie odwołania delegacji", confirm_message,
+                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+
         if reply != QMessageBox.Yes:
             debug_print("=== OPERACJA ANULOWANA PRZEZ UŻYTKOWNIKA ===")
             return
 
         try:
+            # Krok 1: Najpierw zidentyfikuj i usuń symbole 'S' z grafiku przez bezpośredni UPDATE.
+            trainings_to_clear = [evt for evt in events_to_cancel if evt.get('type') == 'Szkolenie']
+            if trainings_to_clear:
+                pairs_for_trainings = list(
+                    set((e.get('user_id'), e.get('date_key', e.get('date'))) for e in trainings_to_clear))
+                cells_data = self._get_cell_data_for_user_date_pairs(pairs_for_trainings)
+
+                cells_with_s = [cell for cell in cells_data if
+                                parse_symbol(cell.get('symbol', '')).get('special_symbol', '').upper() == 'S']
+                if cells_with_s:
+                    self._remove_s_symbol_directly(cells_with_s)
+
+            # Krok 2: Teraz odwołaj wszystkie zdarzenia (szkolenia, spotkania, nadgodziny).
             canceled_count = self._cancel_delegations(events_to_cancel)
 
+            # Krok 3: Jeśli cokolwiek zostało odwołane, odśwież dane w interfejsie.
             if canceled_count > 0:
-                trainings_to_clear = [evt for evt in events_to_cancel if evt.get('type') == 'Szkolenie']
-                if trainings_to_clear:
-                    pairs_for_trainings = list(
-                        set((e.get('user_id'), e.get('date_key', e.get('date'))) for e in trainings_to_clear))
-                    cells_data = self._get_cell_data_for_user_date_pairs(pairs_for_trainings)
-
-                    change_requests = []
-                    for cell in cells_data:
-                        current_symbol = cell.get('symbol', '')
-                        if not current_symbol: continue
-
-                        parsed = parse_symbol(current_symbol)
-                        if parsed.get('special_symbol') and parsed.get('special_symbol').upper() == 'S':
-                            new_symbol = build_symbol(
-                                location=parsed.get('location'), start_hour=parsed.get('start_hour'),
-                                work_hours=parsed.get('work_hours'), special_symbol=None
-                            )
-                            try:
-                                date_str = cell['date_str']
-                                year, month, _ = map(int, date_str.split('-'))
-                                change_requests.append({
-                                    'nr_kadrowy': cell['nr_kadrowy'], 'rok': year, 'miesiac': month,
-                                    'data': date_str, 'symbol': new_symbol, 'user_id': cell['uzytkownik_id'],
-                                    'user_name': cell['uzytkownik_dane']
-                                })
-                            except (ValueError, KeyError) as e:
-                                log_warning(f"Pominięto aktualizację symbolu 'S': {e}")
-
-                    if change_requests:
-                        self._process_and_apply_changes(change_requests, "Usunięto symbol 'S' z {0} komórek grafiku.")
-
                 affected_pairs = list(
                     set((e.get('user_id'), e.get('date_key', e.get('date'))) for e in events_to_cancel))
                 self.data_provider.invalidate_complete_cache_for_pairs(affected_pairs)
 
                 self._restore_view_state(view_state)
-
                 self.on_selection_changed()
                 QMessageBox.information(self, "Sukces", f"Pomyślnie odwołano {canceled_count} zdarzeń.", QMessageBox.Ok)
             else:
                 self._restore_view_state(view_state)
-                QMessageBox.warning(self, "Brak zmian", "Nie udało się odwołać żadnej delegacji.", QMessageBox.Ok)
+                # Jeśli nie odwołano zdarzeń, ale mogły być usunięte symbole 'S', odśwież widok
+                if trainings_to_clear:
+                    self.refresh_data()
+                else:
+                    QMessageBox.warning(self, "Brak zmian", "Nie udało się odwołać żadnej delegacji.", QMessageBox.Ok)
 
             debug_print(f"=== ZAKOŃCZONO - ODWOŁANO {canceled_count} DELEGACJI ===")
 
@@ -5665,7 +5633,7 @@ class WorkScheduleWindow(QMainWindow):
         return grouped
 
     def delete_event(self, event_id, event_type):
-        """Wersja z weryfikacją uprawnień oraz usuwaniem symbolu 'S' z grafiku po odwołaniu szkolenia."""
+        """Wersja z obchodzeniem procedury składowanej dla symbolu 'S'."""
         debug_print(f"--- ROZPOCZĘTO delete_event DLA ID: {event_id}, TYP: {event_type} ---")
         affected_pairs = []
         event_to_delete = None
@@ -5680,12 +5648,10 @@ class WorkScheduleWindow(QMainWindow):
 
         if not event_to_delete:
             QMessageBox.warning(self, "Błąd", "Nie można odnaleźć zdarzenia do usunięcia.")
-            debug_print("[delete_event] Nie znaleziono zdarzenia. Zakończono.")
             return
 
         cells_to_check = self._get_cell_data_for_user_date_pairs(affected_pairs)
         if not self._can_modify_cells(cells_to_check):
-            debug_print("[delete_event] Brak uprawnień. Zakończono.")
             return
 
         reply = QMessageBox.question(
@@ -5694,47 +5660,20 @@ class WorkScheduleWindow(QMainWindow):
             QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
             QMessageBox.StandardButton.Yes
         )
-
         if reply != QMessageBox.StandardButton.Yes:
-            debug_print("[delete_event] Użytkownik anulował operację. Zakończono.")
             return
 
-        # Krok 1: Zapisz stan widoku PRZED jakąkolwiek modyfikacją.
         self._state_to_restore = self._save_view_state()
-        debug_print(f"[delete_event] Zapisano stan widoku do self._state_to_restore.")
 
         try:
-            # Krok 2: Jeśli odwołujemy szkolenie, NAJPIERW zajmij się usunięciem symbolu 'S' z grafiku.
-            # Robimy to teraz, gdy dane w `cells_to_check` są wciąż aktualne.
+            # Krok 1: Jeśli to szkolenie, wykonaj bezpośredni UPDATE na grafiku, aby usunąć 'S'.
             if event_type == 'Szkolenie':
-                change_requests = []
-                for cell_data in cells_to_check:
-                    current_symbol = cell_data.get('symbol', '')
-                    if not current_symbol: continue
+                cells_with_s = [cell for cell in cells_to_check if
+                                parse_symbol(cell.get('symbol', '')).get('special_symbol', '').upper() == 'S']
+                if cells_with_s:
+                    self._remove_s_symbol_directly(cells_with_s)
 
-                    parsed = parse_symbol(current_symbol)
-                    if parsed.get('special_symbol') and parsed.get('special_symbol').upper() == 'S':
-                        debug_print(
-                            f"[delete_event] Znaleziono symbol 'S' w komórce: {current_symbol}. Przygotowuję usunięcie.")
-                        new_symbol = build_symbol(
-                            location=parsed.get('location'), start_hour=parsed.get('start_hour'),
-                            work_hours=parsed.get('work_hours'), special_symbol=None
-                        )
-                        try:
-                            date_str = cell_data['date_str']
-                            year, month, _ = map(int, date_str.split('-'))
-                            change_requests.append({
-                                'nr_kadrowy': cell_data['nr_kadrowy'], 'rok': year, 'miesiac': month,
-                                'data': date_str, 'symbol': new_symbol, 'user_id': cell_data['uzytkownik_id'],
-                                'user_name': cell_data['uzytkownik_dane']
-                            })
-                        except (ValueError, KeyError) as e:
-                            log_warning(f"Pominięto aktualizację symbolu 'S' przy usuwaniu zdarzenia: {e}")
-
-                if change_requests:
-                    self._process_and_apply_changes(change_requests, "Usunięto symbol 'S' z {0} komórki grafiku.")
-
-            # Krok 3: Teraz odwołaj zdarzenie w bazie danych.
+            # Krok 2: Odwołaj zdarzenie (Szkolenie/Spotkanie/Nadgodziny) w jego własnej tabeli.
             _, user_app_id, _, _, _ = get_modifier_id()
             conn = DatabaseConnector.get_connection()
             cursor = conn.cursor()
@@ -5745,34 +5684,27 @@ class WorkScheduleWindow(QMainWindow):
                 table_name = SQL_OBJECTS['szkolenia']
             elif event_type == "Nadgodziny":
                 table_name = SQL_OBJECTS['nadgodziny']
-            else:
-                conn.close()
-                return
 
-            if event_type in ["Spotkanie", "Szkolenie"]:
-                query = f"UPDATE {table_name} SET Status = 0, DataDo = NULL, DataOd = Data, Modyfikujacy = ? WHERE Id = ?"
-                cursor.execute(query, (user_app_id, event_id))
-            else:
-                query = f"DELETE FROM {table_name} WHERE Id = ?"
-                cursor.execute(query, (event_id,))
-
-            conn.commit()
+            if table_name:
+                if event_type in ["Spotkanie", "Szkolenie"]:
+                    query = f"UPDATE {table_name} SET Status = 0, DataDo = NULL, DataOd = Data, Modyfikujacy = ? WHERE Id = ?"
+                    cursor.execute(query, (user_app_id, event_id))
+                else:
+                    query = f"DELETE FROM {table_name} WHERE Id = ?"
+                    cursor.execute(query, (event_id,))
+                conn.commit()
             conn.close()
-            debug_print("[delete_event] Pomyślnie zaktualizowano bazę danych (odwołano zdarzenie).")
             self._update_modification_date()
 
-            # Krok 4: Na samym końcu, zainicjuj odświeżenie danych w interfejsie.
-            debug_print(
-                "[delete_event] Wywołuję invalidate_complete_cache_for_pairs - za chwilę nastąpi refresh i przywrócenie stanu.")
+            # Krok 3: Odśwież dane w aplikacji.
             self.data_provider.invalidate_complete_cache_for_pairs(affected_pairs)
-            self.statusBar().showMessage(f"Usunięto zdarzenie o ID {event_id}.", 3000)
+            self.statusBar().showMessage(f"Pomyślnie odwołano zdarzenie o ID {event_id}.", 3000)
 
         except Exception as e:
             log_error(f"Błąd podczas usuwania zdarzenia: {e}", exception=e)
             QMessageBox.critical(self, "Błąd", f"Wystąpił błąd podczas usuwania zdarzenia: {str(e)}",
                                  QMessageBox.StandardButton.Ok)
             self._state_to_restore = None
-        debug_print(f"--- ZAKOŃCZONO delete_event DLA ID: {event_id} ---")
 
     def _update_multiple_overtime_locations(self, location_changes):
         """
@@ -6312,6 +6244,61 @@ class WorkScheduleWindow(QMainWindow):
 
         return False
 
+    def _remove_s_symbol_directly(self, cells_to_update: list):
+        """
+        Usuwa symbol 'S' z grafiku przez bezpośredni UPDATE ORAZ aktualizuje
+        model danych w aplikacji, aby zmiana była widoczna natychmiast.
+        """
+        if not cells_to_update:
+            return
+
+        updated_cells_info = []
+        try:
+            conn = DatabaseConnector.get_connection()
+            cursor = conn.cursor()
+            table_name = SQL_OBJECTS['grafikipracy']
+
+            for cell_data in cells_to_update:
+                current_symbol = cell_data.get('symbol', '')
+                if not current_symbol:
+                    continue
+
+                parsed = parse_symbol(current_symbol)
+                if parsed.get('special_symbol', '').upper() == 'S':
+                    new_symbol = build_symbol(
+                        location=parsed.get('location'),
+                        start_hour=parsed.get('start_hour'),
+                        work_hours=parsed.get('work_hours'),
+                        special_symbol=None
+                    )
+
+                    user_id = cell_data.get('uzytkownik_id')
+                    date_str = cell_data.get('date_str')
+
+                    if user_id and date_str:
+                        # Krok 1: Aktualizacja bazy danych
+                        sql = f"UPDATE {table_name} SET Symbol = ? WHERE Uzytkownik = ? AND Data = ?"
+                        cursor.execute(sql, (new_symbol, user_id, date_str))
+
+                        # Zbierz dane do aktualizacji UI
+                        updated_cells_info.append((user_id, date_str, new_symbol))
+
+            if updated_cells_info:
+                conn.commit()
+                self.statusBar().showMessage(f"Usunięto symbol 'S' z {len(updated_cells_info)} komórek grafiku.", 3000)
+
+            conn.close()
+
+            # Krok 2: Bezpośrednia aktualizacja modelu danych w aplikacji
+            # To zapewni natychmiastowe odświeżenie widoku bez resetowania sortowania.
+            if updated_cells_info:
+                self._update_cells_with_new_symbols(updated_cells_info)
+
+        except Exception as e:
+            log_error(f"Błąd podczas bezpośredniego usuwania symbolu 'S': {e}", exception=e)
+            QMessageBox.critical(self, "Błąd Bazy Danych",
+                                 f"Nie udało się usunąć symbolu 'S' z grafiku z powodu błędu:\n{e}")
+
     def get_all_valid_symbols(self) -> set:
         """Zwraca zbiór wszystkich prawidłowych symboli specjalnych z załadowanej konfiguracji."""
         all_symbols = set()
@@ -6417,7 +6404,7 @@ class WorkScheduleWindow(QMainWindow):
             return
 
         if events_to_cancel:
-            self.cancel_delegations()
+            self.cancel_delegations(ask_for_confirmation=False)
 
         updated_info, error_messages, skipped_employees = [], [], []
 
