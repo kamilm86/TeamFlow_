@@ -1,0 +1,305 @@
+Jasne, oto gotowe rozwiązanie w PySpark, które możesz uruchomić w Jupyter Lab, aby zrealizować swoje zadanie. Poniższy skrypt wykonuje wszystkie wymagane kroki: odnajduje najnowszy wpis dla każdego wniosku, parsuje dane z kolumny JSON i zapisuje wyniki do bazy danych MS SQL Server.
+✅ Gotowy skrypt PySpark
+Poniższy kod jest kompletnym rozwiązaniem. Pamiętaj, aby uzupełnić dane w sekcji KONFIGURACJA.
+from pyspark.sql import SparkSession, Window
+from pyspark.sql.functions import col, from_json, row_number, lit
+from pyspark.sql.types import StructType, StructField, StringType
+
+# ==============================================================================
+# KONFIGURACJA - Uzupełnij poniższe zmienne
+# ==============================================================================
+
+# Nazwa widoku w Hadoop (Hive/Impala)
+HADOOP_VIEW_NAME = "twoja_baza.twoj_widok"
+
+# Szczegóły połączenia z MS SQL Server
+SQL_SERVER_HOST = "nazwa_twojego_serwera.database.windows.net"
+SQL_DATABASE = "nazwa_twojej_bazy"
+SQL_USER = "twoj_uzytkownik"
+SQL_PASSWORD = "twoje_haslo"
+SQL_TABLE_NAME = "nazwa_tabeli_docelowej" # Tabela, do której zostaną zapisane dane
+
+# Sterownik JDBC - upewnij się, że jest dostępny dla Sparka
+# Zazwyczaj ścieżkę do pliku .jar podaje się przy starcie sesji Sparka
+# np. --jars /path/to/mssql-jdbc-x.x.x.jre8.jar
+JDBC_DRIVER = "com.microsoft.sqlserver.jdbc.SQLServerDriver"
+
+# ==============================================================================
+# 1. Inicjalizacja sesji Spark
+# ==============================================================================
+
+spark = SparkSession.builder \
+    .appName("PrzetwarzanieWnioskowZJson") \
+    .enableHiveSupport() \
+    .getOrCreate()
+
+print("✅ Sesja Spark została pomyślnie utworzona.")
+
+# ==============================================================================
+# 2. Wczytanie danych z widoku Hadoop
+# ==============================================================================
+
+try:
+    df_source = spark.table(HADOOP_VIEW_NAME)
+    print(f"✅ Pomyślnie wczytano dane z widoku: {HADOOP_VIEW_NAME}")
+    # Opcjonalnie: wyświetl schemat i próbkę danych
+    # df_source.printSchema()
+    # df_source.show(5, truncate=False)
+except Exception as e:
+    print(f"❌ Błąd podczas wczytywania danych z widoku: {e}")
+    spark.stop()
+    exit()
+
+# ==============================================================================
+# 3. Odnalezienie ostatniego wpisu dla każdego wniosku
+# ==============================================================================
+
+# Definiujemy "okno" partycjonowane po numerze wniosku i sortowane malejąco po dacie modyfikacji
+window_spec = Window.partitionBy("numer_wniosku").orderBy(col("data_modyfikacji").desc())
+
+# Dodajemy kolumnę z numerem wiersza w danym "oknie"
+# Najnowszy wpis dla każdego wniosku będzie miał rn = 1
+df_latest = df_source.withColumn("rn", row_number().over(window_spec)) \
+                     .where(col("rn") == 1) \
+                     .drop("rn")
+
+print("✅ Znaleziono najnowsze wpisy dla każdego wniosku.")
+
+# ==============================================================================
+# 4. Parsowanie kolumny JSON i ekstrakcja kluczy
+# ==============================================================================
+
+# Definiujemy schemat dla danych JSON, które chcemy wyciągnąć
+json_schema = StructType([
+    StructField("status", StringType(), True),
+    StructField("doradca", StringType(), True),
+    StructField("placowka", StringType(), True)
+])
+
+# Parsujemy kolumnę 'value' (która jest stringiem) do nowej kolumny 'json_data' (która ma strukturę)
+# Następnie wybieramy interesujące nas pola, nadając im nowe, czytelne nazwy
+df_parsed = df_latest.withColumn("json_data", from_json(col("value"), json_schema)) \
+                     .select(
+                         col("numer_wniosku"),
+                         col("data_modyfikacji"),
+                         col("json_data.status").alias("status_wniosku"),
+                         col("json_data.doradca").alias("doradca"),
+                         col("json_data.placowka").alias("placowka")
+                     )
+
+print("✅ Pomyślnie sparsowano dane JSON i wyekstrahowano wartości.")
+print("Przykładowe przetworzone dane:")
+df_parsed.show(10, truncate=False)
+
+
+# ==============================================================================
+# 5. Zapis wyników do bazy MS SQL Server
+# ==============================================================================
+
+# Budowanie URL do połączenia JDBC
+jdbc_url = f"jdbc:sqlserver://{SQL_SERVER_HOST};databaseName={SQL_DATABASE}"
+
+# Konfiguracja właściwości połączenia
+connection_properties = {
+    "user": SQL_USER,
+    "password": SQL_PASSWORD,
+    "driver": JDBC_DRIVER
+}
+
+try:
+    # Zapis DataFrame do tabeli w SQL Server
+    # tryb 'overwrite' nadpisze tabelę, 'append' dołączy nowe wiersze
+    df_parsed.write.jdbc(
+        url=jdbc_url,
+        table=SQL_TABLE_NAME,
+        mode="append", 
+        properties=connection_properties
+    )
+    print(f"✅ Dane zostały pomyślnie zapisane do tabeli '{SQL_TABLE_NAME}' w MS SQL Server.")
+except Exception as e:
+    print(f"❌ Wystąpił błąd podczas zapisu do MS SQL Server: {e}")
+
+# ==============================================================================
+# 6. Zakończenie sesji Spark
+# ==============================================================================
+
+spark.stop()
+print("✅ Sesja Spark została zakończona.")
+
+
+📜 Wyjaśnienie kluczowych kroków
+ * Konfiguracja: Na początku skryptu znajdują się wszystkie zmienne, które musisz dostosować do swojego środowiska, takie jak nazwa widoku, dane logowania do SQL Servera i nazwa tabeli docelowej.
+ * Inicjalizacja Sparka: Tworzona jest standardowa sesja SparkSession, która jest punktem wejścia do pracy z danymi w Sparku. enableHiveSupport() pozwala na odczyt tabel/widoków z Hadoopa.
+ * Odnalezienie ostatniego wpisu: To kluczowa część logiki. Używamy tu funkcji okienkowej (Window):
+   * partitionBy("numer_wniosku"): Dzieli dane na grupy, gdzie każda grupa zawiera wszystkie wpisy dla jednego numeru wniosku.
+   * orderBy(col("data_modyfikacji").desc()): Wewnątrz każdej z tych grup, sortuje wpisy od najnowszego do najstarszego.
+   * row_number(): Numeruje posortowane wiersze w każdej grupie. Dzięki temu najnowszy wpis zawsze otrzyma numer 1.
+   * .where(col("rn") == 1): Na końcu filtrujemy dane, zostawiając tylko te wiersze, które mają numer 1, czyli najnowsze wpisy dla każdego unikalnego wniosku.
+ * Parsowanie JSON:
+   * json_schema: Definiujemy strukturę pól, które chcemy "wyciągnąć" z tekstu JSON. Jest to dobra praktyka, która zwiększa wydajność.
+   * from_json(): Ta funkcja Sparka konwertuje kolumnę tekstową (value) zawierającą JSON na kolumnę o zdefiniowanej strukturze (json_data).
+   * .select(): Po sparsowaniu, możemy łatwo odwołać się do poszczególnych kluczy jak do zwykłych kolumn (np. json_data.status) i nadać im nowe, przyjazne nazwy (alias).
+ * Zapis do MS SQL Server:
+   * Funkcja write.jdbc() pozwala na prosty zapis DataFrame do dowolnej bazy danych obsługującej JDBC.
+   * url: Standardowy adres połączenia JDBC.
+   * table: Nazwa tabeli docelowej.
+   * mode: Określa, co zrobić, jeśli tabela już istnieje. Najczęściej używane to append (dołącz dane) lub overwrite (usuń starą tabelę i stwórz nową z tymi danymi).
+   * properties: Słownik zawierający dane uwierzytelniające.
+Wymagania przed uruchomieniem
+ * Sterownik JDBC: Sesja Spark musi mieć dostęp do sterownika JDBC dla MS SQL Server. Zazwyczaj plik .jar sterownika dodaje się podczas konfiguracji klastra lub przy starcie sesji Jupyter/Spark, np. poprzez parametr --jars. Upewnij się, że odpowiednia wersja sterownika jest dostępna w Twoim środowisku.
+ * Uprawnienia: Użytkownik, którego danych używasz do połączenia z SQL Serverem, musi mieć uprawnienia do zapisu (INSERT, CREATE TABLE) w docelowej bazie danych i schemacie.
+
+
+Oczywiście, to bardzo częsty przypadek. Obsługa zagnieżdżonych struktur JSON w PySpark jest prosta i intuicyjna. Wystarczy odzwierciedlić tę zagnieżdżoną strukturę w definicji schematu (StructType), a następnie odwoływać się do głębszych pól za pomocą notacji kropkowej.
+Załóżmy, że Twój JSON w kolumnie value wygląda teraz tak, gdzie klucz dane_dodatkowe sam zawiera kolejne klucze i wartości:
+{
+  "status": "W trakcie",
+  "doradca": "Anna Nowak",
+  "placowka": "Oddział Regionalny",
+  "dane_dodatkowe": {
+    "typ_produktu": "Kredyt gotówkowy",
+    "segment_klienta": "Premium"
+  },
+  "kontakt": {
+      "email": "a.nowak@example.com",
+      "telefon": "987654321"
+  }
+}
+
+I chcesz wyciągnąć status, doradca oraz zagnieżdżone wartości typ_produktu i email.
+Poniżej znajduje się zmodyfikowany skrypt, który to realizuje. Zmiany zostały wprowadzone w krokach 4A i 4B.
+✅ Zaktualizowany skrypt PySpark (obsługa zagnieżdżonego JSON)
+from pyspark.sql import SparkSession, Window
+from pyspark.sql.functions import col, from_json, row_number, lit
+# Importujemy dodatkowo IntegerType, bo zagnieżdżone pola mogą mieć różne typy
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType 
+
+# ==============================================================================
+# KONFIGURACJA - Uzupełnij poniższe zmienne
+# ==============================================================================
+
+# Nazwa widoku w Hadoop (Hive/Impala)
+HADOOP_VIEW_NAME = "twoja_baza.twoj_widok"
+
+# Szczegóły połączenia z MS SQL Server
+SQL_SERVER_HOST = "nazwa_twojego_serwera.database.windows.net"
+SQL_DATABASE = "nazwa_twojej_bazy"
+SQL_USER = "twoj_uzytkownik"
+SQL_PASSWORD = "twoje_haslo"
+SQL_TABLE_NAME = "nazwa_tabeli_docelowej" 
+
+JDBC_DRIVER = "com.microsoft.sqlserver.jdbc.SQLServerDriver"
+
+# ==============================================================================
+# 1. Inicjalizacja sesji Spark
+# ==============================================================================
+
+spark = SparkSession.builder \
+    .appName("PrzetwarzanieZagniezdzonychWnioskowZJson") \
+    .enableHiveSupport() \
+    .getOrCreate()
+
+print("✅ Sesja Spark została pomyślnie utworzona.")
+
+# ==============================================================================
+# 2. Wczytanie danych z widoku Hadoop
+# ==============================================================================
+
+try:
+    df_source = spark.table(HADOOP_VIEW_NAME)
+    print(f"✅ Pomyślnie wczytano dane z widoku: {HADOOP_VIEW_NAME}")
+except Exception as e:
+    print(f"❌ Błąd podczas wczytywania danych z widoku: {e}")
+    spark.stop()
+    exit()
+
+# ==============================================================================
+# 3. Odnalezienie ostatniego wpisu dla każdego wniosku
+# ==============================================================================
+
+window_spec = Window.partitionBy("numer_wniosku").orderBy(col("data_modyfikacji").desc())
+
+df_latest = df_source.withColumn("rn", row_number().over(window_spec)) \
+                     .where(col("rn") == 1) \
+                     .drop("rn")
+
+print("✅ Znaleziono najnowsze wpisy dla każdego wniosku.")
+
+# ==============================================================================
+# 4. Parsowanie zagnieżdżonej kolumny JSON i ekstrakcja kluczy
+# ==============================================================================
+
+# ------------------------------------------------------------------------------
+# 4A. Zdefiniuj schemat, który odzwierciedla zagnieżdżoną strukturę JSON
+# ------------------------------------------------------------------------------
+# Klucz 'dane_dodatkowe' i 'kontakt' mają jako wartość kolejny StructType
+json_schema = StructType([
+    StructField("status", StringType(), True),
+    StructField("doradca", StringType(), True),
+    StructField("placowka", StringType(), True),
+    StructField("dane_dodatkowe", StructType([
+        StructField("typ_produktu", StringType(), True),
+        StructField("segment_klienta", StringType(), True)
+        # Możesz tu dodać więcej pól z tego zagnieżdżenia
+    ]), True),
+    StructField("kontakt", StructType([
+        StructField("email", StringType(), True),
+        StructField("telefon", StringType(), True)
+    ]), True)
+])
+
+# ------------------------------------------------------------------------------
+# 4B. Wybierz pola, używając notacji kropkowej do dostępu do zagnieżdżonych wartości
+# ------------------------------------------------------------------------------
+df_parsed = df_latest.withColumn("json_data", from_json(col("value"), json_schema)) \
+                     .select(
+                         col("numer_wniosku"),
+                         col("data_modyfikacji"),
+                         col("json_data.status").alias("status_wniosku"),
+                         col("json_data.doradca").alias("doradca"),
+                         # Użyj notacji kropkowej, aby dostać się do zagnieżdżonych pól
+                         col("json_data.dane_dodatkowe.typ_produktu").alias("typ_produktu"),
+                         col("json_data.kontakt.email").alias("email_kontaktowy")
+                     )
+
+print("✅ Pomyślnie sparsowano zagnieżdżone dane JSON i wyekstrahowano wartości.")
+print("Przykładowe przetworzone dane:")
+df_parsed.show(10, truncate=False)
+
+# ==============================================================================
+# 5. Zapis wyników do bazy MS SQL Server
+# ==============================================================================
+
+jdbc_url = f"jdbc:sqlserver://{SQL_SERVER_HOST};databaseName={SQL_DATABASE}"
+connection_properties = {
+    "user": SQL_USER,
+    "password": SQL_PASSWORD,
+    "driver": JDBC_DRIVER
+}
+
+try:
+    df_parsed.write.jdbc(
+        url=jdbc_url,
+        table=SQL_TABLE_NAME,
+        mode="append",
+        properties=connection_properties
+    )
+    print(f"✅ Dane zostały pomyślnie zapisane do tabeli '{SQL_TABLE_NAME}' w MS SQL Server.")
+except Exception as e:
+    print(f"❌ Wystąpił błąd podczas zapisu do MS SQL Server: {e}")
+
+# ==============================================================================
+# 6. Zakończenie sesji Spark
+# ==============================================================================
+
+spark.stop()
+print("✅ Sesja Spark została zakończona.")
+
+📜 Kluczowe zmiany i wyjaśnienie
+ * Definicja schematu (json_schema):
+   * Główna zmiana polega na tym, że dla kluczy, które same zawierają obiekt JSON (jak dane_dodatkowe i kontakt), jako typ pola (StructField) podajemy kolejny StructType.
+   * W ten sposób tworzysz "drzewo" schematu, które idealnie pasuje do struktury Twoich danych. Dzięki temu Spark wie dokładnie, jak zinterpretować dane, co jest znacznie wydajniejsze niż zgadywanie schematu.
+ * Dostęp do zagnieżdżonych pól (.select()):
+   * Aby uzyskać dostęp do wartości w zagnieżdżonym obiekcie, po prostu łączysz nazwy kluczy kropkami: col("json_data.dane_dodatkowe.typ_produktu").
+   * Możesz w ten sposób schodzić na dowolny poziom zagnieżdżenia, np. json_data.klucz1.klucz2.klucz3...
+   * Użycie alias() jest dobrą praktyką, aby nadać wynikowym kolumnom czytelne i płaskie nazwy w docelowej tabeli SQL.
