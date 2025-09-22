@@ -1,130 +1,36 @@
-Masz absolutną rację, to błąd w kodzie. Dziękuję za jego precyzyjne zlokalizowanie i dostarczenie zrzutu ekranu.
-Diagnoza błędu
-Błąd AttributeError: 'NoneType' object has no attribute 'upper' występuje, ponieważ kod próbuje zamienić na wielkie litery symbol specjalny z komórki, ale gdy w komórce nie ma żadnego symbolu specjalnego (np. jest tam tylko zmiana h;8;8;), funkcja parse_symbol zwraca wartość None (czyli "nic"). Próba wywołania metody .upper() na wartości None powoduje awarię aplikacji.
-Problem ten występuje w dwóch miejscach: w funkcji obsługującej przycisk "Odwołaj" (delete_event) oraz w funkcji obsługującej "Odwołaj delegacje" (cancel_delegations).
-Rozwiązanie
-Poprawiłem obie funkcje, dodając do nich zabezpieczenie, które najpierw sprawdza, czy symbol specjalny w ogóle istnieje, a dopiero potem próbuje na nim operować.
-Poprawione funkcje w main.py
-Proszę, zastąp poniższe dwie funkcje w pliku main.py ich nowymi, poprawionymi wersjami.
-1. Zmodyfikowana funkcja delete_event
-    def delete_event(self, event_id, event_type):
-        """Wersja z obchodzeniem procedury składowanej dla symbolu 'S'."""
-        debug_print(f"--- ROZPOCZĘTO delete_event DLA ID: {event_id}, TYP: {event_type} ---")
-        affected_pairs = []
-        event_to_delete = None
-        for event in (self.events_data or []):
-            if event.get('id') == event_id and event.get('type') == event_type:
-                user_id = event.get('user_id')
-                date_key = event.get('date_key')
-                if user_id and date_key:
-                    affected_pairs.append((user_id, date_key))
-                    event_to_delete = event
-                    break
+# W pliku db_m.py, w klasie DatabaseManager
 
-        if not event_to_delete:
-            QMessageBox.warning(self, "Błąd", "Nie można odnaleźć zdarzenia do usunięcia.")
-            return
+def get_engine(self, db_name, max_retries=3):
+    """
+    Pobiera silnik SQLAlchemy z puli lub tworzy nowy.
+    Zawiera zaawansowane, automatyczne mechanizmy ponawiania i utrzymywania połączeń.
+    """
+    if db_name in self.connection_pools and self.connection_pools[db_name]['pool'] is not None:
+        return self.connection_pools[db_name]['pool']
 
-        cells_to_check = self._get_cell_data_for_user_date_pairs(affected_pairs)
-        if not self._can_modify_cells(cells_to_check):
-            return
+    self.logger.info(f"Tworzenie nowego silnika i puli połączeń dla: {db_name}")
+    try:
+        connection_string = self.connections[db_name]
+        
+        engine_args = {
+            'pool_size': 5,
+            'max_overflow': 10,
+            'pool_recycle': 3500, # Proaktywne odświeżanie połączeń
+            'pool_pre_ping': True # AUTOMATYCZNY TEST I PONAWIANIE POŁĄCZENIA
+        }
+        
+        if db_name == 'Impala':
+            engine_args['connect_args'] = {'timeout': 3600}
 
-        reply = QMessageBox.question(
-            self, "Potwierdzenie",
-            f"Czy na pewno chcesz usunąć {event_type.lower()} o ID {event_id}?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes
-        )
-        if reply != QMessageBox.StandardButton.Yes:
-            return
+        engine = create_engine(connection_string, **engine_args)
+        
+        # Testowe połączenie przy tworzeniu silnika, aby od razu wyłapać błędy konfiguracyjne
+        with engine.connect() as connection:
+            self.logger.info(f"Testowe połączenie z '{db_name}' zakończone sukcesem.")
+        
+        self.connection_pools[db_name]['pool'] = engine
+        return engine
 
-        self._state_to_restore = self._save_view_state()
-
-        try:
-            if event_type == 'Szkolenie':
-                cells_with_s = []
-                for cell in cells_to_check:
-                    parsed = parse_symbol(cell.get('symbol', ''))
-                    # --- POPRAWIONA LOGIKA ---
-                    # Najpierw pobieramy symbol, a dopiero potem sprawdzamy, czy nie jest pusty
-                    special_symbol = parsed.get('special_symbol')
-                    if special_symbol and special_symbol.upper() == 'S':
-                        cells_with_s.append(cell)
-                
-                if cells_with_s:
-                    self._remove_s_symbol_directly(cells_with_s)
-
-            _, user_app_id, _, _, _ = get_modifier_id()
-            conn = DatabaseConnector.get_connection()
-            cursor = conn.cursor()
-            table_name = ""
-            if event_type == "Spotkanie": table_name = SQL_OBJECTS['spotkania']
-            elif event_type == "Szkolenie": table_name = SQL_OBJECTS['szkolenia']
-            elif event_type == "Nadgodziny": table_name = SQL_OBJECTS['nadgodziny']
-            
-            if table_name:
-                if event_type in ["Spotkanie", "Szkolenie"]:
-                    query = f"UPDATE {table_name} SET Status = 0, DataDo = NULL, DataOd = Data, Modyfikujacy = ? WHERE Id = ?"
-                    cursor.execute(query, (user_app_id, event_id))
-                else:
-                    query = f"DELETE FROM {table_name} WHERE Id = ?"
-                    cursor.execute(query, (event_id,))
-                conn.commit()
-            conn.close()
-            self._update_modification_date()
-
-            self.data_provider.invalidate_complete_cache_for_pairs(affected_pairs)
-            self.statusBar().showMessage(f"Pomyślnie odwołano zdarzenie o ID {event_id}.", 3000)
-
-        except Exception as e:
-            log_error(f"Błąd podczas usuwania zdarzenia: {e}", exception=e)
-            QMessageBox.critical(self, "Błąd", f"Wystąpił błąd podczas usuwania zdarzenia: {str(e)}", QMessageBox.StandardButton.Ok)
-            self._state_to_restore = None
-
-2. Zmodyfikowana funkcja cancel_delegations
-    def cancel_delegations(self, ask_for_confirmation: bool = True):
-        debug_print("\\n=== ROZPOCZYNAM OPERACJĘ ODWOŁYWANIA DELEGACJI ===")
-        # ... (fragment kodu aż do bloku try-except pozostaje bez zmian) ...
-        try:
-            if ask_for_confirmation:
-                trainings_to_clear = [evt for evt in events_to_cancel if evt.get('type') == 'Szkolenie']
-                if trainings_to_clear:
-                    pairs_for_trainings = list(
-                        set((e.get('user_id'), e.get('date_key', e.get('date'))) for e in trainings_to_clear))
-                    cells_data = self._get_cell_data_for_user_date_pairs(pairs_for_trainings)
-                    
-                    cells_with_s = []
-                    for cell in cells_data:
-                        parsed = parse_symbol(cell.get('symbol', ''))
-                        # --- POPRAWIONA LOGIKA ---
-                        special_symbol = parsed.get('special_symbol')
-                        if special_symbol and special_symbol.upper() == 'S':
-                            cells_with_s.append(cell)
-                            
-                    if cells_with_s:
-                        self._remove_s_symbol_directly(cells_with_s)
-
-            canceled_count = self._cancel_delegations(events_to_cancel)
-
-            if canceled_count > 0:
-                affected_pairs = list(
-                    set((e.get('user_id'), e.get('date_key', e.get('date'))) for e in events_to_cancel))
-                self.data_provider.invalidate_complete_cache_for_pairs(affected_pairs)
-                
-                self._restore_view_state(view_state)
-                self.on_selection_changed()
-                QMessageBox.information(self, "Sukces", f"Pomyślnie odwołano {canceled_count} zdarzeń.", QMessageBox.Ok)
-            else:
-                self._restore_view_state(view_state)
-                if trainings_to_clear: 
-                    self.refresh_data()
-                else:
-                    QMessageBox.warning(self, "Brak zmian", "Nie udało się odwołać żadnej delegacji.", QMessageBox.Ok)
-
-            debug_print(f"=== ZAKOŃCZONO - ODWOŁANO {canceled_count} DELEGACJI ===")
-
-        except Exception as e:
-            log_error(f"Błąd podczas odwoływania delegacji: {e}", exception=e)
-            QMessageBox.critical(self, "Błąd", f"Wystąpił błąd podczas odwoływania delegacji: {str(e)}", QMessageBox.Ok)
-
-Po wprowadzeniu tych dwóch poprawek błąd AttributeError zniknie, a aplikacja będzie działać stabilnie, niezależnie od tego, czy w komórce grafiku znajduje się symbol specjalny, czy nie.
+    except Exception as e:
+        self.logger.error(f"Nie udało się utworzyć silnika SQLAlchemy dla '{db_name}': {e}")
+        raise
