@@ -1,129 +1,90 @@
-Doskonale, logi pokazują, że połączenie z Impalą działa, a teraz napotykamy problem z Oracle.
+Dziękuję za informację. Te wersje (`oracledb 1.4.2` i `SQLAlchemy 1.4.49` - zakładam, że 1.4.53 to literówka, gdyż ostatnia wersja to 1.4.49) **są ze sobą w pełni kompatybilne**.
 
-Błąd **`ORA-12154: TNS:could not resolve the connect identifier specified`** to absolutny klasyk w świecie Oracle. Jest to błąd czysto **konfiguracyjny po stronie klienta Oracle** i oznacza jedną prostą rzecz: biblioteka Oracle na Twoim serwerze Linux nie wie, jak znaleźć bazę danych, z którą próbujesz się połączyć, na podstawie podanych informacji.
-
------
-
-### \#\# Analiza problemu
-
-Twój kod w `_get_oracle_connection_string` buduje tzw. "Easy Connect string" (`user/pass@host:port/service_name`). Teoretycznie powinno to działać bez dodatkowej konfiguracji. W praktyce, w złożonych środowiskach serwerowych (szczególnie z Kerberosem i wieloma zmiennymi środowiskowymi), ten mechanizm często zawodzi lub jest nieprawidłowo interpretowany przez zainstalowanego klienta Oracle.
-
-Biblioteka `cx_Oracle` (której SQLAlchemy używa pod spodem) próbuje przetłumaczyć ten adres, ale jej się to nie udaje, co skutkuje błędem `ORA-12154`.
+Skoro błąd `Can't load plugin` nadal występuje, pomimo zgodnych wersji, oznacza to, że problem jest głębszy i najprawdopodobniej leży w **stanie samego środowiska wirtualnego Python** (`pyKamil`).
 
 -----
 
-### \#\# Rozwiązanie: Konfiguracja przez `tnsnames.ora` (najlepsza praktyka)
+### \#\# Diagnoza: Problem ze Środowiskiem Wirtualnym
 
-Najbardziej stabilnym, niezawodnym i standardowym sposobem konfiguracji połączeń Oracle na serwerach jest użycie pliku **`tnsnames.ora`**. Jest to swego rodzaju "książka telefoniczna" dla klienta Oracle, która mapuje proste nazwy (aliasy) na pełne dane serwera.
+Możliwe przyczyny to:
 
-Wprowadzimy trzy zmiany, które rozwiążą ten problem na stałe.
+1.  **Uszkodzona instalacja:** Poprzednie instalacje i deinstalacje mogły pozostawić uszkodzone pliki lub metadane pakietów.
+2.  **Problem z mechanizmem `entry_points`:** SQLAlchemy używa mechanizmu `entry_points` do "odkrywania" zainstalowanych dialektów. Czasami w starych środowiskach ten mechanizm może być uszkodzony.
+3.  **Ogólna niestabilność Pythona 3.6:** Praca na niewspieranej wersji Pythona może prowadzić do trudnych do zdiagnozowania problemów z instalacją pakietów.
 
-#### Krok 1: Stwórz plik `tnsnames.ora`
+-----
 
-1.  W katalogu konfiguracyjnym na serwerze (np. obok `odbc.ini`) stwórz nowy plik o nazwie `tnsnames.ora`. Dobrym miejscem będzie np. `/home/km18367/kody/security/oracle_config/`.
+### \#\# Plan Działania: Weryfikacja i "Twardy" Reset Środowiska
 
-2.  Wklej do niego poniższą zawartość, **uzupełniając ją danymi z Twojej sekcji `[Oracle]` w głównym pliku `.ini`**:
+Musimy sprawdzić, czy środowisko jest w stanie poprawnie "zobaczyć" zainstalowaną wtyczkę, a jeśli nie – radykalnie je odświeżyć.
 
-    ```ora
-    # Plik: /home/km18367/kody/security/oracle_config/tnsnames.ora
+#### Krok 1: Bezpośrednia weryfikacja w Pythonie (Szybki test)
 
-    ORACLE_PROD =
-      (DESCRIPTION =
-        (ADDRESS = (PROTOCOL = TCP)(HOST = twoj_host_z_pliku_ini)(PORT = twoj_port_z_pliku_ini))
-        (CONNECT_DATA =
-          (SERVER = DEDICATED)
-          (SERVICE_NAME = twoja_usluga_z_pliku_ini)
-        )
-      )
+Uruchom interaktywną sesję Pythona i wykonaj poniższe komendy. To pozwoli nam sprawdzić, czy mechanizm importu w SQLAlchemy działa na najniższym poziomie.
+
+1.  Aktywuj środowisko: `source /home/km18367/pyKamil/bin/activate`
+
+2.  Uruchom Pythona: `python`
+
+3.  Wklej poniższy kod i naciśnij Enter:
+
+    ```python
+    try:
+        print("Krok A: Próba importu głównego modułu dialektu Oracle...")
+        from sqlalchemy.dialects import oracle
+        print("SUKCES: Główny moduł 'oracle' zaimportowany.")
+        
+        print("\nKrok B: Próba importu wtyczki 'oracledb'...")
+        from sqlalchemy.dialects.oracle import oracledb
+        print("SUKCES: Wtyczka 'oracledb' dla Oracle została znaleziona i poprawnie zaimportowana!")
+
+    except ImportError as e:
+        print(f"\nBŁĄD KRYTYCZNY: Nie udało się zaimportować wtyczki. To potwierdza problem ze środowiskiem.")
+        print(f"Szczegóły błędu: {e}")
+    except Exception as e:
+        print(f"\nWystąpił nieoczekiwany błąd: {e}")
     ```
 
-      * `ORACLE_PROD` to alias – prosta nazwa, której będziemy używać w kodzie.
-      * Wpisz w `HOST`, `PORT` i `SERVICE_NAME` dokładne wartości z pliku `.ini`.
+<!-- end list -->
 
-#### Krok 2: Wskaż aplikacji, gdzie jest `tnsnames.ora`
+  * **Jeśli zobaczysz `SUKCES`** dla obu kroków, problem jest niezwykle dziwny i może leżeć w sposobie, w jaki Twój skrypt uruchamia `create_engine`.
+  * **Jeśli zobaczysz `BŁĄD KRYTYCZNY`**, masz 100% pewności, że Twoje środowisko wirtualne jest uszkodzone i nie potrafi poprawnie zarejestrować zainstalowanych pakietów. W takim przypadku przejdź do Kroku 2.
 
-Musimy poinformować klienta Oracle, gdzie ma szukać tej "książki telefonicznej". Robi się to za pomocą zmiennej środowiskowej `TNS_ADMIN`. Najlepiej ustawić ją w Twojej metodzie `_setup_environment`.
+#### Krok 2: Czysta reinstalacja z `--no-cache-dir`
 
-```python
-# W pliku db_m.py w metodzie _setup_environment
+Jeśli test z Kroku 1 zawiódł, spróbujmy wymusić ponowne pobranie i instalację pakietów, omijając potencjalnie uszkodzoną lokalną pamięć podręczną `pip`.
 
-def _setup_environment(self):
-    """
-    Konfiguracja zmiennych środowiskowych, w tym ścieżek dla ODBC i Oracle.
-    """
-    self.logger.info("Konfiguracja środowiska...")
-    
-    # --- Konfiguracja dla Oracle ---
-    # Ścieżka do KATALOGU, w którym znajduje się tnsnames.ora
-    oracle_config_dir = os.path.join(os.environ['HOME'], 'kody/security/oracle_config')
-
-    # --- Konfiguracja dla ODBC ---
-    odbc_config_path = os.path.join(os.environ['HOME'], 'kody/security/odbc.ini')
-    odbc_config_dir = os.path.dirname(odbc_config_path)
-
-    env_vars = {
-        'ODBCINI': odbc_config_path,
-        'ODBCSYSINI': odbc_config_dir,
-        'TNS_ADMIN': oracle_config_dir, # <-- NOWA ZMIENNA DLA ORACLE
-        'PATH': f"{os.environ['PATH']}:/opt/microsoft/msodbcsql17/bin"
-    }
-
-    for key, value in env_vars.items():
-        os.environ[key] = str(value)
-        self.logger.info(f"Ustawiono zmienną środowiskową: {key}={value}")
+```bash
+# Upewnij się, że środowisko jest aktywne
+pip uninstall sqlalchemy oracledb
+pip install --no-cache-dir "SQLAlchemy<2.0" "oracledb<2.0"
 ```
 
-#### Krok 3: Uprość `connection string` w kodzie Python
+Po wykonaniu tej komendy, powtórz test z Kroku 1.
 
-Teraz, gdy klient Oracle wie, gdzie szukać konfiguracji, nasz `connection string` staje się banalnie prosty. Zamiast podawać `host`, `port` i `service_name`, podajemy tylko **alias** z pliku `tnsnames.ora`.
+#### Krok 3: Stworzenie nowego środowiska wirtualnego (Ostateczność)
 
-Najpierw dodaj ten alias do swojej sekcji `[Oracle]` w głównym pliku `.ini`:
+Jeśli nawet czysta reinstalacja nie pomoże, oznacza to, że samo środowisko `pyKamil` jest uszkodzone w sposób trudny do naprawienia. Najszybszym i najpewniejszym rozwiązaniem jest stworzenie go od nowa.
 
-```ini
-[Oracle]
-Host = ...
-Port = ...
-ServiceName = ...
-User = ...
-PasswordFile = ...
-KeyFile = ...
-TnsName = ORACLE_PROD  # <-- DODAJ TEN WPIS (nazwa musi pasować do tej z tnsnames.ora)
-```
+1.  **Dezaktywuj obecne środowisko:**
+    ```bash
+    deactivate
+    ```
+2.  **Zmień nazwę starego katalogu (zamiast kasować):**
+    ```bash
+    mv pyKamil pyKamil_OLD
+    ```
+3.  **Stwórz nowe, czyste środowisko:**
+    ```bash
+    python3.6 -m venv pyKamil
+    ```
+4.  **Aktywuj nowe środowisko:**
+    ```bash
+    source pyKamil/bin/activate
+    ```
+5.  **Zainstaluj wszystkie potrzebne pakiety od zera:**
+    ```bash
+    pip install "SQLAlchemy<2.0" "oracledb<2.0" pykerberos sqlalchemy-impala pandas pyodbc ... # i inne, których używasz
+    ```
 
-A następnie zmodyfikuj metodę `_get_oracle_connection_string`:
-
-```python
-# W pliku db_m.py w klasie DatabaseManager
-
-def _get_oracle_connection_string(self, oracle_config: configparser.SectionProxy) -> str:
-    self.logger.info("Budowanie connection stringa dla Oracle przy użyciu TNS...")
-    try:
-        user = oracle_config['User']
-        password_file = oracle_config['PasswordFile']
-        key_file = oracle_config['KeyFile']
-        tns_name = oracle_config['TnsName'] # <-- Odczytujemy alias
-
-        password = decrypt_password(password_file, key_file)
-
-        # Nowy, znacznie prostszy i bardziej niezawodny connection string
-        # Format: oracle+cx_oracle://user:password@tns_alias
-        conn_str = f"oracle+cx_oracle://{user}:{password}@{tns_name}"
-        
-        self.logger.info("Pomyślnie zbudowano connection string dla Oracle.")
-        return conn_str
-
-    except KeyError as e:
-        msg = f"Brak wymaganego klucza w sekcji [Oracle] pliku .ini: {e}"
-        self.logger.error(msg)
-        raise ValueError(msg)
-    # ... (reszta bloku except bez zmian)
-```
-
-### \#\# Podsumowanie zmian
-
-1.  **Stwórz plik `tnsnames.ora`** w dedykowanym katalogu i zdefiniuj w nim swoje połączenie.
-2.  **Dodaj klucz `TnsName`** do sekcji `[Oracle]` w głównym pliku konfiguracyjnym `.ini`.
-3.  **Zaktualizuj metodę `_setup_environment`**, aby ustawiała zmienną `TNS_ADMIN`.
-4.  **Zaktualizuj metodę `_get_oracle_connection_string`**, aby budowała prostszy `connection string` oparty na aliasie TNS.
-
-To podejście jest standardem w środowiskach produkcyjnych, ponieważ oddziela konfigurację sieciową bazy danych od kodu aplikacji, co czyni system znacznie łatwiejszym w utrzymaniu i bardziej odpornym na błędy.
+To rozwiązanie, choć radykalne, gwarantuje wyeliminowanie wszelkich ukrytych konfliktów i problemów z metadanymi pakietów w Twoim starym środowisku.
