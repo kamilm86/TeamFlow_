@@ -1,90 +1,66 @@
-Dziękuję za informację. Te wersje (`oracledb 1.4.2` i `SQLAlchemy 1.4.49` - zakładam, że 1.4.53 to literówka, gdyż ostatnia wersja to 1.4.49) **są ze sobą w pełni kompatybilne**.
+# W pliku db_m.py, w klasie DatabaseManager
 
-Skoro błąd `Can't load plugin` nadal występuje, pomimo zgodnych wersji, oznacza to, że problem jest głębszy i najprawdopodobniej leży w **stanie samego środowiska wirtualnego Python** (`pyKamil`).
-
------
-
-### \#\# Diagnoza: Problem ze Środowiskiem Wirtualnym
-
-Możliwe przyczyny to:
-
-1.  **Uszkodzona instalacja:** Poprzednie instalacje i deinstalacje mogły pozostawić uszkodzone pliki lub metadane pakietów.
-2.  **Problem z mechanizmem `entry_points`:** SQLAlchemy używa mechanizmu `entry_points` do "odkrywania" zainstalowanych dialektów. Czasami w starych środowiskach ten mechanizm może być uszkodzony.
-3.  **Ogólna niestabilność Pythona 3.6:** Praca na niewspieranej wersji Pythona może prowadzić do trudnych do zdiagnozowania problemów z instalacją pakietów.
-
------
-
-### \#\# Plan Działania: Weryfikacja i "Twardy" Reset Środowiska
-
-Musimy sprawdzić, czy środowisko jest w stanie poprawnie "zobaczyć" zainstalowaną wtyczkę, a jeśli nie – radykalnie je odświeżyć.
-
-#### Krok 1: Bezpośrednia weryfikacja w Pythonie (Szybki test)
-
-Uruchom interaktywną sesję Pythona i wykonaj poniższe komendy. To pozwoli nam sprawdzić, czy mechanizm importu w SQLAlchemy działa na najniższym poziomie.
-
-1.  Aktywuj środowisko: `source /home/km18367/pyKamil/bin/activate`
-
-2.  Uruchom Pythona: `python`
-
-3.  Wklej poniższy kod i naciśnij Enter:
-
-    ```python
+def fetch_data(self, source_db: str, sql: str, params: Optional[Dict] = None) -> pd.DataFrame:
+    """
+    Wykonuje kompletny skrypt SQL: najpierw wszystkie polecenia modyfikujące 
+    (DELETE, INSERT, etc.), a na końcu ostatnie polecenie SELECT, 
+    którego wynik jest zwracany jako Pandas DataFrame.
+    """
+    engine = None
+    self.logger.info(f"Rozpoczynam zadanie 'fetch_data' na bazie '{source_db}'...")
     try:
-        print("Krok A: Próba importu głównego modułu dialektu Oracle...")
-        from sqlalchemy.dialects import oracle
-        print("SUKCES: Główny moduł 'oracle' zaimportowany.")
+        # Krok 1: Przygotuj i podziel na części cały skrypt SQL
+        all_commands = self.prepare_queries(sql, params, split_by_semicolon=True)
+        if not all_commands:
+            self.logger.warning("Brak poleceń SQL do wykonania.")
+            return pd.DataFrame()
+
+        # Krok 2: Rozdziel polecenia przygotowawcze od finalnego zapytania SELECT
+        commands_to_execute = all_commands[:-1]
+        select_query = all_commands[-1]
         
-        print("\nKrok B: Próba importu wtyczki 'oracledb'...")
-        from sqlalchemy.dialects.oracle import oracledb
-        print("SUKCES: Wtyczka 'oracledb' dla Oracle została znaleziona i poprawnie zaimportowana!")
+        # Krok 3: Pobierz silnik z puli połączeń
+        engine = self.get_engine(source_db)
 
-    except ImportError as e:
-        print(f"\nBŁĄD KRYTYCZNY: Nie udało się zaimportować wtyczki. To potwierdza problem ze środowiskiem.")
-        print(f"Szczegóły błędu: {e}")
+        # Krok 4: Wykonaj polecenia przygotowawcze (jeśli istnieją)
+        if commands_to_execute:
+            self.logger.info(f"Wykonywanie {len(commands_to_execute)} poleceń przygotowawczych...")
+            with engine.connect() as connection:
+                with connection.begin() as transaction: # Rozpocznij transakcję
+                    try:
+                        for command in commands_to_execute:
+                            self.logger.info(f"Wykonywanie: {command[:100]}...")
+                            connection.execute(text(command))
+                        transaction.commit()
+                        self.logger.info("Polecenia przygotowawcze wykonane pomyślnie.")
+                    except Exception:
+                        self.logger.error("Błąd podczas wykonywania poleceń przygotowawczych. Wycofuję zmiany (rollback)...")
+                        transaction.rollback()
+                        raise # Rzuć błąd dalej, aby zatrzymać cały proces
+        else:
+            self.logger.info("Brak poleceń przygotowawczych do wykonania.")
+
+        # Krok 5: Wykonaj finalne zapytanie SELECT i pobierz dane w porcjach
+        self.logger.info("Wykonywanie finalnego zapytania SELECT...")
+        self.logger.info(f"Treść zapytania:\n{select_query}")
+        
+        df_list = []
+        for chunk_df in pd.read_sql(select_query, engine, chunksize=50000):
+            self.logger.info(f"Pobrano porcję {len(chunk_df)} wierszy.")
+            df_list.append(chunk_df)
+
+        if not df_list:
+            self.logger.warning("Finalne zapytanie SELECT nie zwróciło żadnych danych.")
+            return pd.DataFrame()
+        
+        final_df = pd.concat(df_list, ignore_index=True)
+        self.logger.info(f"Pobrano łącznie {len(final_df)} wierszy.")
+        return final_df
+
     except Exception as e:
-        print(f"\nWystąpił nieoczekiwany błąd: {e}")
-    ```
-
-<!-- end list -->
-
-  * **Jeśli zobaczysz `SUKCES`** dla obu kroków, problem jest niezwykle dziwny i może leżeć w sposobie, w jaki Twój skrypt uruchamia `create_engine`.
-  * **Jeśli zobaczysz `BŁĄD KRYTYCZNY`**, masz 100% pewności, że Twoje środowisko wirtualne jest uszkodzone i nie potrafi poprawnie zarejestrować zainstalowanych pakietów. W takim przypadku przejdź do Kroku 2.
-
-#### Krok 2: Czysta reinstalacja z `--no-cache-dir`
-
-Jeśli test z Kroku 1 zawiódł, spróbujmy wymusić ponowne pobranie i instalację pakietów, omijając potencjalnie uszkodzoną lokalną pamięć podręczną `pip`.
-
-```bash
-# Upewnij się, że środowisko jest aktywne
-pip uninstall sqlalchemy oracledb
-pip install --no-cache-dir "SQLAlchemy<2.0" "oracledb<2.0"
-```
-
-Po wykonaniu tej komendy, powtórz test z Kroku 1.
-
-#### Krok 3: Stworzenie nowego środowiska wirtualnego (Ostateczność)
-
-Jeśli nawet czysta reinstalacja nie pomoże, oznacza to, że samo środowisko `pyKamil` jest uszkodzone w sposób trudny do naprawienia. Najszybszym i najpewniejszym rozwiązaniem jest stworzenie go od nowa.
-
-1.  **Dezaktywuj obecne środowisko:**
-    ```bash
-    deactivate
-    ```
-2.  **Zmień nazwę starego katalogu (zamiast kasować):**
-    ```bash
-    mv pyKamil pyKamil_OLD
-    ```
-3.  **Stwórz nowe, czyste środowisko:**
-    ```bash
-    python3.6 -m venv pyKamil
-    ```
-4.  **Aktywuj nowe środowisko:**
-    ```bash
-    source pyKamil/bin/activate
-    ```
-5.  **Zainstaluj wszystkie potrzebne pakiety od zera:**
-    ```bash
-    pip install "SQLAlchemy<2.0" "oracledb<2.0" pykerberos sqlalchemy-impala pandas pyodbc ... # i inne, których używasz
-    ```
-
-To rozwiązanie, choć radykalne, gwarantuje wyeliminowanie wszelkich ukrytych konfliktów i problemów z metadanymi pakietów w Twoim starym środowisku.
+        self.logger.error(f"Błąd krytyczny w metodzie fetch_data dla bazy {source_db}.", exc_info=True)
+        raise
+    finally:
+        if engine:
+            engine.dispose()
+            self.logger.info(f"Zwolniono pulę połączeń dla silnika {source_db}.")
