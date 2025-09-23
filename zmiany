@@ -1,54 +1,129 @@
-# W pliku db_m.py, w klasie DatabaseManager
+Doskonale, logi pokazują, że połączenie z Impalą działa, a teraz napotykamy problem z Oracle.
 
-def fetch_data(self, source_db: str, sql: str, params: Optional[Dict] = None) -> pd.DataFrame:
+Błąd **`ORA-12154: TNS:could not resolve the connect identifier specified`** to absolutny klasyk w świecie Oracle. Jest to błąd czysto **konfiguracyjny po stronie klienta Oracle** i oznacza jedną prostą rzecz: biblioteka Oracle na Twoim serwerze Linux nie wie, jak znaleźć bazę danych, z którą próbujesz się połączyć, na podstawie podanych informacji.
+
+-----
+
+### \#\# Analiza problemu
+
+Twój kod w `_get_oracle_connection_string` buduje tzw. "Easy Connect string" (`user/pass@host:port/service_name`). Teoretycznie powinno to działać bez dodatkowej konfiguracji. W praktyce, w złożonych środowiskach serwerowych (szczególnie z Kerberosem i wieloma zmiennymi środowiskowymi), ten mechanizm często zawodzi lub jest nieprawidłowo interpretowany przez zainstalowanego klienta Oracle.
+
+Biblioteka `cx_Oracle` (której SQLAlchemy używa pod spodem) próbuje przetłumaczyć ten adres, ale jej się to nie udaje, co skutkuje błędem `ORA-12154`.
+
+-----
+
+### \#\# Rozwiązanie: Konfiguracja przez `tnsnames.ora` (najlepsza praktyka)
+
+Najbardziej stabilnym, niezawodnym i standardowym sposobem konfiguracji połączeń Oracle na serwerach jest użycie pliku **`tnsnames.ora`**. Jest to swego rodzaju "książka telefoniczna" dla klienta Oracle, która mapuje proste nazwy (aliasy) na pełne dane serwera.
+
+Wprowadzimy trzy zmiany, które rozwiążą ten problem na stałe.
+
+#### Krok 1: Stwórz plik `tnsnames.ora`
+
+1.  W katalogu konfiguracyjnym na serwerze (np. obok `odbc.ini`) stwórz nowy plik o nazwie `tnsnames.ora`. Dobrym miejscem będzie np. `/home/km18367/kody/security/oracle_config/`.
+
+2.  Wklej do niego poniższą zawartość, **uzupełniając ją danymi z Twojej sekcji `[Oracle]` w głównym pliku `.ini`**:
+
+    ```ora
+    # Plik: /home/km18367/kody/security/oracle_config/tnsnames.ora
+
+    ORACLE_PROD =
+      (DESCRIPTION =
+        (ADDRESS = (PROTOCOL = TCP)(HOST = twoj_host_z_pliku_ini)(PORT = twoj_port_z_pliku_ini))
+        (CONNECT_DATA =
+          (SERVER = DEDICATED)
+          (SERVICE_NAME = twoja_usluga_z_pliku_ini)
+        )
+      )
+    ```
+
+      * `ORACLE_PROD` to alias – prosta nazwa, której będziemy używać w kodzie.
+      * Wpisz w `HOST`, `PORT` i `SERVICE_NAME` dokładne wartości z pliku `.ini`.
+
+#### Krok 2: Wskaż aplikacji, gdzie jest `tnsnames.ora`
+
+Musimy poinformować klienta Oracle, gdzie ma szukać tej "książki telefonicznej". Robi się to za pomocą zmiennej środowiskowej `TNS_ADMIN`. Najlepiej ustawić ją w Twojej metodzie `_setup_environment`.
+
+```python
+# W pliku db_m.py w metodzie _setup_environment
+
+def _setup_environment(self):
     """
-    Pobiera dane, poprawnie obsługując parametry SQL i zarządzając pamięcią.
-    Jest to ostateczna, zunifikowana wersja metody.
+    Konfiguracja zmiennych środowiskowych, w tym ścieżek dla ODBC i Oracle.
     """
-    engine = None
-    self.logger.info(f"Rozpoczynam pobieranie danych z bazy '{source_db}'...")
+    self.logger.info("Konfiguracja środowiska...")
+    
+    # --- Konfiguracja dla Oracle ---
+    # Ścieżka do KATALOGU, w którym znajduje się tnsnames.ora
+    oracle_config_dir = os.path.join(os.environ['HOME'], 'kody/security/oracle_config')
+
+    # --- Konfiguracja dla ODBC ---
+    odbc_config_path = os.path.join(os.environ['HOME'], 'kody/security/odbc.ini')
+    odbc_config_dir = os.path.dirname(odbc_config_path)
+
+    env_vars = {
+        'ODBCINI': odbc_config_path,
+        'ODBCSYSINI': odbc_config_dir,
+        'TNS_ADMIN': oracle_config_dir, # <-- NOWA ZMIENNA DLA ORACLE
+        'PATH': f"{os.environ['PATH']}:/opt/microsoft/msodbcsql17/bin"
+    }
+
+    for key, value in env_vars.items():
+        os.environ[key] = str(value)
+        self.logger.info(f"Ustawiono zmienną środowiskową: {key}={value}")
+```
+
+#### Krok 3: Uprość `connection string` w kodzie Python
+
+Teraz, gdy klient Oracle wie, gdzie szukać konfiguracji, nasz `connection string` staje się banalnie prosty. Zamiast podawać `host`, `port` i `service_name`, podajemy tylko **alias** z pliku `tnsnames.ora`.
+
+Najpierw dodaj ten alias do swojej sekcji `[Oracle]` w głównym pliku `.ini`:
+
+```ini
+[Oracle]
+Host = ...
+Port = ...
+ServiceName = ...
+User = ...
+PasswordFile = ...
+KeyFile = ...
+TnsName = ORACLE_PROD  # <-- DODAJ TEN WPIS (nazwa musi pasować do tej z tnsnames.ora)
+```
+
+A następnie zmodyfikuj metodę `_get_oracle_connection_string`:
+
+```python
+# W pliku db_m.py w klasie DatabaseManager
+
+def _get_oracle_connection_string(self, oracle_config: configparser.SectionProxy) -> str:
+    self.logger.info("Budowanie connection stringa dla Oracle przy użyciu TNS...")
     try:
-        # Krok 1: Przygotuj zapytanie, podstawiając parametry (np. daty)
-        # Zakładamy, że `prepare_queries` zwraca listę gotowych do wykonania zapytań
-        # i że dla `fetch_data` interesuje nas tylko ostatnie zapytanie SELECT.
-        # split_by_semicolon=False jest ważne dla zapytań CTE.
-        final_queries = self.prepare_queries(sql, params, split_by_semicolon=False)
+        user = oracle_config['User']
+        password_file = oracle_config['PasswordFile']
+        key_file = oracle_config['KeyFile']
+        tns_name = oracle_config['TnsName'] # <-- Odczytujemy alias
+
+        password = decrypt_password(password_file, key_file)
+
+        # Nowy, znacznie prostszy i bardziej niezawodny connection string
+        # Format: oracle+cx_oracle://user:password@tns_alias
+        conn_str = f"oracle+cx_oracle://{user}:{password}@{tns_name}"
         
-        if not final_queries:
-            self.logger.warning("Brak zapytań do wykonania po przygotowaniu.")
-            return pd.DataFrame()
+        self.logger.info("Pomyślnie zbudowano connection string dla Oracle.")
+        return conn_str
 
-        # Zakładamy, że interesuje nas ostatnie zapytanie z listy (jeśli jest ich więcej)
-        sql_to_execute = final_queries[-1]
+    except KeyError as e:
+        msg = f"Brak wymaganego klucza w sekcji [Oracle] pliku .ini: {e}"
+        self.logger.error(msg)
+        raise ValueError(msg)
+    # ... (reszta bloku except bez zmian)
+```
 
-        self.logger.info("--- ROZPOCZYNAM WYKONYWANIE ZAPYTANIA SQL ---")
-        self.logger.info(f"Ostateczna treść zapytania:\n{sql_to_execute}")
-        self.logger.info("--- KONIEC TREŚCI ZAPYTANIA SQL ---")
+### \#\# Podsumowanie zmian
 
-        # Krok 2: Pobierz silnik z puli połączeń
-        engine = self.get_engine(source_db)
+1.  **Stwórz plik `tnsnames.ora`** w dedykowanym katalogu i zdefiniuj w nim swoje połączenie.
+2.  **Dodaj klucz `TnsName`** do sekcji `[Oracle]` w głównym pliku konfiguracyjnym `.ini`.
+3.  **Zaktualizuj metodę `_setup_environment`**, aby ustawiała zmienną `TNS_ADMIN`.
+4.  **Zaktualizuj metodę `_get_oracle_connection_string`**, aby budowała prostszy `connection string` oparty na aliasie TNS.
 
-        # Krok 3: Wczytaj dane w bezpieczny sposób (porcjami)
-        chunk_size = 50000
-        df_list = []
-        self.logger.info(f"Pobieranie danych w porcjach (rozmiar: {chunk_size} wierszy)...")
-
-        for chunk_df in pd.read_sql(sql_to_execute, engine, chunksize=chunk_size):
-            self.logger.info(f"Pobrano porcję {len(chunk_df)} wierszy.")
-            df_list.append(chunk_df)
-
-        if not df_list:
-            self.logger.warning("Zapytanie nie zwróciło żadnych danych.")
-            return pd.DataFrame()
-
-        final_df = pd.concat(df_list, ignore_index=True)
-        self.logger.info(f"Pobrano łącznie {len(final_df)} wierszy.")
-        return final_df
-
-    except Exception as e:
-        self.logger.error(f"Błąd podczas pobierania danych z {source_db}.", exc_info=True)
-        raise
-    finally:
-        if engine:
-            engine.dispose()
-            self.logger.info(f"Zwolniono pulę połączeń dla silnika {source_db}.")
+To podejście jest standardem w środowiskach produkcyjnych, ponieważ oddziela konfigurację sieciową bazy danych od kodu aplikacji, co czyni system znacznie łatwiejszym w utrzymaniu i bardziej odpornym na błędy.
