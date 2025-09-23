@@ -1,36 +1,39 @@
-# W pliku db_m.py, w klasie DatabaseManager
+# W metodzie _setup_connections w klasie DatabaseManager
 
-def get_engine(self, db_name, max_retries=3):
-    """
-    Pobiera silnik SQLAlchemy z puli lub tworzy nowy.
-    Zawiera zaawansowane, automatyczne mechanizmy ponawiania i utrzymywania połączeń.
-    """
-    if db_name in self.connection_pools and self.connection_pools[db_name]['pool'] is not None:
-        return self.connection_pools[db_name]['pool']
+# ... (pętla for section in config.sections():)
 
-    self.logger.info(f"Tworzenie nowego silnika i puli połączeń dla: {db_name}")
-    try:
-        connection_string = self.connections[db_name]
-        
-        engine_args = {
-            'pool_size': 5,
-            'max_overflow': 10,
-            'pool_recycle': 3500, # Proaktywne odświeżanie połączeń
-            'pool_pre_ping': True # AUTOMATYCZNY TEST I PONAWIANIE POŁĄCZENIA
-        }
-        
-        if db_name == 'Impala':
-            engine_args['connect_args'] = {'timeout': 3600}
+        if clean_section == 'impala':
+            try:
+                host = config.get(section, 'HOST')
+                port = config.get(section, 'PORT')
+                
+                # Budujemy podstawowy connection string
+                connection_string = (
+                    f"impala://{host}:{port}/default"
+                    "?auth_mechanism=GSSAPI"
+                    "&kerberos_service_name=impala"
+                )
+                
+                # --- NOWA, POPRAWIONA LOGIKA OBSŁUGI SSL ---
+                # Sprawdzamy, czy SSL jest włączony w konfiguracji
+                use_ssl = config.getboolean(section, 'SSL', fallback=False)
 
-        engine = create_engine(connection_string, **engine_args)
-        
-        # Testowe połączenie przy tworzeniu silnika, aby od razu wyłapać błędy konfiguracyjne
-        with engine.connect() as connection:
-            self.logger.info(f"Testowe połączenie z '{db_name}' zakończone sukcesem.")
-        
-        self.connection_pools[db_name]['pool'] = engine
-        return engine
+                if use_ssl:
+                    self.logger.info(f"Wykryto konfigurację SSL dla '{section}'.")
+                    # Pobieramy ścieżkę do certyfikatu
+                    ca_certs_path = config.get(section, 'TrustedCerts', fallback=None)
+                    if not ca_certs_path:
+                        raise ValueError(f"SSL jest włączony dla '{section}', ale brakuje klucza 'TrustedCerts' w pliku .ini")
+                    
+                    # Dodajemy parametry SSL do connection stringa
+                    # Ważne: W SQLAlchemy używa się `ssl=true` a nie `SSL=1`
+                    connection_string += f"&ssl=true&ssl_ca_cert={ca_certs_path}"
+                
+                self.connections[section] = connection_string
+                self.logger.info(f"Utworzono SQLAlchemy connection string dla '{section}'.")
 
-    except Exception as e:
-        self.logger.error(f"Nie udało się utworzyć silnika SQLAlchemy dla '{db_name}': {e}")
-        raise
+            except (configparser.NoOptionError, configparser.NoSectionError, ValueError) as e:
+                self.logger.error(f"Błąd konfiguracji w odbc.ini dla sekcji '{section}': {e}")
+                raise # Rzucamy błąd, aby zatrzymać program
+
+# ... (reszta metody)
