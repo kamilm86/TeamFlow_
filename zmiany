@@ -1,66 +1,44 @@
-# W pliku db_m.py, w klasie DatabaseManager
+Doskonale, to jest dokładnie ten sam błąd, który mieliśmy wcześniej z Oracle, tylko tym razem dotyczy on Impali. Logika problemu i jego rozwiązanie są identyczne.
 
-def fetch_data(self, source_db: str, sql: str, params: Optional[Dict] = None) -> pd.DataFrame:
-    """
-    Wykonuje kompletny skrypt SQL: najpierw wszystkie polecenia modyfikujące 
-    (DELETE, INSERT, etc.), a na końcu ostatnie polecenie SELECT, 
-    którego wynik jest zwracany jako Pandas DataFrame.
-    """
-    engine = None
-    self.logger.info(f"Rozpoczynam zadanie 'fetch_data' na bazie '{source_db}'...")
-    try:
-        # Krok 1: Przygotuj i podziel na części cały skrypt SQL
-        all_commands = self.prepare_queries(sql, params, split_by_semicolon=True)
-        if not all_commands:
-            self.logger.warning("Brak poleceń SQL do wykonania.")
-            return pd.DataFrame()
+Błąd **`Can't load plugin: sqlalchemy.dialects:impala`** oznacza, że Twoje nowe środowisko wirtualne ma **niekompatybilne wersje bibliotek `SQLAlchemy` i `sqlalchemy-impala`**.
 
-        # Krok 2: Rozdziel polecenia przygotowawcze od finalnego zapytania SELECT
-        commands_to_execute = all_commands[:-1]
-        select_query = all_commands[-1]
-        
-        # Krok 3: Pobierz silnik z puli połączeń
-        engine = self.get_engine(source_db)
+Kiedy tworzysz nowe środowisko i instalujesz pakiety, `pip` domyślnie instaluje najnowsze dostępne wersje. Niestety, najnowsza `SQLAlchemy` (wersja 2.x) ma nowy system wtyczek, który nie jest kompatybilny ze starszymi sterownikami baz danych, takimi jak `sqlalchemy-impala`.
 
-        # Krok 4: Wykonaj polecenia przygotowawcze (jeśli istnieją)
-        if commands_to_execute:
-            self.logger.info(f"Wykonywanie {len(commands_to_execute)} poleceń przygotowawczych...")
-            with engine.connect() as connection:
-                with connection.begin() as transaction: # Rozpocznij transakcję
-                    try:
-                        for command in commands_to_execute:
-                            self.logger.info(f"Wykonywanie: {command[:100]}...")
-                            connection.execute(text(command))
-                        transaction.commit()
-                        self.logger.info("Polecenia przygotowawcze wykonane pomyślnie.")
-                    except Exception:
-                        self.logger.error("Błąd podczas wykonywania poleceń przygotowawczych. Wycofuję zmiany (rollback)...")
-                        transaction.rollback()
-                        raise # Rzuć błąd dalej, aby zatrzymać cały proces
-        else:
-            self.logger.info("Brak poleceń przygotowawczych do wykonania.")
+-----
 
-        # Krok 5: Wykonaj finalne zapytanie SELECT i pobierz dane w porcjach
-        self.logger.info("Wykonywanie finalnego zapytania SELECT...")
-        self.logger.info(f"Treść zapytania:\n{select_query}")
-        
-        df_list = []
-        for chunk_df in pd.read_sql(select_query, engine, chunksize=50000):
-            self.logger.info(f"Pobrano porcję {len(chunk_df)} wierszy.")
-            df_list.append(chunk_df)
+### \#\# Rozwiązanie: Instalacja Kompatybilnych Wersji
 
-        if not df_list:
-            self.logger.warning("Finalne zapytanie SELECT nie zwróciło żadnych danych.")
-            return pd.DataFrame()
-        
-        final_df = pd.concat(df_list, ignore_index=True)
-        self.logger.info(f"Pobrano łącznie {len(final_df)} wierszy.")
-        return final_df
+Musimy zrobić dokładnie to samo, co zrobiliśmy dla Oracle: odinstalować obecne wersje i zainstalować starsze, sprawdzone i w pełni ze sobą kompatybilne.
 
-    except Exception as e:
-        self.logger.error(f"Błąd krytyczny w metodzie fetch_data dla bazy {source_db}.", exc_info=True)
-        raise
-    finally:
-        if engine:
-            engine.dispose()
-            self.logger.info(f"Zwolniono pulę połączeń dla silnika {source_db}.")
+Proszę, wykonaj poniższe komendy w swoim terminalu, upewniając się, że nowe środowisko wirtualne jest aktywne.
+
+#### Krok 1: Czysta deinstalacja
+
+Najpierw odinstalujemy wszystko, co jest związane z Impalą i SQLAlchemy, aby zapewnić czysty start.
+
+```bash
+pip uninstall sqlalchemy sqlalchemy-impala thrift
+```
+
+(Potwierdź `y`, jeśli zapyta).
+
+#### Krok 2: Instalacja sprawdzonych, kompatybilnych wersji
+
+Teraz zainstalujemy wszystko w jednej komendzie, wymuszając wersje, o których wiemy, że ze sobą współpracują.
+
+```bash
+pip install "sqlalchemy<2.0" sqlalchemy-impala thrift pykerberos
+```
+
+  * **`"sqlalchemy<2.0"`**: To jest kluczowy element. Instaluje on najnowszą wersję z serii **1.x** (np. `1.4.x`), która jest w pełni kompatybilna z większością sterowników.
+  * **`sqlalchemy-impala`**: Zainstaluje wersję, która dobrze współpracuje z SQLAlchemy 1.x.
+  * **`thrift`**: Jest to kluczowa zależność dla `sqlalchemy-impala`, potrzebna do komunikacji z serwerem.
+  * **`pykerberos`**: Dodajemy go od razu, ponieważ wiemy, że jest wymagany do uwierzytelniania w Twoim środowisku.
+
+-----
+
+### \#\# Podsumowanie
+
+Tworząc nowe środowisko, niechcący trafiliśmy w "pułapkę" niekompatybilności najnowszych wersji. To bardzo częsty problem.
+
+Po wykonaniu powyższych komend, Twoja aplikacja będzie miała zestaw bibliotek, które zostały przetestowane i działają ze sobą bez problemów. Po ponownym uruchomieniu skryptu, błąd `Can't load plugin` dla Impali powinien zniknąć, a Twoje połączenie powinno zostać nawiązane pomyślnie.
