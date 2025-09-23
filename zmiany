@@ -1,9 +1,9 @@
-# W pliku db_m.py w klasie DatabaseManager
+# W klasie DatabaseManager
 
 def get_engine(self, db_name, max_retries=3):
     """
     Pobiera silnik SQLAlchemy z puli lub tworzy nowy.
-    Poprawnie obsługuje argumenty specyficzne dla sterowników.
+    Poprawnie obsługuje argumenty specyficzne dla sterowników, w tym SSL dla Impali.
     """
     if db_name in self.connection_pools and self.connection_pools[db_name]['pool'] is not None:
         return self.connection_pools[db_name]['pool']
@@ -12,7 +12,6 @@ def get_engine(self, db_name, max_retries=3):
     try:
         connection_string = self.connections[db_name]
         
-        # Argumenty wspólne dla wszystkich pul połączeń SQLAlchemy
         engine_args = {
             'pool_size': 5,
             'max_overflow': 10,
@@ -20,18 +19,35 @@ def get_engine(self, db_name, max_retries=3):
             'pool_pre_ping': True
         }
         
-        # --- POPRAWIONA LOGIKA ---
-        # Ustawiamy timeout dla połączeń, które go obsługują w connect_args 
-        # (czyli Impala i MS SQL przez pyodbc)
-        # WAŻNE: Nie przekazujemy już tutaj 'ssl', ponieważ jest on częścią URL-a dla Impali.
+        # --- NOWA, POPRAWIONA LOGIKA ---
+        connect_args = {}
+        
+        # Ustawiamy timeout dla połączeń ODBC
         if 'pyodbc' in connection_string or 'impala' in connection_string:
             self.logger.info(f"Ustawianie Query Timeout (3600s) dla połączenia '{db_name}'.")
-            engine_args['connect_args'] = {'timeout': 3600}
+            connect_args['timeout'] = 3600
 
-        # Tworzymy silnik. SQLAlchemy sam przekaże odpowiednie argumenty do sterownika.
+        # Logika specyficzna dla Impali - obsługa SSL z poprawnymi nazwami parametrów
+        if 'impala' in connection_string:
+            config = configparser.ConfigParser()
+            config.read(os.environ['ODBCINI'])
+            
+            use_ssl = config.getboolean(db_name, 'SSL', fallback=False)
+            if use_ssl:
+                self.logger.info(f"Konfigurowanie SSL dla Impali z poprawnymi parametrami...")
+                ca_cert_path = config.get(db_name, 'TrustedCerts', fallback=None)
+                if not ca_cert_path:
+                    raise ValueError(f"SSL jest włączony dla '{db_name}', ale brakuje klucza 'TrustedCerts'")
+                
+                # Używamy kluczy, które rozumie finalny sterownik: 'use_ssl' i 'ca_cert'
+                connect_args['use_ssl'] = True
+                connect_args['ca_cert'] = ca_cert_path
+
+        if connect_args:
+            engine_args['connect_args'] = connect_args
+
         engine = create_engine(connection_string, **engine_args)
         
-        # Testowe połączenie
         with engine.connect() as connection:
             self.logger.info(f"Testowe połączenie z '{db_name}' zakończone sukcesem.")
         
