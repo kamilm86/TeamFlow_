@@ -1,59 +1,54 @@
-# W klasie DatabaseManager
+# W pliku db_m.py, w klasie DatabaseManager
 
-def get_engine(self, db_name, max_retries=3):
+def fetch_data(self, source_db: str, sql: str, params: Optional[Dict] = None) -> pd.DataFrame:
     """
-    Pobiera silnik SQLAlchemy z puli lub tworzy nowy.
-    Poprawnie obsługuje argumenty specyficzne dla sterowników, w tym SSL dla Impali.
+    Pobiera dane, poprawnie obsługując parametry SQL i zarządzając pamięcią.
+    Jest to ostateczna, zunifikowana wersja metody.
     """
-    if db_name in self.connection_pools and self.connection_pools[db_name]['pool'] is not None:
-        return self.connection_pools[db_name]['pool']
-
-    self.logger.info(f"Tworzenie nowego silnika i puli połączeń dla: {db_name}")
+    engine = None
+    self.logger.info(f"Rozpoczynam pobieranie danych z bazy '{source_db}'...")
     try:
-        connection_string = self.connections[db_name]
+        # Krok 1: Przygotuj zapytanie, podstawiając parametry (np. daty)
+        # Zakładamy, że `prepare_queries` zwraca listę gotowych do wykonania zapytań
+        # i że dla `fetch_data` interesuje nas tylko ostatnie zapytanie SELECT.
+        # split_by_semicolon=False jest ważne dla zapytań CTE.
+        final_queries = self.prepare_queries(sql, params, split_by_semicolon=False)
         
-        engine_args = {
-            'pool_size': 5,
-            'max_overflow': 10,
-            'pool_recycle': 3500,
-            'pool_pre_ping': True
-        }
-        
-        # --- NOWA, POPRAWIONA LOGIKA ---
-        connect_args = {}
-        
-        # Ustawiamy timeout dla połączeń ODBC
-        if 'pyodbc' in connection_string or 'impala' in connection_string:
-            self.logger.info(f"Ustawianie Query Timeout (3600s) dla połączenia '{db_name}'.")
-            connect_args['timeout'] = 3600
+        if not final_queries:
+            self.logger.warning("Brak zapytań do wykonania po przygotowaniu.")
+            return pd.DataFrame()
 
-        # Logika specyficzna dla Impali - obsługa SSL z poprawnymi nazwami parametrów
-        if 'impala' in connection_string:
-            config = configparser.ConfigParser()
-            config.read(os.environ['ODBCINI'])
-            
-            use_ssl = config.getboolean(db_name, 'SSL', fallback=False)
-            if use_ssl:
-                self.logger.info(f"Konfigurowanie SSL dla Impali z poprawnymi parametrami...")
-                ca_cert_path = config.get(db_name, 'TrustedCerts', fallback=None)
-                if not ca_cert_path:
-                    raise ValueError(f"SSL jest włączony dla '{db_name}', ale brakuje klucza 'TrustedCerts'")
-                
-                # Używamy kluczy, które rozumie finalny sterownik: 'use_ssl' i 'ca_cert'
-                connect_args['use_ssl'] = True
-                connect_args['ca_cert'] = ca_cert_path
+        # Zakładamy, że interesuje nas ostatnie zapytanie z listy (jeśli jest ich więcej)
+        sql_to_execute = final_queries[-1]
 
-        if connect_args:
-            engine_args['connect_args'] = connect_args
+        self.logger.info("--- ROZPOCZYNAM WYKONYWANIE ZAPYTANIA SQL ---")
+        self.logger.info(f"Ostateczna treść zapytania:\n{sql_to_execute}")
+        self.logger.info("--- KONIEC TREŚCI ZAPYTANIA SQL ---")
 
-        engine = create_engine(connection_string, **engine_args)
-        
-        with engine.connect() as connection:
-            self.logger.info(f"Testowe połączenie z '{db_name}' zakończone sukcesem.")
-        
-        self.connection_pools[db_name]['pool'] = engine
-        return engine
+        # Krok 2: Pobierz silnik z puli połączeń
+        engine = self.get_engine(source_db)
+
+        # Krok 3: Wczytaj dane w bezpieczny sposób (porcjami)
+        chunk_size = 50000
+        df_list = []
+        self.logger.info(f"Pobieranie danych w porcjach (rozmiar: {chunk_size} wierszy)...")
+
+        for chunk_df in pd.read_sql(sql_to_execute, engine, chunksize=chunk_size):
+            self.logger.info(f"Pobrano porcję {len(chunk_df)} wierszy.")
+            df_list.append(chunk_df)
+
+        if not df_list:
+            self.logger.warning("Zapytanie nie zwróciło żadnych danych.")
+            return pd.DataFrame()
+
+        final_df = pd.concat(df_list, ignore_index=True)
+        self.logger.info(f"Pobrano łącznie {len(final_df)} wierszy.")
+        return final_df
 
     except Exception as e:
-        self.logger.error(f"Nie udało się utworzyć silnika SQLAlchemy dla '{db_name}': {e}")
+        self.logger.error(f"Błąd podczas pobierania danych z {source_db}.", exc_info=True)
         raise
+    finally:
+        if engine:
+            engine.dispose()
+            self.logger.info(f"Zwolniono pulę połączeń dla silnika {source_db}.")
