@@ -1,39 +1,43 @@
-# W metodzie _setup_connections w klasie DatabaseManager
+# W pliku db_m.py w klasie DatabaseManager
 
-# ... (pętla for section in config.sections():)
+def get_engine(self, db_name, max_retries=3):
+    """
+    Pobiera silnik SQLAlchemy z puli lub tworzy nowy.
+    Poprawnie obsługuje argumenty specyficzne dla sterowników.
+    """
+    if db_name in self.connection_pools and self.connection_pools[db_name]['pool'] is not None:
+        return self.connection_pools[db_name]['pool']
 
-        if clean_section == 'impala':
-            try:
-                host = config.get(section, 'HOST')
-                port = config.get(section, 'PORT')
-                
-                # Budujemy podstawowy connection string
-                connection_string = (
-                    f"impala://{host}:{port}/default"
-                    "?auth_mechanism=GSSAPI"
-                    "&kerberos_service_name=impala"
-                )
-                
-                # --- NOWA, POPRAWIONA LOGIKA OBSŁUGI SSL ---
-                # Sprawdzamy, czy SSL jest włączony w konfiguracji
-                use_ssl = config.getboolean(section, 'SSL', fallback=False)
+    self.logger.info(f"Tworzenie nowego silnika i puli połączeń dla: {db_name}")
+    try:
+        connection_string = self.connections[db_name]
+        
+        # Argumenty wspólne dla wszystkich pul połączeń SQLAlchemy
+        engine_args = {
+            'pool_size': 5,
+            'max_overflow': 10,
+            'pool_recycle': 3500,
+            'pool_pre_ping': True
+        }
+        
+        # --- POPRAWIONA LOGIKA ---
+        # Ustawiamy timeout dla połączeń, które go obsługują w connect_args 
+        # (czyli Impala i MS SQL przez pyodbc)
+        # WAŻNE: Nie przekazujemy już tutaj 'ssl', ponieważ jest on częścią URL-a dla Impali.
+        if 'pyodbc' in connection_string or 'impala' in connection_string:
+            self.logger.info(f"Ustawianie Query Timeout (3600s) dla połączenia '{db_name}'.")
+            engine_args['connect_args'] = {'timeout': 3600}
 
-                if use_ssl:
-                    self.logger.info(f"Wykryto konfigurację SSL dla '{section}'.")
-                    # Pobieramy ścieżkę do certyfikatu
-                    ca_certs_path = config.get(section, 'TrustedCerts', fallback=None)
-                    if not ca_certs_path:
-                        raise ValueError(f"SSL jest włączony dla '{section}', ale brakuje klucza 'TrustedCerts' w pliku .ini")
-                    
-                    # Dodajemy parametry SSL do connection stringa
-                    # Ważne: W SQLAlchemy używa się `ssl=true` a nie `SSL=1`
-                    connection_string += f"&ssl=true&ssl_ca_cert={ca_certs_path}"
-                
-                self.connections[section] = connection_string
-                self.logger.info(f"Utworzono SQLAlchemy connection string dla '{section}'.")
+        # Tworzymy silnik. SQLAlchemy sam przekaże odpowiednie argumenty do sterownika.
+        engine = create_engine(connection_string, **engine_args)
+        
+        # Testowe połączenie
+        with engine.connect() as connection:
+            self.logger.info(f"Testowe połączenie z '{db_name}' zakończone sukcesem.")
+        
+        self.connection_pools[db_name]['pool'] = engine
+        return engine
 
-            except (configparser.NoOptionError, configparser.NoSectionError, ValueError) as e:
-                self.logger.error(f"Błąd konfiguracji w odbc.ini dla sekcji '{section}': {e}")
-                raise # Rzucamy błąd, aby zatrzymać program
-
-# ... (reszta metody)
+    except Exception as e:
+        self.logger.error(f"Nie udało się utworzyć silnika SQLAlchemy dla '{db_name}': {e}")
+        raise
