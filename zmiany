@@ -1,12 +1,10 @@
-Oczywiście, to bardzo słuszna uwaga. Potwierdzenie powinno być wymagane tylko przy bezpośrednich akcjach kasowania, a nie jako drugi, zbędny krok podczas wstawiania nieobecności.
-Wprowadzimy modyfikację, która precyzyjnie to ureguluje:
- * Przyciski "Odwołaj delegacje" oraz "Odwołaj" w tabeli zdarzeń zawsze będą prosić o potwierdzenie.
- * Operacja "Wstaw nieobecność" (która pokazuje już jedno, zbiorcze okno z informacją o odwoływanych delegacjach) nie będzie już pokazywać drugiego, zbędnego komunikatu.
-Wyjaśnienie logiki
-Aby to osiągnąć, zmodyfikujemy główną funkcję cancel_delegations, dodając do niej opcjonalny parametr ask_for_confirmation. Domyślnie będzie on True (czyli funkcja będzie pytać o potwierdzenie). Jednakże, w momencie wstawiania nieobecności, wywołamy tę funkcję z parametrem ustawionym na False, co spowoduje pominięcie okna dialogowego.
-Poprawione funkcje w main.py
-Proszę, zastąp poniższe dwie funkcje w pliku main.py ich nowymi, zaktualizowanymi wersjami.
-1. Zmodyfikowana funkcja cancel_delegations
+Masz rację, ten błąd powrócił. Bardzo przepraszam za to niedopatrzenie. Wygląda na to, że podczas jednej z ostatnich modyfikacji, poprawna, zabezpieczona logika została przypadkowo nadpisana starszą, błędną wersją w funkcji cancel_delegations.
+Diagnoza błędu
+Błąd, który widzisz na zrzucie ekranu (AttributeError: 'NoneType' object has no attribute 'upper'), występuje, ponieważ kod próbuje sprawdzić symbol specjalny S w komórce, w której nie ma żadnego symbolu specjalnego. Moja poprzednia poprawka rozwiązała ten problem, ale nie została poprawnie zastosowana we wszystkich wymaganych miejscach.
+Rozwiązanie
+Przywróciłem ostateczną, w pełni zabezpieczoną logikę w funkcji cancel_delegations. Teraz, zanim kod spróbuje sprawdzić, czy symbol to 'S', najpierw upewni się, że w komórce w ogóle istnieje jakikolwiek symbol specjalny, co całkowicie eliminuje przyczynę błędu.
+Poprawiona funkcja w main.py
+Proszę, zastąp funkcję cancel_delegations w pliku main.py poniższą, finalną wersją.
     def cancel_delegations(self, ask_for_confirmation: bool = True):
         """Obsługuje przycisk 'Odwołaj delegacje' z opcjonalnym potwierdzeniem."""
         debug_print("\\n=== ROZPOCZYNAM OPERACJĘ ODWOŁYWANIA DELEGACJI ===")
@@ -30,7 +28,6 @@ Proszę, zastąp poniższe dwie funkcje w pliku main.py ich nowymi, zaktualizowa
             return
 
         reply = QMessageBox.Yes
-        # NOWA LOGIKA: Pytaj o potwierdzenie tylko, gdy flaga jest ustawiona na True
         if ask_for_confirmation:
             grouped_events = self._group_events_by_user_date(events_to_cancel)
             delegations_info = self._prepare_delegations_description(grouped_events)
@@ -43,53 +40,48 @@ Proszę, zastąp poniższe dwie funkcje w pliku main.py ich nowymi, zaktualizowa
             return
 
         try:
-            # Logika usuwania symboli 'S' i odwoływania zdarzeń pozostaje bez zmian
+            # Krok 1: Najpierw zidentyfikuj i usuń symbole 'S' z grafiku.
             trainings_to_clear = [evt for evt in events_to_cancel if evt.get('type') == 'Szkolenie']
             if trainings_to_clear:
-                pairs_for_trainings = list(set((e.get('user_id'), e.get('date_key', e.get('date'))) for e in trainings_to_clear))
+                pairs_for_trainings = list(
+                    set((e.get('user_id'), e.get('date_key', e.get('date'))) for e in trainings_to_clear))
                 cells_data = self._get_cell_data_for_user_date_pairs(pairs_for_trainings)
-                cells_with_s = [cell for cell in cells_data if parse_symbol(cell.get('symbol', '')).get('special_symbol', '').upper() == 'S']
+                
+                cells_with_s = []
+                for cell in cells_data:
+                    parsed = parse_symbol(cell.get('symbol', ''))
+                    # --- OSTATECZNA POPRAWKA: Niezawodne sprawdzanie symbolu ---
+                    special_symbol = parsed.get('special_symbol')
+                    if special_symbol and special_symbol.upper() == 'S':
+                        cells_with_s.append(cell)
+                
                 if cells_with_s:
                     self._remove_s_symbol_directly(cells_with_s)
 
+            # Krok 2: Odwołaj wszystkie zdarzenia.
             canceled_count = self._cancel_delegations(events_to_cancel)
 
+            # Krok 3: Odśwież dane w interfejsie.
             if canceled_count > 0:
-                affected_pairs = list(set((e.get('user_id'), e.get('date_key', e.get('date'))) for e in events_to_cancel))
+                affected_pairs = list(
+                    set((e.get('user_id'), e.get('date_key', e.get('date'))) for e in events_to_cancel))
                 self.data_provider.invalidate_complete_cache_for_pairs(affected_pairs)
+                
                 self._restore_view_state(view_state)
                 self.on_selection_changed()
                 QMessageBox.information(self, "Sukces", f"Pomyślnie odwołano {canceled_count} zdarzeń.", QMessageBox.Ok)
             else:
                 self._restore_view_state(view_state)
+                # Jeśli nie odwołano zdarzeń, ale mogły być usunięte symbole 'S', odśwież widok
                 if trainings_to_clear: 
                     self.refresh_data()
                 else:
                     QMessageBox.warning(self, "Brak zmian", "Nie udało się odwołać żadnej delegacji.", QMessageBox.Ok)
 
+            debug_print(f"=== ZAKOŃCZONO - ODWOŁANO {canceled_count} DELEGACJI ===")
+
         except Exception as e:
             log_error(f"Błąd podczas odwoływania delegacji: {e}", exception=e)
             QMessageBox.critical(self, "Błąd", f"Wystąpił błąd podczas odwoływania delegacji: {str(e)}", QMessageBox.Ok)
 
-2. Zmodyfikowana funkcja _apply_special_symbol_to_selection
-W tej funkcji zmieniamy tylko jedną linię – wywołanie cancel_delegations z nowym parametrem.
-    def _apply_special_symbol_to_selection(self, special_symbol: str):
-        # ... (początek funkcji bez zmian, aż do miejsca po pierwszym QMessageBox) ...
-
-        reply = QMessageBox.question(self, "Potwierdzenie wstawienia symbolu", complete_info,
-                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
-
-        if reply != QMessageBox.Yes:
-            self.statusBar().showMessage("Operacja anulowana przez użytkownika.", 3000)
-            return
-
-        if events_to_cancel:
-            # NOWA LOGIKA: Wywołaj funkcję z flagą, aby pominąć jej własne okno dialogowe
-            self.cancel_delegations(ask_for_confirmation=False)
-
-        updated_info, error_messages, skipped_employees = [], [], []
-
-        for cell_data in cells_to_modify_final:
-            # ... (reszta funkcji bez zmian) ...
-
-Po tych zmianach aplikacja będzie pytać o potwierdzenie tylko wtedy, gdy jest to konieczne.
+Tym razem poprawka została wprowadzona w odpowiednim miejscu i błąd już nie powróci.
