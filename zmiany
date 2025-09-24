@@ -1,287 +1,95 @@
-Znalazłem błąd. Problem polegał na tym, że funkcja analityczna w oknie "Obsada" niepoprawnie odczytywała format daty i czasu dla zdarzeń typu "Nadgodziny", co powodowało, że wszystkie tego typu zdarzenia były po cichu ignorowane podczas zliczania.
-
-### Wyjaśnienie błędu
-
-Funkcja `_calculate_overtime_summary_detailed` oczekiwała, że czas rozpoczęcia i zakończenia nadgodzin będzie w formacie `GG:MM` (np. `17:30`), podczas gdy w rzeczywistości dane te mają format `RRRR-MM-DD GG:MM` (np. `2025-08-20 17:30`). Ta niezgodność formatów powodowała błąd przy każdej próbie przetworzenia zdarzenia, w wyniku czego suma nadgodzin zawsze wynosiła zero.
-
-### Rozwiązanie
-
-Poprawiłem tę jedną funkcję, aby prawidłowo odczytywała pełny format daty i czasu. To wystarczy, aby cała zakładka "Nadgodziny" zaczęła działać poprawnie.
-
------
-
-### Poprawiona funkcja w `staffing_details_window.py`
-
-Proszę, zastąp w pliku `staffing_details_window.py` całą funkcję `_calculate_overtime_summary_detailed` poniższą, poprawną wersją.
-
-```python
-    def _calculate_overtime_summary_detailed(self, schedule_data, all_events):
-        summary = defaultdict(lambda: {"wypłata": 0.0, "odbiór": 0.0, "odpracowanie": 0.0})
-        user_info = {key[3]: (key[0] or "Brak", key[2] or "Brak") for key in schedule_data.keys()}
+Oczywiście, to bardzo słuszna uwaga. Potwierdzenie powinno być wymagane tylko przy bezpośrednich akcjach kasowania, a nie jako drugi, zbędny krok podczas wstawiania nieobecności.
+Wprowadzimy modyfikację, która precyzyjnie to ureguluje:
+ * Przyciski "Odwołaj delegacje" oraz "Odwołaj" w tabeli zdarzeń zawsze będą prosić o potwierdzenie.
+ * Operacja "Wstaw nieobecność" (która pokazuje już jedno, zbiorcze okno z informacją o odwoływanych delegacjach) nie będzie już pokazywać drugiego, zbędnego komunikatu.
+Wyjaśnienie logiki
+Aby to osiągnąć, zmodyfikujemy główną funkcję cancel_delegations, dodając do niej opcjonalny parametr ask_for_confirmation. Domyślnie będzie on True (czyli funkcja będzie pytać o potwierdzenie). Jednakże, w momencie wstawiania nieobecności, wywołamy tę funkcję z parametrem ustawionym na False, co spowoduje pominięcie okna dialogowego.
+Poprawione funkcje w main.py
+Proszę, zastąp poniższe dwie funkcje w pliku main.py ich nowymi, zaktualizowanymi wersjami.
+1. Zmodyfikowana funkcja cancel_delegations
+    def cancel_delegations(self, ask_for_confirmation: bool = True):
+        """Obsługuje przycisk 'Odwołaj delegacje' z opcjonalnym potwierdzeniem."""
+        debug_print("\\n=== ROZPOCZYNAM OPERACJĘ ODWOŁYWANIA DELEGACJI ===")
         
-        for event in all_events:
-            if event.get('type') == 'Nadgodziny':
-                user_id = event.get('user_id')
-                if user_id in user_info:
-                    try:
-                        # --- POPRAWKA: Użyj prawidłowego formatu daty i czasu 'YYYY-MM-DD HH:MM' ---
-                        time_from_str = event.get('time_from')
-                        time_to_str = event.get('time_to')
-
-                        if not time_from_str or not time_to_str:
-                            continue
-
-                        t_from = dt.datetime.strptime(time_from_str, '%Y-%m-%d %H:%M')
-                        t_to = dt.datetime.strptime(time_to_str, '%Y-%m-%d %H:%M')
-                        # --- KONIEC POPRAWKI ---
-
-                        duration = (t_to - t_from).total_seconds() / 3600.0
-                        if duration < 0:
-                            duration += 24.0
-                        
-                        status = event.get('status', '').lower()
-                        if 'wypłata' in status:
-                            summary[user_id]['wypłata'] += duration
-                        elif 'odbiór' in status:
-                            summary[user_id]['odbiór'] += duration
-                        elif 'odpracowanie' in status:
-                            summary[user_id]['odpracowanie'] += duration
-                        else:
-                            summary[user_id]['wypłata'] += duration
-                    except (ValueError, IndexError) as e:
-                        log_error(f"Błąd przetwarzania zdarzenia nadgodzin: {event}. Błąd: {e}")
-                        continue
-                    
-        result = []
-        for user_id, hours in summary.items():
-            if sum(hours.values()) > 0:
-                wydzial, nazwa = user_info.get(user_id, ("N/A", "N/A"))
-                result.append(
-                    [wydzial, nazwa, hours['wypłata'], hours['odbiór'], hours['odpracowanie'], sum(hours.values())])
-        return sorted(result, key=lambda x: (x[0], x[1]))
-```
-
-Po tej zmianie zakładka "Nadgodziny" będzie poprawnie analizować i zliczać wszystkie nadgodziny dla przefiltrowanych pracowników.
-
-
-Widzę błąd. Dziękuję za zrzut ekranu i logi, precyzyjnie wskazują na problem.
-
-### Diagnoza błędu
-
-Błąd `AttributeError: 'NoneType' object has no attribute 'series'` występuje w funkcji `_handle_bar_hover`, która jest odpowiedzialna za wyświetlanie dymku z informacją po najechaniu na słupek wykresu nadgodzin.
-
-Przyczyną jest niestabilna metoda `self.sender()`, która w tym konkretnym przypadku nie potrafi prawidłowo zidentyfikować obiektu (serii danych), który wysłał sygnał. Zamiast tego zwraca `None` (nic), co prowadzi do awarii przy próbie odwołania się do jego właściwości.
-
-### Rozwiązanie
-
-Rozwiązanie polega na rezygnacji z zawodnej metody `self.sender()` i przekazaniu wszystkich potrzebnych informacji (w tym przypadku listy kategorii, czyli nazw wydziałów) bezpośrednio do funkcji obsługującej. Jest to znacznie bardziej niezawodne i nowoczesne podejście.
-
------
-
-### Poprawione funkcje w `staffing_details_window.py`
-
-Proszę, zastąp w pliku `staffing_details_window.py` poniższe dwie funkcje ich nowymi, poprawnymi wersjami.
-
-#### 1\. Zmodyfikowana funkcja `_update_overtime_charts`
-
-W tej funkcji zmieniamy tylko jedną linię, aby przekazać listę kategorii (`categories`) do funkcji `_handle_bar_hover`.
-
-```python
-    def _update_overtime_charts(self, overtime_data):
-        # --- SEKCJA 1: Wykres Słupkowy (Nadgodziny wg Wydziału) ---
-        dept_hours = defaultdict(float)
-        for row in overtime_data:
-            dept_hours[row[0]] += row[5]
-
-        bar_series = QBarSeries()
-        categories = []
-        if dept_hours:
-            bar_set = QBarSet("Suma godzin")
-            sorted_depts = sorted(dept_hours.keys())
-            for dept in sorted_depts:
-                bar_set.append(dept_hours[dept])
-                categories.append(dept)
-            bar_series.append(bar_set)
-            
-            # --- ZMIANA: Przekazujemy listę kategorii 'c' bezpośrednio do handlera ---
-            bar_set.hovered.connect(
-                lambda status, index, s=bar_set, c=categories: self._handle_bar_hover(status, index, s, c)
-            )
-            bar_series.setLabelsVisible(True)
-
-        bar_chart = QChart()
-        bar_chart.addSeries(bar_series)
-        bar_chart.setTitle("Nadgodziny wg wydziału")
-        bar_chart.legend().setVisible(False)
-
-        axis_x = QBarCategoryAxis()
-        if categories: axis_x.append(categories)
-        bar_chart.addAxis(axis_x, Qt.AlignmentFlag.AlignBottom)
-        bar_series.attachAxis(axis_x)
-
-        axis_y = QValueAxis()
-        bar_chart.addAxis(axis_y, Qt.AlignmentFlag.AlignLeft)
-        bar_series.attachAxis(axis_y)
-
-        if self.is_dark_theme:
-            bar_chart.setTheme(QChart.ChartTheme.ChartThemeDark)
-            bar_chart.legend().setLabelColor(QColor("white"))
-        else:
-            bar_chart.setTheme(QChart.ChartTheme.ChartThemeLight)
-            bar_chart.legend().setLabelColor(QColor("black"))
-
-        self.overtime_chart.setChart(bar_chart)
-
-        # --- SEKCJA 2: Wykres Kołowy (Podział nadgodzin wg typu) ---
-        type_hours = defaultdict(float)
-        for row in overtime_data:
-            type_hours["Do wypłaty"] += row[2]
-            type_hours["Do odbioru"] += row[3]
-            type_hours["Odpracowanie"] += row[4]
-
-        pie_series = QPieSeries()
-        total_overtime = sum(type_hours.values())
-        if total_overtime > 0:
-            for name, value in type_hours.items():
-                if value > 0:
-                    pie_slice = pie_series.append(f"{name} ({value:.1f}h)", value)
-                    pie_slice.setLabel(f"{name}\\n{value / total_overtime:.1%}")
-                    pie_slice.setLabelVisible(True)
-
-        pie_chart = QChart()
-        pie_chart.addSeries(pie_series)
-        pie_chart.setTitle("Podział nadgodzin wg typu")
-        pie_chart.legend().setVisible(False)
-
-        if self.is_dark_theme:
-            pie_chart.setTheme(QChart.ChartTheme.ChartThemeDark)
-            pie_chart.legend().setLabelColor(QColor("white"))
-        else:
-            pie_chart.setTheme(QChart.ChartTheme.ChartThemeLight)
-            pie_chart.legend().setLabelColor(QColor("black"))
-
-        self.overtime_pie_chart.setChart(pie_chart)
-```
-
-#### 2\. Zmodyfikowana funkcja `_handle_bar_hover`
-
-Ta funkcja teraz bezpośrednio odczytuje nazwę kategorii z przekazanej listy, zamiast używać zawodnej metody `sender()`.
-
-```python
-    def _handle_bar_hover(self, status, index, bar_set, categories):
-        """Obsługuje najechanie na słupek wykresu słupkowego."""
-        if status:
-            try:
-                # --- ZMIANA: Bezpośredni i niezawodny dostęp do nazwy kategorii ---
-                category = categories[index]
-                value = bar_set.at(index)
-                tooltip_text = f"Wydział: {category}\\nSuma godzin: {value:.1f}"
-                QToolTip.showText(QCursor.pos(), tooltip_text, self)
-            except IndexError:
-                # Zabezpieczenie na wypadek, gdyby index był poza zakresem
-                QToolTip.hideText()
-        else:
-            QToolTip.hideText()
-```
-
-Po tych zmianach błąd zniknie, a dymki z informacjami na wykresie nadgodzin będą działać poprawnie.
-
-Rozumiem. Problem, w którym skrót klawiszowy przestaje działać, jest często związany z tym, który element interfejsu ma w danym momencie fokus (jest aktywny), a także z potencjalnym konfliktem w definicji skrótów.
-
-### Diagnoza błędu
-
-W Twojej aplikacji skrót `Insert` był zdefiniowany w dwóch miejscach jednocześnie:
-
-1.  Jako globalny obiekt `QShortcut` w metodzie `__init__`.
-2.  Bezpośrednio w przycisku "Dodaj nadgodziny" za pomocą `.setShortcut("Insert")`.
-
-Taka podwójna definicja może prowadzić do konfliktów. Dodatkowo, skrót przypisany do przycisku działa tylko wtedy, gdy przycisk jest aktywny (`setEnabled(True)`). Poprzednia poprawka co prawda aktywowała przycisk, ale w złożonym interfejsie z wieloma tabelami, bardziej niezawodnym rozwiązaniem jest użycie jednego, centralnie zarządzanego obiektu `QShortcut`.
-
-### Rozwiązanie
-
-Wprowadzimy zmiany, które ujednolicą i uproszczą obsługę tego skrótu, zapewniając jego niezawodne działanie:
-
-1.  Usuniemy skrót z definicji przycisku.
-2.  Będziemy używać **wyłącznie** obiektu `QShortcut`, którego stan (włączony/wyłączony) będziemy precyzyjnie kontrolować w zależności od tego, ile komórek jest zaznaczonych.
-
------
-
-### Poprawione funkcje w `main.py`
-
-Proszę, wprowadź poniższe trzy modyfikacje w pliku `main.py`.
-
-#### 1\. Zmodyfikuj funkcję `__init__`
-
-Upewnij się, że obiekt `QShortcut` dla klawisza `Insert` jest tworzony i domyślnie wyłączony.
-
-```python
-    def __init__(self):
-        # ... (początek funkcji bez zmian) ...
-        self.shortcut_f4 = QShortcut(QKeySequence(Qt.Key_F4), self)
-        self.shortcut_f4.activated.connect(self.show_insert_symbol_dialog)
-
-        # Upewnij się, że te linie istnieją i skrót jest domyślnie wyłączony
-        self.shortcut_insert = QShortcut(QKeySequence(Qt.Key_Insert), self)
-        self.shortcut_insert.activated.connect(self.show_add_overtime_dialog)
-        self.shortcut_insert.setEnabled(False) 
-
-        self.shortcut_f12 = QShortcut(QKeySequence(Qt.Key_F12), self)
-        self.shortcut_f12.activated.connect(self.clear_special_symbol_from_selected_cells)
-        # ... (reszta funkcji bez zmian) ...
-```
-
-#### 2\. Zmodyfikuj funkcję `setup_schedule_buttons`
-
-Usuwamy definicję skrótu bezpośrednio z przycisku, aby uniknąć konfliktu.
-
-```python
-    def setup_schedule_buttons(self):
-        """Tworzy przyciski akcji dla sekcji grafiku"""
-        # ... (początek funkcji bez zmian) ...
-        self.cancel_delegation_button.clicked.connect(self.cancel_delegations)
-        button_layout.addWidget(self.cancel_delegation_button)
-        
-        self.add_overtime_button = QPushButton("Dodaj nadgodziny")
-        # self.add_overtime_button.setShortcut("Insert") # <-- USUŃ TĘ LINIĘ
-        self.add_overtime_button.setToolTip("Dodaj nadgodziny dla zaznaczonych komórek (Insert)")
-        self.add_overtime_button.clicked.connect(self.show_add_overtime_dialog)
-        button_layout.addWidget(self.add_overtime_button)
-        
-        return button_frame
-```
-
-#### 3\. Zmodyfikuj funkcję `_handle_selection_change`
-
-To jest kluczowa zmiana. Będziemy tu włączać lub wyłączać zarówno przycisk, jak i nasz obiekt `QShortcut` w zależności od liczby zaznaczonych komórek.
-
-```python
-    def _handle_selection_change(self):
-        """Faktyczna obsługa zmiany zaznaczenia (wywoływana po debounce)."""
-        if hasattr(self, '_updating_selection') and self._updating_selection:
+        selected_cells_data = self.get_selected_cells_data()
+        if not self._can_modify_cells(selected_cells_data):
             return
 
-        self._updating_selection = True
-        try:
-            debug_print("Zmiana zaznaczenia - aktualizuję tabelę zdarzeń...")
-            selected_cells_data = self.table.get_data_for_selected_cells()
-            debug_print(f"Zaznaczono {len(selected_cells_data)} komórek")
-
-            # Sprawdź, czy zaznaczono dokładnie jedną komórkę
-            is_one_cell_selected = len(selected_cells_data) == 1
-
-            # Zaktualizuj stan przycisku ORAZ obiektu skrótu klawiszowego
-            if hasattr(self, 'add_overtime_button'):
-                self.add_overtime_button.setEnabled(is_one_cell_selected)
-            if hasattr(self, 'shortcut_insert'):
-                self.shortcut_insert.setEnabled(is_one_cell_selected)
+        if not selected_cells_data:
+            QMessageBox.warning(self, "Brak zaznaczenia", "Zaznacz komórki, dla których chcesz odwołać delegacje.", QMessageBox.Ok)
+            return
             
-            # Włącz przycisk "Wyślij e-mail", jeśli cokolwiek jest zaznaczone
-            if hasattr(self, 'send_email_button'):
-                self.send_email_button.setEnabled(bool(selected_cells_data))
+        view_state = self._save_view_state()
 
-            if selected_cells_data and len(selected_cells_data) > 0:
-                events = []
-                # ... (reszta funkcji bez zmian) ...
-```
+        user_date_pairs = [(cell.get('uzytkownik_id'), cell.get('date_str')) for cell in selected_cells_data if
+                           cell.get('uzytkownik_id') and cell.get('date_str')]
+        
+        events_to_cancel = self._find_events_to_cancel(user_date_pairs)
+        if not events_to_cancel:
+            QMessageBox.information(self, "Brak delegacji", "Nie znaleziono aktywnych delegacji do odwołania dla zaznaczonych komórek.", QMessageBox.Ok)
+            return
 
-Po tych zmianach skrót klawiszowy `Insert` będzie działał niezawodnie, niezależnie od tego, który element interfejsu ma fokus, pod warunkiem, że w grafiku zaznaczona jest dokładnie jedna komórka.
+        reply = QMessageBox.Yes
+        # NOWA LOGIKA: Pytaj o potwierdzenie tylko, gdy flaga jest ustawiona na True
+        if ask_for_confirmation:
+            grouped_events = self._group_events_by_user_date(events_to_cancel)
+            delegations_info = self._prepare_delegations_description(grouped_events)
+            confirm_message = f"Czy na pewno chcesz odwołać następujące delegacje?\\n\\n{delegations_info}"
+            reply = QMessageBox.question(self, "Potwierdzenie odwołania delegacji", confirm_message,
+                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+
+        if reply != QMessageBox.Yes:
+            debug_print("=== OPERACJA ANULOWANA PRZEZ UŻYTKOWNIKA ===")
+            return
+
+        try:
+            # Logika usuwania symboli 'S' i odwoływania zdarzeń pozostaje bez zmian
+            trainings_to_clear = [evt for evt in events_to_cancel if evt.get('type') == 'Szkolenie']
+            if trainings_to_clear:
+                pairs_for_trainings = list(set((e.get('user_id'), e.get('date_key', e.get('date'))) for e in trainings_to_clear))
+                cells_data = self._get_cell_data_for_user_date_pairs(pairs_for_trainings)
+                cells_with_s = [cell for cell in cells_data if parse_symbol(cell.get('symbol', '')).get('special_symbol', '').upper() == 'S']
+                if cells_with_s:
+                    self._remove_s_symbol_directly(cells_with_s)
+
+            canceled_count = self._cancel_delegations(events_to_cancel)
+
+            if canceled_count > 0:
+                affected_pairs = list(set((e.get('user_id'), e.get('date_key', e.get('date'))) for e in events_to_cancel))
+                self.data_provider.invalidate_complete_cache_for_pairs(affected_pairs)
+                self._restore_view_state(view_state)
+                self.on_selection_changed()
+                QMessageBox.information(self, "Sukces", f"Pomyślnie odwołano {canceled_count} zdarzeń.", QMessageBox.Ok)
+            else:
+                self._restore_view_state(view_state)
+                if trainings_to_clear: 
+                    self.refresh_data()
+                else:
+                    QMessageBox.warning(self, "Brak zmian", "Nie udało się odwołać żadnej delegacji.", QMessageBox.Ok)
+
+        except Exception as e:
+            log_error(f"Błąd podczas odwoływania delegacji: {e}", exception=e)
+            QMessageBox.critical(self, "Błąd", f"Wystąpił błąd podczas odwoływania delegacji: {str(e)}", QMessageBox.Ok)
+
+2. Zmodyfikowana funkcja _apply_special_symbol_to_selection
+W tej funkcji zmieniamy tylko jedną linię – wywołanie cancel_delegations z nowym parametrem.
+    def _apply_special_symbol_to_selection(self, special_symbol: str):
+        # ... (początek funkcji bez zmian, aż do miejsca po pierwszym QMessageBox) ...
+
+        reply = QMessageBox.question(self, "Potwierdzenie wstawienia symbolu", complete_info,
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+
+        if reply != QMessageBox.Yes:
+            self.statusBar().showMessage("Operacja anulowana przez użytkownika.", 3000)
+            return
+
+        if events_to_cancel:
+            # NOWA LOGIKA: Wywołaj funkcję z flagą, aby pominąć jej własne okno dialogowe
+            self.cancel_delegations(ask_for_confirmation=False)
+
+        updated_info, error_messages, skipped_employees = [], [], []
+
+        for cell_data in cells_to_modify_final:
+            # ... (reszta funkcji bez zmian) ...
+
+Po tych zmianach aplikacja będzie pytać o potwierdzenie tylko wtedy, gdy jest to konieczne.
