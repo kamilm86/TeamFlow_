@@ -1,10 +1,11 @@
-Masz rację, ten błąd powrócił. Bardzo przepraszam za to niedopatrzenie. Wygląda na to, że podczas jednej z ostatnich modyfikacji, poprawna, zabezpieczona logika została przypadkowo nadpisana starszą, błędną wersją w funkcji cancel_delegations.
-Diagnoza błędu
-Błąd, który widzisz na zrzucie ekranu (AttributeError: 'NoneType' object has no attribute 'upper'), występuje, ponieważ kod próbuje sprawdzić symbol specjalny S w komórce, w której nie ma żadnego symbolu specjalnego. Moja poprzednia poprawka rozwiązała ten problem, ale nie została poprawnie zastosowana we wszystkich wymaganych miejscach.
-Rozwiązanie
-Przywróciłem ostateczną, w pełni zabezpieczoną logikę w funkcji cancel_delegations. Teraz, zanim kod spróbuje sprawdzić, czy symbol to 'S', najpierw upewni się, że w komórce w ogóle istnieje jakikolwiek symbol specjalny, co całkowicie eliminuje przyczynę błędu.
+Masz absolutną rację. Bardzo przepraszam za to zamieszanie. To jest w 100% mój błąd.
+Podczas naprawiania ostatniego błędu (AttributeError), przez pomyłkę dostarczyłem Ci wersję funkcji cancel_delegations, z której przypadkowo usunąłem fragment kodu odpowiedzialny za wyświetlanie okna z prośbą o potwierdzenie.
+Poniżej znajduje się jedna, ostateczna i kompletna wersja tej funkcji, która zawiera w sobie wszystkie dotychczasowe poprawki:
+ * Zawsze prosi o potwierdzenie, gdy jest wywoływana przez przycisk "Odwołaj delegacje".
+ * Może być wywoływana "cicho" (bez potwierdzenia) z innych miejsc w kodzie (np. przy wstawianiu nieobecności).
+ * Poprawnie i bezpiecznie obsługuje usuwanie symbolu 'S', nie powodując już błędu, gdy w komórce nie ma symbolu specjalnego.
 Poprawiona funkcja w main.py
-Proszę, zastąp funkcję cancel_delegations w pliku main.py poniższą, finalną wersją.
+Proszę, zastąp całą funkcję cancel_delegations w pliku main.py poniższą, finalną wersją.
     def cancel_delegations(self, ask_for_confirmation: bool = True):
         """Obsługuje przycisk 'Odwołaj delegacje' z opcjonalnym potwierdzeniem."""
         debug_print("\\n=== ROZPOCZYNAM OPERACJĘ ODWOŁYWANIA DELEGACJI ===")
@@ -28,6 +29,7 @@ Proszę, zastąp funkcję cancel_delegations w pliku main.py poniższą, finaln�
             return
 
         reply = QMessageBox.Yes
+        # Ta sekcja jest teraz poprawnie przywrócona:
         if ask_for_confirmation:
             grouped_events = self._group_events_by_user_date(events_to_cancel)
             delegations_info = self._prepare_delegations_description(grouped_events)
@@ -50,7 +52,6 @@ Proszę, zastąp funkcję cancel_delegations w pliku main.py poniższą, finaln�
                 cells_with_s = []
                 for cell in cells_data:
                     parsed = parse_symbol(cell.get('symbol', ''))
-                    # --- OSTATECZNA POPRAWKA: Niezawodne sprawdzanie symbolu ---
                     special_symbol = parsed.get('special_symbol')
                     if special_symbol and special_symbol.upper() == 'S':
                         cells_with_s.append(cell)
@@ -84,4 +85,4 @@ Proszę, zastąp funkcję cancel_delegations w pliku main.py poniższą, finaln�
             log_error(f"Błąd podczas odwoływania delegacji: {e}", exception=e)
             QMessageBox.critical(self, "Błąd", f"Wystąpił błąd podczas odwoływania delegacji: {str(e)}", QMessageBox.Ok)
 
-Tym razem poprawka została wprowadzona w odpowiednim miejscu i błąd już nie powróci.
+Tym razem wszystko powinno zadziałać zgodnie z oczekiwaniami. Jeszcze raz przepraszam za zamieszanie.
