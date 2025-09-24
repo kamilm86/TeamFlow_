@@ -1,9 +1,9 @@
-Masz absolutną rację. Moja wina – podczas ostatniej poprawki, w funkcji cancel_delegations przez pomyłkę usunąłem fragment kodu odpowiedzialny za wyświetlanie okna z prośbą o potwierdzenie. Dziękuję za Twoją cierpliwość i ponowne zgłoszenie problemu.
-Przywróciłem brakującą logikę. Poniżej znajduje się finalna, w pełni poprawna wersja tej funkcji. Gwarantuje ona, że:
- * Przycisk "Odwołaj delegacje" zawsze wyświetli okno z prośbą o potwierdzenie.
- * Logika usuwania symbolu 'S' jest zabezpieczona przed błędem, gdy w komórce nie ma symbolu specjalnego.
-Poprawiona funkcja w main.py
-Proszę, zastąp w pliku main.py całą funkcję cancel_delegations poniższą, ostateczną wersją.
+Rozumiem. Przepraszam za to zamieszanie – ten problem jest wynikiem błędu w jednej z moich poprzednich poprawek, gdzie przez pomyłkę usunąłem kluczowy fragment kodu. Twoja analiza jest prawidłowa, problem nie leży w delete_event, ale w cancel_delegations.
+Dokładna analiza problemu
+Funkcja cancel_delegations, która jest wywoływana przez przycisk "Odwołaj delegacje", w wersji, którą ostatnio Ci podałem, nie zawierała bloku kodu odpowiedzialnego za wyświetlenie okna z prośbą o potwierdzenie. Mimo że funkcja przyjmowała parametr ask_for_confirmation, nie było w niej logiki, która by go wykorzystała do pokazania dialogu.
+Ostateczne rozwiązanie
+Poniżej znajduje się jedna, ostateczna i w pełni kompletna wersja funkcji cancel_delegations. Zawiera ona wszystkie dotychczasowe poprawki i, co najważniejsze, przywraca brakujący kod, który wyświetla okno z prośbą o potwierdzenie.
+Proszę, zastąp całą funkcję cancel_delegations w pliku main.py poniższą wersją.
     def cancel_delegations(self, ask_for_confirmation: bool = True):
         """Obsługuje przycisk 'Odwołaj delegacje' z opcjonalnym potwierdzeniem."""
         debug_print("\\n=== ROZPOCZYNAM OPERACJĘ ODWOŁYWANIA DELEGACJI ===")
@@ -27,7 +27,7 @@ Proszę, zastąp w pliku main.py całą funkcję cancel_delegations poniższą, 
             return
 
         reply = QMessageBox.Yes
-        # --- PRZYWRÓCONA LOGIKA POTWIERDZENIA ---
+        # --- POPRAWKA: Ten blok został przywrócony ---
         if ask_for_confirmation:
             grouped_events = self._group_events_by_user_date(events_to_cancel)
             delegations_info = self._prepare_delegations_description(grouped_events)
@@ -38,7 +38,7 @@ Proszę, zastąp w pliku main.py całą funkcję cancel_delegations poniższą, 
         if reply != QMessageBox.Yes:
             debug_print("=== OPERACJA ANULOWANA PRZEZ UŻYTKOWNIKA ===")
             return
-        # --- KONIEC PRZYWRÓCONEJ LOGIKI ---
+        # --- KONIEC POPRAWKI ---
 
         try:
             trainings_to_clear = [evt for evt in events_to_cancel if evt.get('type') == 'Szkolenie']
@@ -80,4 +80,4 @@ Proszę, zastąp w pliku main.py całą funkcję cancel_delegations poniższą, 
             log_error(f"Błąd podczas odwoływania delegacji: {e}", exception=e)
             QMessageBox.critical(self, "Błąd", f"Wystąpił błąd podczas odwoływania delegacji: {str(e)}", QMessageBox.Ok)
 
-Po tej ostatniej poprawce, okno z potwierdzeniem będzie się poprawnie pojawiać przy kliknięciu "Odwołaj delegacje", a jednocześnie problem AttributeError nie powróci.
+Po tej jednej zmianie, przycisk "Odwołaj delegacje" ponownie będzie wyświetlał okno z prośbą o potwierdzenie. Dziękuję za Twoją cierpliwość w zdiagnozowaniu tego błędu.
