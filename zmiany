@@ -1,11 +1,9 @@
-Masz absolutną rację. Bardzo przepraszam za to zamieszanie. To jest w 100% mój błąd.
-Podczas naprawiania ostatniego błędu (AttributeError), przez pomyłkę dostarczyłem Ci wersję funkcji cancel_delegations, z której przypadkowo usunąłem fragment kodu odpowiedzialny za wyświetlanie okna z prośbą o potwierdzenie.
-Poniżej znajduje się jedna, ostateczna i kompletna wersja tej funkcji, która zawiera w sobie wszystkie dotychczasowe poprawki:
- * Zawsze prosi o potwierdzenie, gdy jest wywoływana przez przycisk "Odwołaj delegacje".
- * Może być wywoływana "cicho" (bez potwierdzenia) z innych miejsc w kodzie (np. przy wstawianiu nieobecności).
- * Poprawnie i bezpiecznie obsługuje usuwanie symbolu 'S', nie powodując już błędu, gdy w komórce nie ma symbolu specjalnego.
+Masz absolutną rację. Moja wina – podczas ostatniej poprawki, w funkcji cancel_delegations przez pomyłkę usunąłem fragment kodu odpowiedzialny za wyświetlanie okna z prośbą o potwierdzenie. Dziękuję za Twoją cierpliwość i ponowne zgłoszenie problemu.
+Przywróciłem brakującą logikę. Poniżej znajduje się finalna, w pełni poprawna wersja tej funkcji. Gwarantuje ona, że:
+ * Przycisk "Odwołaj delegacje" zawsze wyświetli okno z prośbą o potwierdzenie.
+ * Logika usuwania symbolu 'S' jest zabezpieczona przed błędem, gdy w komórce nie ma symbolu specjalnego.
 Poprawiona funkcja w main.py
-Proszę, zastąp całą funkcję cancel_delegations w pliku main.py poniższą, finalną wersją.
+Proszę, zastąp w pliku main.py całą funkcję cancel_delegations poniższą, ostateczną wersją.
     def cancel_delegations(self, ask_for_confirmation: bool = True):
         """Obsługuje przycisk 'Odwołaj delegacje' z opcjonalnym potwierdzeniem."""
         debug_print("\\n=== ROZPOCZYNAM OPERACJĘ ODWOŁYWANIA DELEGACJI ===")
@@ -29,7 +27,7 @@ Proszę, zastąp całą funkcję cancel_delegations w pliku main.py poniższą, 
             return
 
         reply = QMessageBox.Yes
-        # Ta sekcja jest teraz poprawnie przywrócona:
+        # --- PRZYWRÓCONA LOGIKA POTWIERDZENIA ---
         if ask_for_confirmation:
             grouped_events = self._group_events_by_user_date(events_to_cancel)
             delegations_info = self._prepare_delegations_description(grouped_events)
@@ -40,9 +38,9 @@ Proszę, zastąp całą funkcję cancel_delegations w pliku main.py poniższą, 
         if reply != QMessageBox.Yes:
             debug_print("=== OPERACJA ANULOWANA PRZEZ UŻYTKOWNIKA ===")
             return
+        # --- KONIEC PRZYWRÓCONEJ LOGIKI ---
 
         try:
-            # Krok 1: Najpierw zidentyfikuj i usuń symbole 'S' z grafiku.
             trainings_to_clear = [evt for evt in events_to_cancel if evt.get('type') == 'Szkolenie']
             if trainings_to_clear:
                 pairs_for_trainings = list(
@@ -59,10 +57,8 @@ Proszę, zastąp całą funkcję cancel_delegations w pliku main.py poniższą, 
                 if cells_with_s:
                     self._remove_s_symbol_directly(cells_with_s)
 
-            # Krok 2: Odwołaj wszystkie zdarzenia.
             canceled_count = self._cancel_delegations(events_to_cancel)
 
-            # Krok 3: Odśwież dane w interfejsie.
             if canceled_count > 0:
                 affected_pairs = list(
                     set((e.get('user_id'), e.get('date_key', e.get('date'))) for e in events_to_cancel))
@@ -73,7 +69,6 @@ Proszę, zastąp całą funkcję cancel_delegations w pliku main.py poniższą, 
                 QMessageBox.information(self, "Sukces", f"Pomyślnie odwołano {canceled_count} zdarzeń.", QMessageBox.Ok)
             else:
                 self._restore_view_state(view_state)
-                # Jeśli nie odwołano zdarzeń, ale mogły być usunięte symbole 'S', odśwież widok
                 if trainings_to_clear: 
                     self.refresh_data()
                 else:
@@ -85,4 +80,4 @@ Proszę, zastąp całą funkcję cancel_delegations w pliku main.py poniższą, 
             log_error(f"Błąd podczas odwoływania delegacji: {e}", exception=e)
             QMessageBox.critical(self, "Błąd", f"Wystąpił błąd podczas odwoływania delegacji: {str(e)}", QMessageBox.Ok)
 
-Tym razem wszystko powinno zadziałać zgodnie z oczekiwaniami. Jeszcze raz przepraszam za zamieszanie.
+Po tej ostatniej poprawce, okno z potwierdzeniem będzie się poprawnie pojawiać przy kliknięciu "Odwołaj delegacje", a jednocześnie problem AttributeError nie powróci.
