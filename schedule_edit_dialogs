@@ -549,31 +549,33 @@ class ScheduleChangeDialog(QDialog):
         self.apply_dialog_theme()
 
     def apply_dialog_theme(self):
+        """Stosuje motyw do wszystkich elementów okna dialogowego."""
         actual_theme = self.determined_theme
         self.setStyleSheet(AppStyles.get_dialog_style(actual_theme))
 
         # Pobierz style z centralnej klasy
         button_style = AppStyles.get_button_style(actual_theme)
         combobox_style = AppStyles.get_combobox_style(actual_theme)
-        checkbox_style = AppStyles.get_checkbox_style(actual_theme)  # Pobierz styl dla checkboxów
+        checkbox_style = AppStyles.get_checkbox_style(actual_theme)
 
         # Styl dla panelu "Zastosuj dla wszystkich"
         if hasattr(self, 'all_time_button'):
             self.all_time_button.setStyleSheet(button_style)
             self.all_hours_button.setStyleSheet(button_style)
             self.all_location_combo.setStyleSheet(combobox_style)
-
-            # --- POCZĄTEK POPRAWKI ---
-            # Zastosuj styl do checkboxów w tym panelu
             self.apply_location_check.setStyleSheet(checkbox_style)
             self.apply_time_check.setStyleSheet(checkbox_style)
             self.apply_hours_check.setStyleSheet(checkbox_style)
+
+            # --- POPRAWKA: Bezpośrednie odwołanie do przycisku ---
+            if hasattr(self, 'apply_all_button'):
+                self.apply_all_button.setStyleSheet(button_style)
             # --- KONIEC POPRAWKI ---
 
-            # Znajdź przycisk "Zastosuj dla wszystkich" wewnątrz grupy i zastosuj styl
-            apply_all_button = self.findChild(QGroupBox).findChild(QPushButton)
-            if apply_all_button:
-                apply_all_button.setStyleSheet(button_style)
+        # --- POPRAWKA: Dodano styl dla przycisku "Zatwierdź wszystkie zmiany" ---
+        if hasattr(self, 'apply_all_rows_button'):
+            self.apply_all_rows_button.setStyleSheet(button_style)
+        # --- KONIEC POPRAWKI ---
 
         # Styl dla przycisku "Zamknij"
         if hasattr(self, 'close_button'):
@@ -632,9 +634,9 @@ class ScheduleChangeDialog(QDialog):
 
         layout.addStretch()
 
-        apply_all_button = QPushButton("Wstaw dla wszystkich")
-        apply_all_button.clicked.connect(self._apply_all_changes)
-        layout.addWidget(apply_all_button)
+        self.apply_all_button = QPushButton("Wstaw dla wszystkich")
+        self.apply_all_button.clicked.connect(self._apply_all_changes)
+        layout.addWidget(self.apply_all_button)
 
         return group
 
@@ -867,48 +869,65 @@ class ScheduleChangeDialog(QDialog):
 
     def _prepare_change_request_for_row(self, visual_row_index: int) -> dict | None:
         """
-        NOWA METODA POMOCNICZA: Sprawdza zmiany i przygotowuje słownik z żądaniem.
-
-        Returns:
-            Słownik z żądaniem zmiany, jeśli zmiana wystąpiła, w przeciwnym razie None.
+        Sprawdza, czy faktycznie nastąpiła zmiana i przygotowuje słownik z żądaniem.
+        Porównuje wartości z widgetów do aktualnego stanu komórki, poprawnie obsługując symbole specjalne.
         """
-        button = self.cells_table.cellWidget(visual_row_index, 7)
-        status_item = self.cells_table.item(visual_row_index, 8)
-        if not button or not button.isEnabled():
-            return None
-
         try:
-            item = self.cells_table.item(visual_row_index, 0)
-            if not item: raise ValueError("Brak danych w wierszu.")
+            # Pobierz dane identyfikacyjne (niezmienne, używane jako fallback)
+            item_w_danych = self.cells_table.item(visual_row_index, 0)
+            original_data_index = item_w_danych.data(Qt.UserRole)
+            # Te dane są używane tylko do identyfikacji i jako fallback dla `etat`
+            identifying_cell_data = self.flattened_cells[original_data_index]
 
-            original_data_index = item.data(Qt.UserRole)
-            cell_data = self.flattened_cells[original_data_index]
+            # --- POBIERZ AKTUALNY STAN (ŹRÓDŁO PRAWDY) ---
+            # 1. Pobierz stan poprzedni z tego, co jest WIDOCZNE w tabeli
+            current_symbol_in_table = self.cells_table.item(visual_row_index, 3).text()
+            parsed = parse_symbol(current_symbol_in_table)
 
+            previous_loc = parsed.get('location') or identifying_cell_data.get('lokalizacja_domyslna', 'h')
+            previous_start = parsed.get('start_hour')
+            previous_hours = parsed.get('work_hours')
+
+            if previous_hours is None:
+                if current_symbol_in_table:  # Symbol specjalny bez godzin
+                    previous_hours = int(float(identifying_cell_data.get('etat', 8.0)))
+                else:  # Komórka jest całkowicie pusta
+                    hours_button_widget = self.cells_table.cellWidget(visual_row_index, 6)
+                    previous_hours = int(hours_button_widget.text())
+
+            # 2. Pobierz nowy, proponowany stan z edytowalnych kontrolek
             location_combo = self.cells_table.cellWidget(visual_row_index, 4)
             time_button = self.cells_table.cellWidget(visual_row_index, 5)
             hours_button = self.cells_table.cellWidget(visual_row_index, 6)
 
-            if not time_button.text():
+            if not time_button.text() and not parsed.get('special_symbol'):
                 self.update_status_for_row(visual_row_index, 'failure', "Brak godziny!")
                 return None
 
-            parsed = parse_symbol(cell_data.get('symbol', ''))
-            original_loc = parsed.get('location') or cell_data.get('lokalizacja_domyslna', 'h')
-            original_start = parsed.get('start_hour')
-            original_hours = parsed.get('work_hours')
-            if original_hours is None:
-                original_hours = int(float(cell_data.get('etat', 8.0)))
-
             new_loc = location_combo.currentData()
-            new_start = int(time_button.text())
+            new_start = int(time_button.text()) if time_button.text() else None
             new_hours = int(hours_button.text())
 
-            if original_loc == new_loc and original_start == new_start and original_hours == new_hours:
+            # --- PORÓWNANIE ---
+            symbol_can_have_location = True
+            special_symbol = parsed.get('special_symbol')
+            if special_symbol and special_symbol.upper() not in app_settings.WORK_LIKE_SYMBOLS:
+                symbol_can_have_location = False
+
+            location_is_same = True
+            if symbol_can_have_location:
+                location_is_same = (previous_loc == new_loc)
+
+            if location_is_same and previous_start == new_start and previous_hours == new_hours:
                 self.update_status_for_row(visual_row_index, 'no_change')
                 return None
 
+            # --- OSTATECZNA POPRAWKA ---
+            # W żądaniu zawsze umieszczaj dane identyfikacyjne, a niekoniecznie te,
+            # które były użyte do porównania (które mogły pochodzić z modelu).
+            # Funkcja nadrzędna i tak pobiera najświeższe dane.
             return {
-                'cell_data': cell_data,
+                'cell_data': identifying_cell_data,
                 'new_location_code': new_loc,
                 'new_start_hour': new_start,
                 'new_work_hours': new_hours,
@@ -918,6 +937,60 @@ class ScheduleChangeDialog(QDialog):
             self.update_status_for_row(visual_row_index, 'failure', str(e))
             log_error(f"Błąd podczas przygotowywania żądania zmiany: {e}", exception=e)
             return None
+
+    def refresh_row_data_from_model(self, visual_row: int):
+        """
+        Pobiera najświeższe dane z modelu głównego okna i w pełni aktualizuje
+        zarówno wewnętrzny stan, jak i kontrolki dla danego wiersza w dialogu.
+        """
+        try:
+            debug_print(f"--- Dialog.refresh_row_data: Rozpoczynam odświeżanie wiersza {visual_row}")
+            # 1. Pobierz dane identyfikacyjne
+            original_data_index = self.cells_table.item(visual_row, 0).data(Qt.UserRole)
+            identifying_data = self.flattened_cells[original_data_index]
+            user_id = identifying_data.get('uzytkownik_id')
+            date_str = identifying_data.get('date_str')
+
+            # 2. Pobierz świeże dane z głównego modelu
+            fresh_cell_data = self.main_window.get_data_from_model_by_id(user_id, date_str)
+            if not fresh_cell_data:
+                log_error(f"Nie udało się pobrać świeżych danych dla wiersza {visual_row}. Aktualizacja niemożliwa.")
+                return
+
+            # 3. Zaktualizuj wewnętrzną pamięć dialogu
+            self.flattened_cells[original_data_index] = fresh_cell_data
+            debug_print(f"--- Dialog.refresh_row_data: Wewnętrzna pamięć dla wiersza {visual_row} zaktualizowana.")
+
+            # 4. Zaktualizuj wszystkie kontrolki w wierszu na podstawie świeżych danych
+            # Symbol
+            self.cells_table.item(visual_row, 3).setText(fresh_cell_data.get('symbol', ''))
+
+            # Lokalizacja
+            location_combo = self.cells_table.cellWidget(visual_row, 4)
+            parsed = parse_symbol(fresh_cell_data.get('symbol', ''))
+            loc_code = parsed.get('location') or fresh_cell_data.get('lokalizacja_domyslna', 'h')
+            if loc_code:
+                index = location_combo.findData(loc_code)
+                if index != -1:
+                    location_combo.setCurrentIndex(index)
+
+            # Godzina rozpoczęcia
+            time_button = self.cells_table.cellWidget(visual_row, 5)
+            start_hour = fresh_cell_data.get('start_hour')
+            time_button.setText(str(start_hour) if start_hour is not None else "")
+
+            # Liczba godzin
+            hours_button = self.cells_table.cellWidget(visual_row, 6)
+            work_hours = fresh_cell_data.get('hours')
+            if work_hours is None:  # Fallback na etat, jeśli brak godzin w symbolu
+                work_hours = int(float(fresh_cell_data.get('etat', 8.0)))
+            hours_button.setText(str(work_hours))
+
+            debug_print(
+                f"--- Dialog.refresh_row_data: Pomyślnie odświeżono wszystkie kontrolki dla wiersza {visual_row}.")
+
+        except Exception as e:
+            log_error(f"Błąd w refresh_row_data_from_model: {e}", exception=e)
 
     def _apply_all_pending_changes(self):
         """
@@ -1003,8 +1076,11 @@ class ScheduleChangeDialog(QDialog):
             log_error(f"Błąd podczas przygotowywania żądania zmiany: {e}", exception=e)
 
     def _apply_all_changes(self):
-        """Zbiera zmiany ze wszystkich wierszy i emituje je w jednym sygnale."""
-        # Ta metoda pozostaje bez zmian w stosunku do poprzedniej propozycji
+        """
+        Stosuje globalne ustawienia do wszystkich widocznych wierszy, a następnie
+        zbiera i emituje wszystkie wykryte zmiany. Używa tej samej logiki weryfikacji
+        co pojedynczy przycisk 'Zastosuj'.
+        """
         if not any([self.apply_location_check.isChecked(), self.apply_time_check.isChecked(),
                     self.apply_hours_check.isChecked()]):
             QMessageBox.warning(self, "Brak wyboru",
@@ -1014,56 +1090,31 @@ class ScheduleChangeDialog(QDialog):
         reply = QMessageBox.question(self, "Potwierdzenie",
                                      "Czy na pewno chcesz zastosować wybrane zmiany dla wszystkich widocznych wierszy?",
                                      QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-        if reply == QMessageBox.No: return
+        if reply == QMessageBox.No:
+            return
 
         all_change_requests = []
         for row in range(self.cells_table.rowCount()):
+            # Krok 1: Zaktualizuj kontrolki w wierszu na podstawie globalnych ustawień
             self._update_row_widgets_from_global_settings(row)
 
-            button = self.cells_table.cellWidget(row, 7)
-            if not button.isEnabled(): continue
-            item = self.cells_table.item(row, 0)
-            if not item: continue
+            # Krok 2: Użyj tej samej, poprawionej funkcji co pojedynczy przycisk, aby sprawdzić, czy faktycznie jest zmiana
+            change_request = self._prepare_change_request_for_row(row)
 
-            # --- ZMIANA 2: Logika porównawcza dla 'apply all' ---
-            original_data_index = item.data(Qt.UserRole)
-            cell_data = self.flattened_cells[original_data_index]
+            # Krok 3: Jeśli zmiana została wykryta, dodaj ją do listy
+            if change_request:
+                all_change_requests.append(change_request)
+                button = self.cells_table.cellWidget(row, 7)
+                if button:
+                    button.setEnabled(False)
+                    button.setText("W kolejce...")
 
-            location_combo = self.cells_table.cellWidget(row, 4)
-            time_button = self.cells_table.cellWidget(row, 5)
-            hours_button = self.cells_table.cellWidget(row, 6)
-
-            if not time_button.text(): continue
-
-            parsed = parse_symbol(cell_data.get('symbol', ''))
-            original_loc = parsed.get('location') or cell_data.get('lokalizacja_domyslna', 'h')
-            original_start = parsed.get('start_hour')
-            original_hours = parsed.get('work_hours')
-            if original_hours is None: original_hours = int(float(cell_data.get('etat', 8.0)))
-
-            new_loc = location_combo.currentData()
-            new_start = int(time_button.text())
-            new_hours = int(hours_button.text())
-
-            if original_loc == new_loc and original_start == new_start and original_hours == new_hours:
-                self.update_status_for_row(row, 'no_change')
-                continue  # Pomiń ten wiersz i przejdź do następnego
-            # --- Koniec ZMIANY 2 ---
-
-            change_request = {
-                'cell_data': cell_data,
-                'new_location_code': new_loc,
-                'new_start_hour': new_start,
-                'new_work_hours': new_hours,
-                'visual_row': row
-            }
-            all_change_requests.append(change_request)
-            button.setEnabled(False);
-            button.setText("W kolejce...")
-            QApplication.processEvents()
-
+        # Krok 4: Wyślij wszystkie zebrane zmiany do przetworzenia
         if all_change_requests:
             self.changes_requested.emit(all_change_requests)
+            QApplication.processEvents()
+        else:
+            QMessageBox.information(self, "Informacja", "Nie wykryto żadnych zmian do zatwierdzenia.")
 
     def update_status_for_row(self, visual_row: int, status: str, message: str = ""):
         """
