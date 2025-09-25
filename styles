@@ -825,3 +825,35 @@ class AppStyles:
                     background-color: {AppStyles.DARK_BACKGROUND_HOVER if theme == "dark" else AppStyles.LIGHT_BACKGROUND_HOVER};
                 }}
             """
+
+    @staticmethod
+    def get_alert_button_style(theme="dark", font_family="Segoe UI", font_size=9):
+        """
+        Zwraca styl dla przycisku w stanie "alertu" (np. nowe dane).
+        Jest to styl bazowy z charakterystycznym kolorem tła.
+        """
+        # Kolory dla obu motywów
+        bg_color = "#f39c12"  # Pomarańczowy
+        text_color = "white"
+        border_color = "#e67e22"  # Ciemniejszy pomarańczowy
+        hover_bg = "#e67e22"
+        pressed_bg = "#d35400"  # Jeszcze ciemniejszy pomarańczowy
+
+        return f"""
+            QPushButton {{
+                    background-color: {bg_color};
+                    color: {text_color};
+                    border: 1px solid {border_color};
+                    padding: {AppStyles.BUTTON_PADDING};
+                    border-radius: {AppStyles.BORDER_RADIUS};
+                    font-family: '{font_family}';
+                    font-size: {font_size}pt;
+                    font-weight: bold;
+                }}
+                QPushButton:hover {{
+                    background-color: {hover_bg};
+                }}
+                QPushButton:pressed {{
+                    background-color: {pressed_bg};
+                }}
+            """
