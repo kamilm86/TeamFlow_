@@ -16,7 +16,8 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QTableView,
                                QGridLayout, QSizePolicy, QScrollArea, QGroupBox, QStyle)
 from PySide6.QtCore import Qt, Signal, QDate, QTimer, QEvent, QObject, QItemSelection, QItemSelectionModel
 from packaging.version import parse as parse_version
-from PySide6.QtGui import QShortcut, QKeySequence, QFont, QColor, QStandardItem, QStandardItemModel, QPixmap, QPainter, QPen, QIcon
+from PySide6.QtGui import QShortcut, QKeySequence, QFont, QColor, QStandardItem, QStandardItemModel, QPixmap, QPainter, \
+    QPen, QIcon
 
 from data_provider import DataProvider
 from db_connector import DatabaseConnector, get_modifier_id, load_all_app_settings
@@ -195,7 +196,7 @@ class ScheduleKeyboardFilter(QObject):
 
         if error_messages:
             QMessageBox.warning(self.main_window, "Błędy podczas zapisu",
-                                "Wystąpiły następujące błędy:\\n\\n" + "\\n".join(error_messages))
+                                "Wystąpiły następujące błędy:\n\n" + "\n".join(error_messages))
         elif not updated_info and skipped_count > 0 and skipped_count == len(selected_cells_data):
             self.main_window.statusBar().showMessage("Operacja dozwolona tylko dla Równoważnego Systemu Czasu Pracy.",
                                                      5000)
@@ -424,6 +425,7 @@ class CustomMultiComboBox(QComboBox):
         else:
             self.setEditText(f"Wybrano {len(self._selected_items)} z {self.model().rowCount() - 1}")
 
+
 class UpdateRequiredDialog(QDialog):
     """Modalne okno informujące o konieczności aktualizacji i wymuszające zamknięcie."""
 
@@ -537,6 +539,7 @@ class WorkScheduleWindow(QMainWindow):
 
         self.shortcut_insert = QShortcut(QKeySequence(Qt.Key_Insert), self)
         self.shortcut_insert.activated.connect(self.show_add_overtime_dialog)
+        self.shortcut_insert.setEnabled(False)
 
         self.shortcut_f12 = QShortcut(QKeySequence(Qt.Key_F12), self)
         self.shortcut_f12.activated.connect(self.clear_special_symbol_from_selected_cells)
@@ -704,13 +707,16 @@ class WorkScheduleWindow(QMainWindow):
             if not self._can_modify_cells(selected_cells_data) or not selected_cells_data:
                 return
 
-            schedule_cells = [cell for cell in selected_cells_data if isinstance(cell, dict) and 'date_str' in cell and 'uzytkownik_id' in cell]
+            schedule_cells = [cell for cell in selected_cells_data if
+                              isinstance(cell, dict) and 'date_str' in cell and 'uzytkownik_id' in cell]
             if not schedule_cells:
                 return
 
             grouped_changes = {}
             for cell_data in schedule_cells:
-                user_id, user_name, date_str = cell_data.get('uzytkownik_id'), cell_data.get('uzytkownik_dane', ''), cell_data.get('date_str')
+                user_id, user_name, date_str = cell_data.get('uzytkownik_id'), cell_data.get('uzytkownik_dane',
+                                                                                             ''), cell_data.get(
+                    'date_str')
                 try:
                     year, month, day = date_str.split('-')
                     formatted_date = f"{day}.{month}.{year}"
@@ -730,7 +736,8 @@ class WorkScheduleWindow(QMainWindow):
 
             reply = QMessageBox.Yes  # Domyślnie zakładamy, że użytkownik się zgadza
             if self._should_ask_for_confirmation():
-                reply = QMessageBox.question(self, "Potwierdzenie szybkiej edycji", changes_info, QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+                reply = QMessageBox.question(self, "Potwierdzenie szybkiej edycji", changes_info,
+                                             QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
             if reply == QMessageBox.Yes:
                 self._apply_quick_changes(schedule_cells, start_hour)
         except Exception as e:
@@ -784,14 +791,14 @@ class WorkScheduleWindow(QMainWindow):
         success_msg = f"Zmieniono godzinę rozpoczęcia dla {len(updated_info)} komórek."
         if skipped_employees:
             QMessageBox.information(self, "Częściowy sukces",
-                                    f"{success_msg}\\n\\nPominięto {len(skipped_employees)} komórek z powodu braku uprawnień dla:\\n"
+                                    f"{success_msg}\n\nPominięto {len(skipped_employees)} komórek z powodu braku uprawnień dla:\n"
                                     f"- {', '.join(set(skipped_employees))}")
         elif updated_info:
             self.statusBar().showMessage(success_msg, 4000)
 
         if error_messages:
             QMessageBox.warning(self, "Błędy podczas zapisu",
-                                "Wystąpiły następujące błędy:\\n\\n" + "\\n".join(error_messages))
+                                "Wystąpiły następujące błędy:\n\n" + "\n".join(error_messages))
 
     def _show_keyboard_edit_results(self, successful_updates, failed_updates, error_messages, start_hour):
         """Pokazuje wyniki edycji klawiatury - uproszczone komunikaty"""
@@ -852,13 +859,15 @@ class WorkScheduleWindow(QMainWindow):
 
             schedule_cells = [cell for cell in selected_cells_data if cell.get('symbol', '').strip()]
             if not schedule_cells:
-                QMessageBox.information(self, "Brak symboli do usunięcia", "Zaznaczone komórki są już puste.", QMessageBox.Ok)
+                QMessageBox.information(self, "Brak symboli do usunięcia", "Zaznaczone komórki są już puste.",
+                                        QMessageBox.Ok)
                 return
 
             # Wstępne sprawdzenie (można pominąć, bo i tak sprawdzamy w pętli, ale zostawiamy dla szybkiego feedbacku)
             if not any(self._get_permission_for_cell(c)['can_delete'] for c in schedule_cells):
-                 QMessageBox.warning(self, "Brak uprawnień", "Nie posiadasz uprawnień do usunięcia symboli dla żadnej z zaznaczonych osób.")
-                 return
+                QMessageBox.warning(self, "Brak uprawnień",
+                                    "Nie posiadasz uprawnień do usunięcia symboli dla żadnej z zaznaczonych osób.")
+                return
 
             user_date_pairs = {(cell.get('uzytkownik_id'), cell.get('date_str')) for cell in schedule_cells}
             events_to_cancel = self._find_events_to_cancel(user_date_pairs)
@@ -870,7 +879,8 @@ class WorkScheduleWindow(QMainWindow):
                     grouped_events = self._group_events_by_user_date(events_to_cancel)
                     delegations_info = self._prepare_delegations_description(grouped_events)
                     confirmation_message += f"\n\n{delegations_info}"
-                reply = QMessageBox.question(self, "Potwierdzenie usunięcia", confirmation_message, QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+                reply = QMessageBox.question(self, "Potwierdzenie usunięcia", confirmation_message,
+                                             QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
 
             if reply == QMessageBox.Yes:
                 if events_to_cancel: self._cancel_delegations(events_to_cancel)
@@ -878,7 +888,6 @@ class WorkScheduleWindow(QMainWindow):
         except Exception as e:
             log_error(f"Błąd podczas czyszczenia komórek: {e}", exception=e)
             QMessageBox.critical(self, "Błąd krytyczny", f"Wystąpił nieoczekiwany błąd: {str(e)}")
-
 
     def _clear_cells_symbols(self, schedule_cells: list):
         """Usuwa symbole z indywidualnym sprawdzaniem uprawnień."""
@@ -891,16 +900,19 @@ class WorkScheduleWindow(QMainWindow):
                 skipped_employees.append(cell_data.get('uzytkownik_dane', 'Nieznany'))
                 continue
 
-            user_id, date_str, nr_kadrowy = cell_data.get('uzytkownik_id'), cell_data.get('date_str'), cell_data.get('nr_kadrowy')
+            user_id, date_str, nr_kadrowy = cell_data.get('uzytkownik_id'), cell_data.get('date_str'), cell_data.get(
+                'nr_kadrowy')
 
             if not all([user_id, date_str, nr_kadrowy]):
                 failed_updates += 1
-                error_messages.append(f"Niekompletne dane dla komórki: user_id={user_id}, data={date_str}, nr_kadrowy={nr_kadrowy}.")
+                error_messages.append(
+                    f"Niekompletne dane dla komórki: user_id={user_id}, data={date_str}, nr_kadrowy={nr_kadrowy}.")
                 continue
 
             try:
                 year, month, _ = date_str.split('-')
-                result = self._call_import_changes_procedure(nr_kadrowy=nr_kadrowy, rok=int(year), miesiac=int(month), data=date_str, symbol="")
+                result = self._call_import_changes_procedure(nr_kadrowy=nr_kadrowy, rok=int(year), miesiac=int(month),
+                                                             data=date_str, symbol="")
                 if result.get('success', False):
                     successful_updates += 1
                     affected_pairs.append((user_id, date_str, result.get('returned_symbol')))
@@ -929,22 +941,22 @@ class WorkScheduleWindow(QMainWindow):
 
         # Komunikat o sukcesach
         if successful_updates > 0:
-            full_message += f"Pomyślnie usunięto symbole z {successful_updates} komórek.\\n"
+            full_message += f"Pomyślnie usunięto symbole z {successful_updates} komórek.\n"
 
         # Komunikat o pominiętych pracownikach z powodu braku uprawnień
         if skipped_employees:
             # Używamy set(), aby uniknąć duplikatów nazwisk w komunikacie
             unique_skipped = set(skipped_employees)
-            full_message += (f"\\nPominięto {len(skipped_employees)} komórek z powodu braku uprawnień dla:\\n"
-                             f"- {', '.join(unique_skipped)}\\n")
+            full_message += (f"\nPominięto {len(skipped_employees)} komórek z powodu braku uprawnień dla:\n"
+                             f"- {', '.join(unique_skipped)}\n")
 
         # Komunikat o błędach
         if failed_updates > 0:
             title = "Częściowy sukces" if successful_updates > 0 or skipped_employees else "Błąd usuwania"
-            error_list_str = "\\n - " + "\\n - ".join(error_messages[:10])
-            full_message += f"\\nNie udało się usunąć {failed_updates} symboli z powodu błędów:{error_list_str}"
+            error_list_str = "\n - " + "\n - ".join(error_messages[:10])
+            full_message += f"\nNie udało się usunąć {failed_updates} symboli z powodu błędów:{error_list_str}"
             if len(error_messages) > 10:
-                full_message += f"\\n... i {len(error_messages) - 10} więcej błędów."
+                full_message += f"\n... i {len(error_messages) - 10} więcej błędów."
 
         elif successful_updates > 0 or skipped_employees:
             title = "Zakończono operację"
@@ -1008,7 +1020,7 @@ class WorkScheduleWindow(QMainWindow):
         main_layout.addWidget(middle_splitter, 1)
 
         self.setCentralWidget(central_widget)
-        
+
     def setup_top_bar(self, main_layout):
         top_bar_frame = QFrame()
         top_bar_frame.setFrameShape(QFrame.StyledPanel)
@@ -1416,10 +1428,10 @@ class WorkScheduleWindow(QMainWindow):
         button_layout.addWidget(self.insert_symbol_button)
         self.cancel_delegation_button = QPushButton("Odwołaj delegacje")
         self.cancel_delegation_button.setToolTip("Odwołaj delegacje dla zaznaczonych komórek (F5)")
-        self.cancel_delegation_button.clicked.connect(self.cancel_delegations)
+        self.cancel_delegation_button.clicked.connect(lambda: self.cancel_delegations())
         button_layout.addWidget(self.cancel_delegation_button)
         self.add_overtime_button = QPushButton("Dodaj nadgodziny")
-        self.add_overtime_button.setShortcut("Insert")
+        # self.add_overtime_button.setShortcut("Insert")
         self.add_overtime_button.setToolTip("Dodaj nadgodziny dla zaznaczonych komórek (Insert)")
         self.add_overtime_button.clicked.connect(self.show_add_overtime_dialog)
         button_layout.addWidget(self.add_overtime_button)
@@ -1576,7 +1588,6 @@ class WorkScheduleWindow(QMainWindow):
             self.last_left_panel_width = current_sizes[0]
             self.main_splitter.setSizes([0, sum(current_sizes)])
 
-
     def toggle_events_panel(self):
         """Przełącza widoczność panelu zdarzeń (dolny panel)"""
         right_splitter = self.centralWidget().findChild(QSplitter, self.main_splitter.objectName()).widget(1).findChild(
@@ -1615,7 +1626,7 @@ class WorkScheduleWindow(QMainWindow):
             headers = self.schedule_model._column_headers[:len(self.visible_columns)]
             days_in_month = self.schedule_model._days_in_month
             day_headers = self.schedule_model._column_headers[
-                          len(self.visible_columns):len(self.visible_columns) + days_in_month]
+                len(self.visible_columns):len(self.visible_columns) + days_in_month]
 
             # Bierzemy tylko pierwszą linię z nagłówka dnia (np. "So\n1" -> "So")
             day_letters = [h.split('\n')[0] for h in day_headers]
@@ -1849,7 +1860,7 @@ class WorkScheduleWindow(QMainWindow):
         self.table.set_header_height(header_height)
         header = self.table.schedule_view.horizontalHeader()
         model = self.table.employees_view.model()
-        special_widths = {"Suma\\nRBH": 45, "Bilans\\nRBH": 45, "Komentarz": 300}
+        special_widths = {"Suma\nRBH": 45, "Bilans\nRBH": 45, "Komentarz": 300}
 
         for logical_index in range(model.columnCount()):
             header_text = model.headerData(logical_index, Qt.Horizontal, Qt.DisplayRole)
@@ -2046,7 +2057,8 @@ class WorkScheduleWindow(QMainWindow):
         """Grupuje komórki dla komunikatu potwierdzenia."""
         grouped_changes = {}
         for cell_data in schedule_cells:
-            user_id, user_name, date_str, current_symbol = cell_data.get('uzytkownik_id'), cell_data.get('uzytkownik_dane', ''), cell_data.get('date_str'), cell_data.get('symbol', '').strip()
+            user_id, user_name, date_str, current_symbol = cell_data.get('uzytkownik_id'), cell_data.get(
+                'uzytkownik_dane', ''), cell_data.get('date_str'), cell_data.get('symbol', '').strip()
             try:
                 year, month, day = date_str.split('-')
                 formatted_date = f"{day}.{month}.{year}"
@@ -2167,7 +2179,7 @@ class WorkScheduleWindow(QMainWindow):
     def _find_events_to_cancel(self, user_date_pairs):
         """
         Znajduje zdarzenia do odwołania dla podanych par użytkownik-data.
-        WERSJA ZMODYFIKOWANA: Uwzględnia spotkania/szkolenia tylko w statusie 'Delegowany'.
+        WERSJA POPRAWIONA: Prawidłowo identyfikuje wszystkie aktywne statusy.
         """
         events_to_cancel = []
         for user_id, date_str in user_date_pairs:
@@ -2176,23 +2188,20 @@ class WorkScheduleWindow(QMainWindow):
 
             for event in user_events:
                 event_type = event.get('type')
-                event_status = event.get('status')
+                event_status = str(event.get('status', '0'))  # Konwertujemy na string dla spójności
                 event_id = event.get('id')
 
                 if not event_type or event_id is None:
                     continue
 
-                # Warunek 1: Spotkanie lub Szkolenie musi mieć status 'Delegowany'
-                is_cancellable_meeting_or_training = (
-                        event_type in ['Spotkanie', 'Szkolenie'] and event_status == 'Delegowany'
-                )
+                # --- KLUCZOWA POPRAWKA ---
+                # Zdarzenie jest aktywne, jeśli jego status jest DOWOLNY, ale RÓŻNY od '0' (Nieaktywne)
+                # oraz 'Usunięty'. To zapewnia, że statusy takie jak 'Delegowany', '1', 'Wstawione' itp.
+                # będą prawidłowo traktowane jako aktywne.
+                is_active = event_status != '0' and event_status != 'Usunięty'
+                # --- KONIEC POPRAWKI ---
 
-                # Warunek 2: Nadgodziny muszą być po prostu "aktywne" (status inny niż '0')
-                is_cancellable_overtime = (
-                        event_type == 'Nadgodziny' and str(event_status) != '0'
-                )
-
-                if is_cancellable_meeting_or_training or is_cancellable_overtime:
+                if is_active and event_type in ['Spotkanie', 'Szkolenie', 'Nadgodziny']:
                     events_to_cancel.append({
                         'id': event_id,
                         'type': event_type,
@@ -2322,7 +2331,7 @@ class WorkScheduleWindow(QMainWindow):
             self.statusBar().showMessage(f"Pomyślnie usunięto symbole specjalne z {len(updated_info)} komórek.", 4000)
         if error_messages:
             QMessageBox.warning(self, "Błędy podczas zapisu",
-                                f"Wystąpiły następujące błędy:\\n\\n" + "\\n".join(error_messages))
+                                f"Wystąpiły następujące błędy:\n\n" + "\n".join(error_messages))
 
     # def _build_new_symbol_with_absence_fixed(self, current_symbol, special_symbol, cell_data):
     #     """Buduje nowy symbol z absencją, poprawnie obsługując puste i wypełnione komórki."""
@@ -2508,7 +2517,8 @@ class WorkScheduleWindow(QMainWindow):
             QMessageBox.warning(
                 self,
                 "Błędy podczas zapisu",
-                f"Wystąpiły następujące błędy i niektóre zmiany nie zostały zapisane:\\n\\n" + "\\n".join(error_messages),
+                f"Wystąpiły następujące błędy i niektóre zmiany nie zostały zapisane:\n\n" + "\n".join(
+                    error_messages),
                 QMessageBox.Ok
             )
 
@@ -2616,7 +2626,7 @@ class WorkScheduleWindow(QMainWindow):
             if not current_date_data: return
             year, month = current_date_data
             if not hasattr(self, 'last_modification_date') or not self.last_modification_date:
-                self._update_modification_date()  # Ta metoda otworzy własne połączenie, ale tylko raz na początku
+                self._update_modification_date()
                 return
 
             cursor = conn.cursor()
@@ -2643,8 +2653,17 @@ class WorkScheduleWindow(QMainWindow):
                     self.refresh_button.setText(f"Nowe dane {change_type_text}!")
                     self.refresh_button.setToolTip(
                         f"Wykryto zmiany w sekcji: {change_type_text}. Kliknij, aby załadować.")
-                    new_data_style = "QPushButton { background-color: #f39c12; color: white; font-weight: bold; border: 1px solid #e67e22; } QPushButton:hover { background-color: #e67e22; }"
-                    self.refresh_button.setStyleSheet(new_data_style)
+
+                    # --- KLUCZOWA POPRAWKA ---
+                    # Użycie nowej, kompletnej definicji stylu z pliku styles.py
+                    alert_style = AppStyles.get_alert_button_style(
+                        'dark' if self.is_dark_theme else 'light',
+                        self.current_font,
+                        self.current_font_size
+                    )
+                    self.refresh_button.setStyleSheet(alert_style)
+                    # --- KONIEC POPRAWKI ---
+
                     self.check_timer.stop()
                 else:
                     self.last_modification_date = latest_overall_modification
@@ -2677,7 +2696,16 @@ class WorkScheduleWindow(QMainWindow):
         filters_to_preserve = self.get_current_filters_state()
 
         self.refresh_button.setText("Odśwież")
-        self.refresh_button.setStyleSheet(AppStyles.get_button_style("dark" if self.is_dark_theme else "light"))
+
+        # --- KLUCZOWA POPRAWKA ---
+        # Przekazujemy aktualne ustawienia czcionki, aby zapewnić spójność wyglądu.
+        self.refresh_button.setStyleSheet(AppStyles.get_button_style(
+            'dark' if self.is_dark_theme else 'light',
+            self.current_font,
+            self.current_font_size
+        ))
+        # --- KONIEC POPRAWKI ---
+
         self.refresh_button.setToolTip("Odśwież dane")
 
         current_data = self.date_combo.currentData()
@@ -2687,7 +2715,8 @@ class WorkScheduleWindow(QMainWindow):
             self.update_buttons_visibility()
             self.data_provider.clear_monthly_cache(year, month)
             # Krok 2: Przekaż stan filtrów do procesu aktualizacji danych.
-            self.update_data(year, month, self.import_grupa, self.import_funkcja, use_async=True, filters_to_restore=filters_to_preserve)
+            self.update_data(year, month, self.import_grupa, self.import_funkcja, use_async=True,
+                             filters_to_restore=filters_to_preserve)
             self.update_filter_dates()
             self._update_modification_date()
             if hasattr(self, 'check_timer'):
@@ -2880,64 +2909,67 @@ class WorkScheduleWindow(QMainWindow):
 
     def handle_schedule_change_request(self, change_requests: list):
         """
-        Przetwarza żądania zmian w grafiku z ostateczną walidacją
-        przypisania lokalizacji i poprawnym statusem "Brak zmiany".
+        Przetwarza listę żądań zmian w grafiku, z dodaną walidacją ignorującą
+        zmianę lokalizacji dla symboli nieobecności.
         """
         dialog = self.sender()
 
         for request in change_requests:
             visual_row = request['visual_row']
             cell_data = request['cell_data']
+            user_id = cell_data.get('uzytkownik_id')
+            nr_kadrowy = cell_data.get('nr_kadrowy')
+            user_name = cell_data.get('uzytkownik_dane')
+            date_str = cell_data.get('date_str')
+            new_symbol = ""
 
             try:
-                # --- Krok 1: Pobranie danych (bez zmian) ---
-                user_id = cell_data.get('uzytkownik_id')
-                nr_kadrowy = cell_data.get('nr_kadrowy')
-                user_name = cell_data.get('uzytkownik_dane')
-                date_str = cell_data.get('date_str')
                 q_date = QDate.fromString(date_str, "yyyy-MM-dd")
                 _, modyfikujacy_id, _, _, _ = get_modifier_id()
                 location_map = {'h': 1, 's': 3, 'p': 2}
                 default_location_code = cell_data.get('lokalizacja_domyslna', 'h')
                 target_dept = cell_data.get('wydzial', '').upper()
-
-                from symbol_parser import parse_symbol, build_symbol
                 original_symbol = cell_data.get('symbol', '')
                 original_parsed_symbol = parse_symbol(original_symbol)
-
                 new_location_code = request['new_location_code']
                 new_start_hour = request['new_start_hour']
                 new_work_hours = request['new_work_hours']
 
-                # --- Krok 2: Logika biznesowa dla wyjątków (bez zmian) ---
-                original_location_code = original_parsed_symbol.get('location') or default_location_code
-                loc_changed = new_location_code != original_location_code
-                is_reverting_to_default = loc_changed and (new_location_code == default_location_code)
+                # --- KLUCZOWA POPRAWKA ---
+                # Sprawdź, czy symbol w ogóle może mieć lokalizację.
+                original_special_symbol = original_parsed_symbol.get('special_symbol')
+                symbol_can_have_location = True
+                if original_special_symbol and original_special_symbol.upper() not in app_settings.WORK_LIKE_SYMBOLS:
+                    symbol_can_have_location = False
+
+                loc_changed = False
                 reason_for_change = None
 
-                if loc_changed:
-                    if is_reverting_to_default:
-                        reason_for_change = None
-                    elif target_dept.startswith('WZP'):
-                        reason_for_change = "Zmiana w aplikacji"
-                    else:
-                        if user_id in dialog.reason_cache:
-                            reason_for_change = dialog.reason_cache[user_id]
+                # Sprawdzaj zmianę lokalizacji tylko dla symboli, które ją obsługują.
+                if symbol_can_have_location:
+                    original_location_code = original_parsed_symbol.get('location') or default_location_code
+                    loc_changed = new_location_code != original_location_code
+
+                    if loc_changed:
+                        is_reverting_to_default = loc_changed and (new_location_code == default_location_code)
+                        if is_reverting_to_default:
+                            reason_for_change = None
+                        elif target_dept.startswith('WZP'):
+                            reason_for_change = "Zmiana w aplikacji"
                         else:
-                            reason_dialog = ReasonDialog(dialog)
-                            if reason_dialog.exec() == QDialog.Accepted:
-                                reason_for_change = reason_dialog.getReason()
-                                dialog.reason_cache[user_id] = reason_for_change
+                            if user_id in dialog.reason_cache:
+                                reason_for_change = dialog.reason_cache[user_id]
                             else:
-                                dialog.update_status_for_row(visual_row, 'failure', "Anulowano")
-                                continue
+                                reason_dialog = ReasonDialog(dialog)
+                                if reason_dialog.exec() == QDialog.Accepted:
+                                    reason_for_change = reason_dialog.getReason()
+                                    dialog.reason_cache[user_id] = reason_for_change
+                                else:
+                                    dialog.update_status_for_row(visual_row, 'failure', "Anulowano")
+                                    continue
+                # --- KONIEC POPRAWKI ---
 
-                # --- Krok 3: Walidacja lokalizacji i budowa nowego symbolu (bez zmian) ---
-                final_location_for_build = new_location_code
-                original_special_symbol = original_parsed_symbol.get('special_symbol')
-
-                if original_special_symbol and original_special_symbol.upper() not in app_settings.WORK_LIKE_SYMBOLS:
-                    final_location_for_build = None
+                final_location_for_build = new_location_code if symbol_can_have_location else None
 
                 new_symbol = build_symbol(
                     location=final_location_for_build,
@@ -2946,24 +2978,11 @@ class WorkScheduleWindow(QMainWindow):
                     special_symbol=original_special_symbol
                 )
 
-                # --- ZMIANA: Ostateczne porównanie symboli przed wysłaniem do bazy ---
-                if new_symbol == original_symbol:
-                    dialog.update_status_for_row(visual_row, 'no_change')
-                    continue  # Przejdź do następnego żądania, pomijając zapis do bazy
-                # --- KONIEC ZMIANY ---
-
-                # --- Krok 4: Wywołanie procedur (bez zmian) ---
                 result = {}
-                new_symbol = build_symbol(
-                    location=final_location_for_build,
-                    start_hour=new_start_hour,
-                    work_hours=new_work_hours,
-                    special_symbol=original_special_symbol
-                )
-
                 if loc_changed:
                     exact_exception, range_exception = self._check_location_exception(user_id, q_date)
                     new_location_id = location_map.get(new_location_code, 1)
+                    is_reverting_to_default = loc_changed and (new_location_code == default_location_code)
                     if is_reverting_to_default:
                         if range_exception:
                             result = {"success": False,
@@ -2972,8 +2991,8 @@ class WorkScheduleWindow(QMainWindow):
                             result = self._call_import_changes_procedure(nr_kadrowy, self.year, self.month, date_str,
                                                                          new_symbol)
                             if result.get("success") and exact_exception:
-                                params = (
-                                None, modyfikujacy_id, None, None, None, reason_for_change, 3, exact_exception['Id'])
+                                params = (None, modyfikujacy_id, None, None, None, reason_for_change, 3,
+                                          exact_exception['Id'])
                                 self._manage_location_exception(params)
                     else:
                         if exact_exception:
@@ -2984,9 +3003,8 @@ class WorkScheduleWindow(QMainWindow):
                                 result = self._call_import_changes_procedure(nr_kadrowy, self.year, self.month,
                                                                              date_str, new_symbol)
                                 if result.get("success"):
-                                    params = (
-                                    user_id, modyfikujacy_id, date_str, date_str, new_location_id, reason_for_change, 2,
-                                    exact_exception['Id'])
+                                    params = (user_id, modyfikujacy_id, date_str, date_str, new_location_id,
+                                              reason_for_change, 2, exact_exception['Id'])
                                     self._manage_location_exception(params)
                         elif range_exception:
                             if range_exception['Lokalizacja'] != new_location_id:
@@ -2999,9 +3017,8 @@ class WorkScheduleWindow(QMainWindow):
                             result = self._call_import_changes_procedure(nr_kadrowy, self.year, self.month, date_str,
                                                                          new_symbol)
                             if result.get("success"):
-                                params = (
-                                user_id, modyfikujacy_id, date_str, date_str, new_location_id, reason_for_change, 1,
-                                None)
+                                params = (user_id, modyfikujacy_id, date_str, date_str, new_location_id,
+                                          reason_for_change, 1, None)
                                 self._manage_location_exception(params)
                 else:
                     result = self._call_import_changes_procedure(nr_kadrowy, self.year, self.month, date_str,
@@ -3017,27 +3034,58 @@ class WorkScheduleWindow(QMainWindow):
                             location_changes = ot_dialog.get_selected_locations()
                             if location_changes: self._update_multiple_overtime_locations(location_changes)
 
-                # --- Krok 5: Przetwarzanie wyniku i aktualizacja UI ---
                 if result.get("success", False):
                     returned_symbol = result.get('returned_symbol', new_symbol)
                     self._update_cells_with_new_symbols([(user_id, date_str, returned_symbol)])
-                    cell_data['symbol'] = returned_symbol
-
+                    if dialog and hasattr(dialog, 'refresh_row_data_from_model'):
+                        dialog.refresh_row_data_from_model(visual_row)
                     if dialog and hasattr(dialog, 'update_status_for_row'):
                         dialog.update_status_for_row(visual_row, 'success')
-                        dialog.cells_table.item(visual_row, 3).setText(returned_symbol)
                 else:
                     error_msg = result.get("message", "Nieznany błąd.")
                     if dialog and hasattr(dialog, 'update_status_for_row'):
                         dialog.update_status_for_row(visual_row, 'failure', error_msg)
                     QMessageBox.warning(self, "Błąd",
-                                        f"Błąd dla {user_name} ({self.format_date(date_str)}):\\n{error_msg}",
+                                        f"Błąd dla {user_name} ({self.format_date(date_str)}):\n{error_msg}",
                                         QMessageBox.Ok)
 
             except Exception as e:
                 log_error(f"Błąd krytyczny w handle_schedule_change_request: {e}", exception=e)
                 if dialog and hasattr(dialog, 'update_status_for_row'):
                     dialog.update_status_for_row(visual_row, 'failure', str(e))
+
+    def get_data_from_model_by_id(self, user_id, date_str):
+        """
+        Wyszukuje i zwraca aktualne dane dla konkretnej komórki (użytkownik/data)
+        bezpośrednio z głównego modelu danych.
+        """
+        if not hasattr(self, 'schedule_model') or not self.schedule_model:
+            return None
+
+        try:
+            # Znajdź wiersz dla danego użytkownika
+            row_index = -1
+            for idx, key in enumerate(self.schedule_model._keys):
+                if str(key[3]) == str(user_id):
+                    row_index = idx
+                    break
+
+            if row_index == -1:
+                return None
+
+            # Oblicz kolumnę dla danej daty
+            day = int(date_str.split('-')[2])
+            col_index = len(self.schedule_model.get_visible_columns()) + day - 1
+
+            model_index = self.schedule_model.index(row_index, col_index)
+            if model_index.isValid():
+                # Zwróć pełny słownik danych dla tej komórki
+                return self.schedule_model.data(model_index, ROLE_DATA)
+
+        except (ValueError, IndexError) as e:
+            log_error(f"Błąd przy pobieraniu danych z modelu dla {user_id}/{date_str}: {e}")
+
+        return None
 
     def _save_view_state(self):
         """Zapisuje stabilne identyfikatory zaznaczenia, sortowanie i pozycję przewijania."""
@@ -4163,6 +4211,14 @@ class WorkScheduleWindow(QMainWindow):
             if not is_initial_load:
                 self._restore_view_state(view_state)
 
+            # # Po załadowaniu nowych danych i przywróceniu stanu tabel,
+            # # ponownie zastosuj wszystkie ustawienia wyglądu, aby zapewnić spójność.
+            # self.apply_theme_settings(
+            #     'dark' if self.is_dark_theme else 'light',
+            #     self.current_font,
+            #     self.current_font_size
+            # )
+
             debug_print("Pomyślnie zastosowano dane z async loading")
         except Exception as e:
             log_error(f"Błąd podczas stosowania załadowanych danych: {e}")
@@ -4174,7 +4230,9 @@ class WorkScheduleWindow(QMainWindow):
     def _on_async_loading_failed(self, error_message):
         """Obsługuje błędy async loading."""
         debug_print(f"Async loading failed: {error_message}")
-        QMessageBox.critical(self, "Błąd ładowania danych", f"Nie udało się załadować danych:\\n{error_message}\\n\\nSpróbuj ponownie lub skontaktuj się z administratorem.", QMessageBox.Ok)
+        QMessageBox.critical(self, "Błąd ładowania danych",
+                             f"Nie udało się załadować danych:\n{error_message}\n\nSpróbuj ponownie lub skontaktuj się z administratorem.",
+                             QMessageBox.Ok)
         try:
             debug_print("Próbuję fallback do synchronicznego ładowania")
             self._load_data_sync(self.year, self.month)
@@ -4361,9 +4419,6 @@ class WorkScheduleWindow(QMainWindow):
             'show_progress_dialog': True,
             'auto_fallback_to_sync': True
         }
-
-
-
 
     def update_cross_filters(self):
         """
@@ -4694,7 +4749,8 @@ class WorkScheduleWindow(QMainWindow):
             self.etat_combo.select_items(selected_etaty)
 
             # Filtr "DTN"
-            dtn_values = sorted(set(str(data['dtn']) for data in self.processed_data.values() if data.get('dtn') is not None), key=int)
+            dtn_values = sorted(
+                set(str(data['dtn']) for data in self.processed_data.values() if data.get('dtn') is not None), key=int)
             self.dtn_combo.add_items(dtn_values)
             self.dtn_combo.select_items(selected_dtn)
 
@@ -4913,11 +4969,22 @@ class WorkScheduleWindow(QMainWindow):
 
         try:
             debug_print("Zmiana zaznaczenia - aktualizuję tabelę zdarzeń...")
-
-            # Pobierz dane dla zaznaczonych komórek
             selected_cells_data = self.table.get_data_for_selected_cells()
             debug_print(f"Zaznaczono {len(selected_cells_data)} komórek")
-            self.send_email_button.setEnabled(bool(selected_cells_data))
+
+            # Sprawdź, czy zaznaczono dokładnie jedną komórkę
+            is_one_cell_selected = len(selected_cells_data) == 1
+
+            # Zaktualizuj stan przycisku ORAZ obiektu skrótu klawiszowego
+            if hasattr(self, 'add_overtime_button'):
+                self.add_overtime_button.setEnabled(is_one_cell_selected)
+            if hasattr(self, 'shortcut_insert'):
+                self.shortcut_insert.setEnabled(is_one_cell_selected)
+
+            # Włącz przycisk "Wyślij e-mail", jeśli cokolwiek jest zaznaczone
+            if hasattr(self, 'send_email_button'):
+                self.send_email_button.setEnabled(bool(selected_cells_data))
+
             if selected_cells_data and len(selected_cells_data) > 0:
                 # MAMY ZAZNACZONE KOMÓRKI - pokaż zdarzenia
                 events = []
@@ -5227,7 +5294,6 @@ class WorkScheduleWindow(QMainWindow):
             import traceback
             traceback.print_exc()
 
-
     def _get_current_event_filter_params(self):
         """
         Pobiera bieżące parametry filtrowania zdarzeń.
@@ -5338,90 +5404,70 @@ class WorkScheduleWindow(QMainWindow):
         return cells_data_to_return
 
     def cancel_delegations(self, ask_for_confirmation: bool = True):
-        debug_print("\\n=== ROZPOCZYNAM OPERACJĘ ODWOŁYWANIA DELEGACJI ===")
-
-        current_data = self.date_combo.currentData()
-        if not current_data:
-            QMessageBox.warning(self, "Brak danych", "Nie wybrano miesiąca.", QMessageBox.Ok)
-            return
+        """
+        Inicjuje proces odwoływania delegacji. Wyświetla okno potwierdzenia
+        tylko wtedy, gdy jest to akcja bezpośrednia (ask_for_confirmation=True).
+        """
+        debug_print(f"--- cancel_delegations: FUNKCJA WYWOŁANA (ask_for_confirmation={ask_for_confirmation}) ---")
 
         selected_cells_data = self.get_selected_cells_data()
         if not self._can_modify_cells(selected_cells_data):
             return
 
-        if not selected_cells_data:
-            QMessageBox.warning(self, "Brak zaznaczenia", "Zaznacz komórki, dla których chcesz odwołać delegacje.",
-                                QMessageBox.Ok)
-            return
-
-        view_state = self._save_view_state()
-
-        user_date_pairs = [(cell.get('uzytkownik_id'), cell.get('date_str')) for cell in selected_cells_data if
-                           cell.get('uzytkownik_id') and cell.get('date_str')]
+        user_date_pairs = list(set((cell.get('uzytkownik_id'), cell.get('date_str')) for cell in selected_cells_data if
+                                   cell.get('uzytkownik_id') and cell.get('date_str')))
         if not user_date_pairs:
-            QMessageBox.information(self, "Brak danych", "Nie znaleziono danych dla zaznaczonych komórek.",
-                                    QMessageBox.Ok)
+            if ask_for_confirmation:  # Pokaż błąd tylko, gdy to akcja bezpośrednia
+                QMessageBox.warning(self, "Brak zaznaczenia", "Proszę zaznaczyć komórki do analizy.", QMessageBox.Ok)
             return
 
         events_to_cancel = self._find_events_to_cancel(user_date_pairs)
         if not events_to_cancel:
-            QMessageBox.information(self, "Brak delegacji",
-                                    "Nie znaleziono delegacji do odwołania dla zaznaczonych komórek.", QMessageBox.Ok)
+            if ask_for_confirmation:  # Pokaż informację tylko, gdy to akcja bezpośrednia
+                QMessageBox.information(self, "Brak delegacji", "Nie znaleziono aktywnych delegacji do odwołania.",
+                                        QMessageBox.Ok)
             return
 
-        reply = QMessageBox.Yes
-        # NOWA LOGIKA: Pytaj o potwierdzenie tylko wtedy, gdy jest to wymagane
+        # Krok 1: Wyświetlaj dialog tylko, gdy jest to wymagane
         if ask_for_confirmation:
             grouped_events = self._group_events_by_user_date(events_to_cancel)
             delegations_info = self._prepare_delegations_description(grouped_events)
-            confirm_message = f"Czy na pewno chcesz odwołać następujące delegacje?\\n\\n{delegations_info}\\n"
-            confirm_message += f"Łącznie: {len(events_to_cancel)} delegacji dla {len(user_date_pairs)} komórek"
+            confirm_message = f"Czy na pewno chcesz odwołać następujące delegacje?\n\n{delegations_info}"
 
             reply = QMessageBox.question(self, "Potwierdzenie odwołania delegacji", confirm_message,
                                          QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+            if reply != QMessageBox.Yes:
+                return
 
-        if reply != QMessageBox.Yes:
-            debug_print("=== OPERACJA ANULOWANA PRZEZ UŻYTKOWNIKA ===")
-            return
-
+        # Krok 2: Wykonaj operacje
         try:
-            # Krok 1: Najpierw zidentyfikuj i usuń symbole 'S' z grafiku przez bezpośredni UPDATE.
+            view_state = self._save_view_state()
+
             trainings_to_clear = [evt for evt in events_to_cancel if evt.get('type') == 'Szkolenie']
             if trainings_to_clear:
                 pairs_for_trainings = list(
                     set((e.get('user_id'), e.get('date_key', e.get('date'))) for e in trainings_to_clear))
                 cells_data = self._get_cell_data_for_user_date_pairs(pairs_for_trainings)
-
                 cells_with_s = [cell for cell in cells_data if
-                                parse_symbol(cell.get('symbol', '')).get('special_symbol', '').upper() == 'S']
+                                (parse_symbol(cell.get('symbol', '')).get('special_symbol') or '').upper() == 'S']
                 if cells_with_s:
                     self._remove_s_symbol_directly(cells_with_s)
 
-            # Krok 2: Teraz odwołaj wszystkie zdarzenia (szkolenia, spotkania, nadgodziny).
-            canceled_count = self._cancel_delegations(events_to_cancel)
+            canceled_count = self._cancel_delegations_in_db(events_to_cancel)
 
-            # Krok 3: Jeśli cokolwiek zostało odwołane, odśwież dane w interfejsie.
             if canceled_count > 0:
-                affected_pairs = list(
-                    set((e.get('user_id'), e.get('date_key', e.get('date'))) for e in events_to_cancel))
-                self.data_provider.invalidate_complete_cache_for_pairs(affected_pairs)
-
+                self.data_provider.invalidate_complete_cache_for_pairs(user_date_pairs)
                 self._restore_view_state(view_state)
                 self.on_selection_changed()
-                QMessageBox.information(self, "Sukces", f"Pomyślnie odwołano {canceled_count} zdarzeń.", QMessageBox.Ok)
-            else:
-                self._restore_view_state(view_state)
-                # Jeśli nie odwołano zdarzeń, ale mogły być usunięte symbole 'S', odśwież widok
-                if trainings_to_clear:
-                    self.refresh_data()
-                else:
-                    QMessageBox.warning(self, "Brak zmian", "Nie udało się odwołać żadnej delegacji.", QMessageBox.Ok)
-
-            debug_print(f"=== ZAKOŃCZONO - ODWOŁANO {canceled_count} DELEGACJI ===")
+                if ask_for_confirmation:  # Pokaż podsumowanie tylko dla akcji bezpośredniej
+                    QMessageBox.information(self, "Sukces", f"Pomyślnie odwołano {canceled_count} zdarzeń.",
+                                            QMessageBox.Ok)
+            elif ask_for_confirmation:
+                QMessageBox.warning(self, "Brak zmian", "Nie udało się odwołać żadnej delegacji.", QMessageBox.Ok)
 
         except Exception as e:
             log_error(f"Błąd podczas odwoływania delegacji: {e}", exception=e)
-            QMessageBox.critical(self, "Błąd", f"Wystąpił błąd podczas odwoływania delegacji: {str(e)}", QMessageBox.Ok)
+            QMessageBox.critical(self, "Błąd", f"Wystąpił krytyczny błąd: {str(e)}", QMessageBox.Ok)
 
     def delete_events_for_cells(self, cells_data: list):
         """
@@ -5584,8 +5630,6 @@ class WorkScheduleWindow(QMainWindow):
         if hasattr(self, 'events_table'):
             self.events_table.viewport().update()
 
-
-
     def get_selected_schedule_cells(self):
         """Zwraca listę zaznaczonych komórek z siatki grafiku"""
         selected_cells = []
@@ -5632,79 +5676,102 @@ class WorkScheduleWindow(QMainWindow):
 
         return grouped
 
-    def delete_event(self, event_id, event_type):
-        """Wersja z obchodzeniem procedury składowanej dla symbolu 'S'."""
-        debug_print(f"--- ROZPOCZĘTO delete_event DLA ID: {event_id}, TYP: {event_type} ---")
-        affected_pairs = []
-        event_to_delete = None
-        for event in (self.events_data or []):
-            if event.get('id') == event_id and event.get('type') == event_type:
-                user_id = event.get('user_id')
-                date_key = event.get('date_key')
-                if user_id and date_key:
-                    affected_pairs.append((user_id, date_key))
-                    event_to_delete = event
-                    break
+    def _cancel_delegations_in_db(self, events_to_cancel: List[Dict]) -> int:
+        """
+        Wykonuje operacje w bazie danych w celu odwołania delegacji (zmiany statusu lub usunięcia).
+        Zwraca liczbę pomyślnie przetworzonych rekordów.
+        """
+        if not events_to_cancel:
+            return 0
 
-        if not event_to_delete:
-            QMessageBox.warning(self, "Błąd", "Nie można odnaleźć zdarzenia do usunięcia.")
-            return
-
-        cells_to_check = self._get_cell_data_for_user_date_pairs(affected_pairs)
-        if not self._can_modify_cells(cells_to_check):
-            return
-
-        reply = QMessageBox.question(
-            self, "Potwierdzenie",
-            f"Czy na pewno chcesz usunąć {event_type.lower()} o ID {event_id}?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.Yes
-        )
-        if reply != QMessageBox.StandardButton.Yes:
-            return
-
-        self._state_to_restore = self._save_view_state()
-
+        successful_updates = 0
         try:
-            # Krok 1: Jeśli to szkolenie, wykonaj bezpośredni UPDATE na grafiku, aby usunąć 'S'.
-            if event_type == 'Szkolenie':
-                cells_with_s = [cell for cell in cells_to_check if
-                                parse_symbol(cell.get('symbol', '')).get('special_symbol', '').upper() == 'S']
-                if cells_with_s:
-                    self._remove_s_symbol_directly(cells_with_s)
-
-            # Krok 2: Odwołaj zdarzenie (Szkolenie/Spotkanie/Nadgodziny) w jego własnej tabeli.
-            _, user_app_id, _, _, _ = get_modifier_id()
             conn = DatabaseConnector.get_connection()
             cursor = conn.cursor()
-            table_name = ""
-            if event_type == "Spotkanie":
-                table_name = SQL_OBJECTS['spotkania']
-            elif event_type == "Szkolenie":
-                table_name = SQL_OBJECTS['szkolenia']
-            elif event_type == "Nadgodziny":
-                table_name = SQL_OBJECTS['nadgodziny']
+            _, user_app_id, _, _, _ = get_modifier_id()
 
-            if table_name:
-                if event_type in ["Spotkanie", "Szkolenie"]:
-                    query = f"UPDATE {table_name} SET Status = 0, DataDo = NULL, DataOd = Data, Modyfikujacy = ? WHERE Id = ?"
-                    cursor.execute(query, (user_app_id, event_id))
-                else:
-                    query = f"DELETE FROM {table_name} WHERE Id = ?"
-                    cursor.execute(query, (event_id,))
+            for event in events_to_cancel:
+                event_id, event_type = event.get('id'), event.get('type')
+                if not all([event_id, event_type]): continue
+
+                table_name = ""
+                if event_type == "Spotkanie":
+                    table_name = SQL_OBJECTS['spotkania']
+                elif event_type == "Szkolenie":
+                    table_name = SQL_OBJECTS['szkolenia']
+                elif event_type == "Nadgodziny":
+                    table_name = SQL_OBJECTS['nadgodziny']
+                if not table_name: continue
+
+                try:
+                    if event_type in ["Spotkanie", "Szkolenie"]:
+                        query = f"UPDATE {table_name} SET Status = 0, DataDo = NULL, DataOd = Data, Modyfikujacy = ? WHERE Id = ?"
+                        cursor.execute(query, (user_app_id, event_id))
+                    else:
+                        query = f"DELETE FROM {table_name} WHERE Id = ?"
+                        cursor.execute(query, (event_id,))
+
+                    if cursor.rowcount > 0:
+                        successful_updates += 1
+                except Exception as db_err:
+                    log_error(f"Błąd DB podczas odwoływania {event_type} ID {event_id}: {db_err}", exception=db_err)
+
+            if successful_updates > 0:
                 conn.commit()
+                self._update_modification_date()
             conn.close()
-            self._update_modification_date()
+        except Exception as e:
+            log_error(f"Generalny błąd w _cancel_delegations_in_db: {e}", exception=e)
 
-            # Krok 3: Odśwież dane w aplikacji.
-            self.data_provider.invalidate_complete_cache_for_pairs(affected_pairs)
-            self.statusBar().showMessage(f"Pomyślnie odwołano zdarzenie o ID {event_id}.", 3000)
+        return successful_updates
+
+    def delete_event(self, event_id, event_type):
+        """
+        Odwołuje pojedyncze zdarzenie z tabeli zdarzeń. Zawsze prosi o potwierdzenie.
+        """
+        # Krok 1: Zawsze wyświetlaj dialog potwierdzenia.
+        reply = QMessageBox.question(
+            self, "Potwierdzenie",
+            f"Czy na pewno chcesz odwołać {event_type.lower()} o ID {event_id}?",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes
+        )
+        if reply != QMessageBox.Yes:
+            return
+
+        # Krok 2: Zbierz dane tylko dla tego jednego zdarzenia.
+        event_to_cancel = next(
+            (e for e in (self.all_events_data or []) if e.get('id') == event_id and e.get('type') == event_type), None)
+        if not event_to_cancel:
+            QMessageBox.warning(self, "Błąd", "Nie można odnaleźć zdarzenia do odwołania.")
+            return
+
+        # Krok 3: Wykonaj operacje.
+        try:
+            view_state = self._save_view_state()
+
+            user_id = event_to_cancel.get('user_id')
+            date_str = event_to_cancel.get('date_key')
+
+            if event_type == 'Szkolenie':
+                cell_data = self._get_cell_data_for_user_date_pairs([(user_id, date_str)])
+                if cell_data and (
+                        parse_symbol(cell_data[0].get('symbol', '')).get('special_symbol') or '').upper() == 'S':
+                    self._remove_s_symbol_directly(cell_data)
+
+            canceled_count = self._cancel_delegations_in_db([event_to_cancel])
+
+            if canceled_count > 0:
+                self.data_provider.invalidate_complete_cache_for_pairs([(user_id, date_str)])
+                self._restore_view_state(view_state)
+                self.on_selection_changed()
+                QMessageBox.information(self, "Sukces", f"Pomyślnie odwołano zdarzenie.", QMessageBox.Ok)
+            else:
+                QMessageBox.warning(self, "Brak zmian", "Nie udało się odwołać zdarzenia.", QMessageBox.Ok)
 
         except Exception as e:
             log_error(f"Błąd podczas usuwania zdarzenia: {e}", exception=e)
-            QMessageBox.critical(self, "Błąd", f"Wystąpił błąd podczas usuwania zdarzenia: {str(e)}",
-                                 QMessageBox.StandardButton.Ok)
-            self._state_to_restore = None
+            QMessageBox.critical(self, "Błąd", f"Wystąpił błąd podczas usuwania zdarzenia: {str(e)}", QMessageBox.Ok)
 
     def _update_multiple_overtime_locations(self, location_changes):
         """
@@ -6009,7 +6076,6 @@ class WorkScheduleWindow(QMainWindow):
             log_error(f"Błąd podczas odświeżania danych: {e}")
             import traceback
             traceback.print_exc()
-
 
     def _add_event_to_data_provider(self, new_id, user_id, user_name, date_str, start_time,
                                     end_time, overtime_type, is_overdue, year, month):
@@ -6376,7 +6442,7 @@ class WorkScheduleWindow(QMainWindow):
 
         if skipped_for_dtn:
             QMessageBox.warning(self, "Operacja zablokowana",
-                                f"Dla wydziału DTN dozwolony jest tylko symbol 'CO'.\\n"
+                                f"Dla wydziału DTN dozwolony jest tylko symbol 'CO'.\n"
                                 f"Pominięto zmiany dla: {', '.join(set(skipped_for_dtn))}")
 
         if not cells_to_modify_final:
@@ -6391,11 +6457,11 @@ class WorkScheduleWindow(QMainWindow):
         if self._should_ask_for_confirmation():
             grouped_changes = self._group_cells_for_symbol_changes(cells_to_modify_final)
             changes_info = self._prepare_symbol_changes_description(grouped_changes, special_symbol)
-            complete_info = f"Czy na pewno chcesz wprowadzić następujące zmiany?\\n\\n{changes_info}"
+            complete_info = f"Czy na pewno chcesz wprowadzić następujące zmiany?\n\n{changes_info}"
             if events_to_cancel:
                 grouped_events = self._group_events_by_user_date(events_to_cancel)
                 delegations_info = self._prepare_delegations_description(grouped_events)
-                complete_info += f"\\n{delegations_info}"
+                complete_info += f"\n{delegations_info}"
             reply = QMessageBox.question(self, "Potwierdzenie wstawienia symbolu", complete_info,
                                          QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
 
