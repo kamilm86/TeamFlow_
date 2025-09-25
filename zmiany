@@ -1,83 +1,123 @@
-Rozumiem. Przepraszam za to zamieszanie – ten problem jest wynikiem błędu w jednej z moich poprzednich poprawek, gdzie przez pomyłkę usunąłem kluczowy fragment kodu. Twoja analiza jest prawidłowa, problem nie leży w delete_event, ale w cancel_delegations.
-Dokładna analiza problemu
-Funkcja cancel_delegations, która jest wywoływana przez przycisk "Odwołaj delegacje", w wersji, którą ostatnio Ci podałem, nie zawierała bloku kodu odpowiedzialnego za wyświetlenie okna z prośbą o potwierdzenie. Mimo że funkcja przyjmowała parametr ask_for_confirmation, nie było w niej logiki, która by go wykorzystała do pokazania dialogu.
-Ostateczne rozwiązanie
-Poniżej znajduje się jedna, ostateczna i w pełni kompletna wersja funkcji cancel_delegations. Zawiera ona wszystkie dotychczasowe poprawki i, co najważniejsze, przywraca brakujący kod, który wyświetla okno z prośbą o potwierdzenie.
-Proszę, zastąp całą funkcję cancel_delegations w pliku main.py poniższą wersją.
-    def cancel_delegations(self, ask_for_confirmation: bool = True):
-        """Obsługuje przycisk 'Odwołaj delegacje' z opcjonalnym potwierdzeniem."""
-        debug_print("\\n=== ROZPOCZYNAM OPERACJĘ ODWOŁYWANIA DELEGACJI ===")
-        
-        selected_cells_data = self.get_selected_cells_data()
-        if not self._can_modify_cells(selected_cells_data):
-            return
+def cancel_delegations(self):
+    """
+    Inicjuje proces odwoływania delegacji dla zaznaczonych komórek w grafiku.
+    Zawsze prosi użytkownika o potwierdzenie przed wykonaniem operacji.
+    """
+    debug_print("--- cancel_delegations: FUNKCJA WYWOŁANA ---")
 
-        if not selected_cells_data:
-            QMessageBox.warning(self, "Brak zaznaczenia", "Zaznacz komórki, dla których chcesz odwołać delegacje.", QMessageBox.Ok)
-            return
-            
+    selected_cells_data = self.get_selected_cells_data()
+    if not self._can_modify_cells(selected_cells_data):
+        return
+
+    user_date_pairs = list(set((cell.get('uzytkownik_id'), cell.get('date_str')) for cell in selected_cells_data if cell.get('uzytkownik_id') and cell.get('date_str')))
+    if not user_date_pairs:
+        QMessageBox.warning(self, "Brak zaznaczenia", "Proszę zaznaczyć komórki do analizy.", QMessageBox.Ok)
+        return
+
+    events_to_cancel = self._find_events_to_cancel(user_date_pairs)
+    debug_print(f"--- cancel_delegations: Znaleziono {len(events_to_cancel)} zdarzeń do odwołania: {events_to_cancel}")
+    if not events_to_cancel:
+        QMessageBox.information(self, "Brak delegacji", "Nie znaleziono aktywnych delegacji do odwołania.", QMessageBox.Ok)
+        return
+
+    grouped_events = self._group_events_by_user_date(events_to_cancel)
+    delegations_info = self._prepare_delegations_description(grouped_events)
+    confirm_message = f"Czy na pewno chcesz odwołać następujące delegacje?\n\n{delegations_info}"
+    
+    reply = QMessageBox.question(self, "Potwierdzenie odwołania delegacji", confirm_message,
+                                 QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+    if reply != QMessageBox.Yes:
+        return
+
+    try:
         view_state = self._save_view_state()
 
-        user_date_pairs = [(cell.get('uzytkownik_id'), cell.get('date_str')) for cell in selected_cells_data if
-                           cell.get('uzytkownik_id') and cell.get('date_str')]
-        
-        events_to_cancel = self._find_events_to_cancel(user_date_pairs)
-        if not events_to_cancel:
-            QMessageBox.information(self, "Brak delegacji", "Nie znaleziono aktywnych delegacji do odwołania dla zaznaczonych komórek.", QMessageBox.Ok)
-            return
+        trainings_to_clear = [evt for evt in events_to_cancel if evt.get('type') == 'Szkolenie']
+        if trainings_to_clear:
+            pairs_for_trainings = list(set((e.get('user_id'), e.get('date_key', e.get('date'))) for e in trainings_to_clear))
+            cells_data = self._get_cell_data_for_user_date_pairs(pairs_for_trainings)
+            cells_with_s = [cell for cell in cells_data if (parse_symbol(cell.get('symbol', '')).get('special_symbol') or '').upper() == 'S']
+            if cells_with_s:
+                self._remove_s_symbol_directly(cells_with_s)
 
-        reply = QMessageBox.Yes
-        # --- POPRAWKA: Ten blok został przywrócony ---
-        if ask_for_confirmation:
-            grouped_events = self._group_events_by_user_date(events_to_cancel)
-            delegations_info = self._prepare_delegations_description(grouped_events)
-            confirm_message = f"Czy na pewno chcesz odwołać następujące delegacje?\\n\\n{delegations_info}"
-            reply = QMessageBox.question(self, "Potwierdzenie odwołania delegacji", confirm_message,
-                                         QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+        canceled_count = self._cancel_delegations_in_db(events_to_cancel)
+        debug_print(f"--- cancel_delegations: Funkcja _cancel_delegations_in_db ZWRÓCIŁA wartość: {canceled_count}")
 
-        if reply != QMessageBox.Yes:
-            debug_print("=== OPERACJA ANULOWANA PRZEZ UŻYTKOWNIKA ===")
-            return
-        # --- KONIEC POPRAWKI ---
+        if canceled_count > 0:
+            self.data_provider.invalidate_complete_cache_for_pairs(user_date_pairs)
+            self._restore_view_state(view_state)
+            self.on_selection_changed()
+            QMessageBox.information(self, "Sukces", f"Pomyślnie odwołano {canceled_count} zdarzeń.", QMessageBox.Ok)
+        else:
+             QMessageBox.warning(self, "Brak zmian", "Nie udało się odwołać żadnej delegacji (prawdopodobnie błąd bazy danych).", QMessageBox.Ok)
 
-        try:
-            trainings_to_clear = [evt for evt in events_to_cancel if evt.get('type') == 'Szkolenie']
-            if trainings_to_clear:
-                pairs_for_trainings = list(
-                    set((e.get('user_id'), e.get('date_key', e.get('date'))) for e in trainings_to_clear))
-                cells_data = self._get_cell_data_for_user_date_pairs(pairs_for_trainings)
-                
-                cells_with_s = []
-                for cell in cells_data:
-                    parsed = parse_symbol(cell.get('symbol', ''))
-                    special_symbol = parsed.get('special_symbol')
-                    if special_symbol and special_symbol.upper() == 'S':
-                        cells_with_s.append(cell)
-                
-                if cells_with_s:
-                    self._remove_s_symbol_directly(cells_with_s)
+    except Exception as e:
+        log_error(f"Błąd podczas odwoływania delegacji: {e}", exception=e)
+        QMessageBox.critical(self, "Błąd", f"Wystąpił krytyczny błąd: {str(e)}", QMessageBox.Ok)
 
-            canceled_count = self._cancel_delegations(events_to_cancel)
+def _cancel_delegations_in_db(self, events_to_cancel: List[Dict]) -> int:
+    """
+    Wykonuje operacje w bazie danych w celu odwołania delegacji, z szczegółowym logowaniem.
+    """
+    debug_print(f"--- _cancel_delegations_in_db: Rozpoczynam operacje na bazie dla {len(events_to_cancel)} zdarzeń.")
+    if not events_to_cancel:
+        return 0
 
-            if canceled_count > 0:
-                affected_pairs = list(
-                    set((e.get('user_id'), e.get('date_key', e.get('date'))) for e in events_to_cancel))
-                self.data_provider.invalidate_complete_cache_for_pairs(affected_pairs)
-                
-                self._restore_view_state(view_state)
-                self.on_selection_changed()
-                QMessageBox.information(self, "Sukces", f"Pomyślnie odwołano {canceled_count} zdarzeń.", QMessageBox.Ok)
-            else:
-                self._restore_view_state(view_state)
-                if trainings_to_clear: 
-                    self.refresh_data()
+    successful_updates = 0
+    conn = None
+    try:
+        conn = DatabaseConnector.get_connection()
+        cursor = conn.cursor()
+        _, user_app_id, _, _, _ = get_modifier_id()
+
+        for event in events_to_cancel:
+            event_id, event_type = event.get('id'), event.get('type')
+            if not all([event_id, event_type]): continue
+
+            table_name = ""
+            if event_type == "Spotkanie": table_name = SQL_OBJECTS['spotkania']
+            elif event_type == "Szkolenie": table_name = SQL_OBJECTS['szkolenia']
+            elif event_type == "Nadgodziny": table_name = SQL_OBJECTS['nadgodziny']
+            if not table_name: continue
+
+            try:
+                debug_print(f"  [DB] Przetwarzam event_id: {event_id}, typ: {event_type}")
+                if event_type in ["Spotkanie", "Szkolenie"]:
+                    query = f"UPDATE {table_name} SET Status = 0, DataDo = NULL, DataOd = Data, Modyfikujacy = ? WHERE Id = ?"
+                    params = (user_app_id, event_id)
                 else:
-                    QMessageBox.warning(self, "Brak zmian", "Nie udało się odwołać żadnej delegacji.", QMessageBox.Ok)
+                    query = f"DELETE FROM {table_name} WHERE Id = ?"
+                    params = (event_id,)
 
-            debug_print(f"=== ZAKOŃCZONO - ODWOŁANO {canceled_count} DELEGACJI ===")
+                debug_print(f"  [DB] Wykonuję SQL: {query}")
+                debug_print(f"  [DB] Z parametrami: {params}")
+                
+                cursor.execute(query, params)
+                
+                # Kluczowe logowanie odpowiedzi z bazy danych
+                debug_print(f"  [DB] cursor.rowcount ZWRÓCIŁ: {cursor.rowcount}")
+                
+                if cursor.rowcount > 0:
+                    successful_updates += 1
+                    debug_print(f"  [DB] Zwiększono licznik successful_updates do: {successful_updates}")
+                else:
+                    debug_print("  [DB] UWAGA: Baza danych nie zgłosiła żadnych zmienionych wierszy!")
 
-        except Exception as e:
-            log_error(f"Błąd podczas odwoływania delegacji: {e}", exception=e)
-            QMessageBox.critical(self, "Błąd", f"Wystąpił błąd podczas odwoływania delegacji: {str(e)}", QMessageBox.Ok)
+            except Exception as db_err:
+                log_error(f"Błąd DB podczas odwoływania {event_type} ID {event_id}: {db_err}", exception=db_err)
 
-Po tej jednej zmianie, przycisk "Odwołaj delegacje" ponownie będzie wyświetlał okno z prośbą o potwierdzenie. Dziękuję za Twoją cierpliwość w zdiagnozowaniu tego błędu.
+        if successful_updates > 0:
+            debug_print(f"--- _cancel_delegations_in_db: Próba wykonania conn.commit() dla {successful_updates} zmian.")
+            conn.commit()
+            debug_print("--- _cancel_delegations_in_db: conn.commit() wykonany pomyślnie.")
+        else:
+            debug_print("--- _cancel_delegations_in_db: Brak udanych operacji, pomijam conn.commit().")
+            
+        conn.close()
+    except Exception as e:
+        log_error(f"Generalny błąd w _cancel_delegations_in_db: {e}", exception=e)
+        if conn:
+            conn.close() # Upewnij się, że połączenie jest zamknięte w razie błędu
+
+    debug_print(f"--- _cancel_delegations_in_db: Zwracam ostateczną wartość: {successful_updates}")
+    return successful_updates
