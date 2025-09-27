@@ -73,8 +73,15 @@ class AddEditExceptionDialog(QDialog):
 
     def load_data(self):
         """Wypełnia formularz danymi do edycji."""
-        self.date_from_edit.setDate(QDate(self.exception_data['Dataod']))
-        self.date_to_edit.setDate(QDate(self.exception_data['Datado']))
+        # POPRAWKA: Bezpieczne pobieranie dat
+        date_from = self.exception_data.get('DataOd', self.exception_data.get('Dataod'))
+        date_to = self.exception_data.get('DataDo', self.exception_data.get('Datado'))
+
+        if date_from:
+            self.date_from_edit.setDate(QDate(date_from))
+        if date_to:
+            self.date_to_edit.setDate(QDate(date_to))
+
         self.location_combo.setCurrentIndex(self.location_id_to_index.get(self.exception_data.get('Lokalizacja'), 0))
         self.reason_edit.setText(self.exception_data.get('Powod', ''))
 
@@ -168,8 +175,15 @@ class LocationExceptionDialog(QDialog):
             return
 
         exception_data = selected_items[0].data(Qt.UserRole)
-        is_range = exception_data['Dataod'].date() != exception_data['Datado'].date()
-        self.split_button.setEnabled(is_range)
+        # POPRAWKA: Bezpieczne pobieranie dat
+        date_from_obj = exception_data.get('DataOd', exception_data.get('Dataod'))
+        date_to_obj = exception_data.get('DataDo', exception_data.get('Datado'))
+
+        if date_from_obj and date_to_obj:
+            is_range = date_from_obj.date() != date_to_obj.date()
+            self.split_button.setEnabled(is_range)
+        else:
+            self.split_button.setEnabled(False)
 
     def _split_exception(self):
         selected_items = self.table.selectedItems()
@@ -225,23 +239,25 @@ class LocationExceptionDialog(QDialog):
         location_map = {1: 'Home Office', 3: 'SBC', 2: 'mPrzystanek'}
 
         for row, exc in enumerate(exceptions):
-            id_item = QTableWidgetItem(str(exc['Id']))
+            id_item = QTableWidgetItem(str(exc.get('Id', '')))
             id_item.setData(Qt.UserRole, exc)
             self.table.setItem(row, 0, id_item)
 
-            self.table.setItem(row, 1, QTableWidgetItem(exc['Dataod'].strftime('%Y-%m-%d')))
-            self.table.setItem(row, 2, QTableWidgetItem(exc['Datado'].strftime('%Y-%m-%d') if exc['Datado'] else ''))
-            self.table.setItem(row, 3, QTableWidgetItem(location_map.get(exc['Lokalizacja'], 'Nieznana')))
+            # POPRAWKA: Bezpieczne pobieranie dat
+            data_od = exc.get('DataOd', exc.get('Dataod'))
+            data_do = exc.get('DataDo', exc.get('Datado'))
+
+            self.table.setItem(row, 1, QTableWidgetItem(data_od.strftime('%Y-%m-%d') if data_od else ''))
+            self.table.setItem(row, 2, QTableWidgetItem(data_do.strftime('%Y-%m-%d') if data_do else ''))
+            self.table.setItem(row, 3, QTableWidgetItem(location_map.get(exc.get('Lokalizacja'), 'Nieznana')))
             self.table.setItem(row, 4, QTableWidgetItem(exc.get('Powod', '')))
 
-            # --- POCZĄTEK ZMIANY: Wypełnienie nowych kolumn ---
             mod_date = exc.get('DataModyfikacji')
             mod_date_str = mod_date.strftime('%Y-%m-%d %H:%M') if mod_date else ''
             self.table.setItem(row, 5, QTableWidgetItem(mod_date_str))
 
             modifier = exc.get('Modyfikujacy')
             self.table.setItem(row, 6, QTableWidgetItem(str(modifier) if modifier is not None else ''))
-            # --- KONIEC ZMIANY ---
 
         self._on_selection_changed()
 
@@ -299,9 +315,14 @@ class LocationExceptionDialog(QDialog):
             data = dialog.get_data()
             if data:
                 _, modyfikujacy_id, _, _, _ = get_modifier_id()
+                # POPRAWKA: Użycie prawidłowych kluczy ('date_from', 'date_to') i formatowanie dat do stringów
                 params = (
-                self.user_id, modyfikujacy_id, data['dataod'], data['datado'], data['lokalizacja'], data['powod'], 2,
-                exception_data['Id'])
+                    self.user_id, modyfikujacy_id,
+                    data['date_from'].toString("yyyy-MM-dd"),
+                    data['date_to'].toString("yyyy-MM-dd"),
+                    data['lokalizacja'], data['powod'], 2,
+                    exception_data['Id']
+                )
                 result = self.parent_widget._manage_location_exception(params)
                 if result.get("success"):
                     self.load_exceptions()
@@ -321,20 +342,22 @@ class LocationExceptionDialog(QDialog):
         if reply == QMessageBox.Yes:
             _, modyfikujacy_id, _, _, _ = get_modifier_id()
 
-            # --- POCZĄTEK POPRAWIONEJ LOGIKI ---
-            # Konwertujemy daty na stringi w formacie YYYY-MM-DD, których oczekuje baza danych
-            start_date = QDate(exception_data['Dataod'])
-            end_date = QDate(exception_data['Datado']) if exception_data['Datado'] else start_date
+            # POPRAWKA: Bezpieczne pobieranie dat
+            date_from_obj = exception_data.get('DataOd', exception_data.get('Dataod'))
+            date_to_obj = exception_data.get('DataDo', exception_data.get('Datado'))
+
+            if not date_from_obj:
+                QMessageBox.critical(self, "Błąd", "Brak daty początkowej w usuwanym wpisie.")
+                return
+
+            start_date = QDate(date_from_obj)
+            end_date = QDate(date_to_obj) if date_to_obj else start_date
 
             start_date_str = start_date.toString("yyyy-MM-dd")
             end_date_str = end_date.toString("yyyy-MM-dd")
 
-            # Tworzymy parametry z poprawnie sformatowanymi datami
             params = (self.user_id, modyfikujacy_id, start_date_str, end_date_str, None, None, 3, exception_data['Id'])
-
-            # Wywołujemy jedną, główną procedurę zarządzającą
             result = self.parent_widget._manage_location_exception(params)
-            # --- KONIEC POPRAWIONEJ LOGIKI ---
 
             if result.get("success"):
                 self.load_exceptions()
