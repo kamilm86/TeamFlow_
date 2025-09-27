@@ -1,0 +1,228 @@
+# batch_updater.py
+
+from PySide6.QtCore import QThread, Signal, Qt
+from PySide6.QtWidgets import (QDialog, QVBoxLayout, QLabel, QTextEdit,
+                               QPushButton, QHBoxLayout, QProgressDialog, QMessageBox)
+from db_connector import DatabaseConnector, SQL_OBJECTS
+from debug_utils import log_error, debug_print
+from styles import AppStyles
+import time
+import pyodbc
+
+
+class ErrorSummaryDialog(QDialog):
+    """
+    Niestandardowe okno dialogowe do wyświetlania pełnej, przewijalnej
+    listy błędów z możliwością kopiowania treści.
+    """
+
+    def __init__(self, parent, error_messages: list):
+        super().__init__(parent)
+        self.setWindowTitle("Podsumowanie błędów operacji")
+        self.setMinimumSize(700, 450)
+
+        layout = QVBoxLayout(self)
+        info_label = QLabel("Poniższe operacje nie powiodły się. Możesz skopiować treść tego okna (Ctrl+A, Ctrl+C).")
+        layout.addWidget(info_label)
+
+        self.text_edit = QTextEdit()
+        self.text_edit.setReadOnly(True)
+        self.text_edit.setText("\n".join(error_messages))
+        self.text_edit.setFontFamily("Consolas")
+        layout.addWidget(self.text_edit)
+
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        ok_button = QPushButton("OK")
+        ok_button.clicked.connect(self.accept)
+        button_layout.addWidget(ok_button)
+        layout.addLayout(button_layout)
+
+        self.apply_styles(parent.is_dark_theme if hasattr(parent, 'is_dark_theme') else False)
+
+    def apply_styles(self, is_dark_theme: bool):
+        theme = "dark" if is_dark_theme else "light"
+        font_family = self.parent().current_font if hasattr(self.parent(), 'current_font') else 'Segoe UI'
+        font_size = self.parent().current_font_size if hasattr(self.parent(), 'current_font_size') else 9
+
+        combined_style = (
+                AppStyles.get_dialog_style(theme) +
+                AppStyles.get_button_style(theme, font_family, font_size) +
+                f"QTextEdit {{ background-color: {AppStyles.DARK_BACKGROUND_CONTROLS if theme == 'dark' else AppStyles.LIGHT_BACKGROUND_CONTROLS}; color: {AppStyles.DARK_TEXT_PRIMARY if theme == 'dark' else AppStyles.LIGHT_TEXT_PRIMARY}; border: 1px solid {AppStyles.DARK_BORDER_SECONDARY if theme == 'dark' else AppStyles.LIGHT_BORDER_PRIMARY}; border-radius: {AppStyles.BORDER_RADIUS}; }}"
+        )
+        self.setStyleSheet(combined_style)
+
+
+class BatchUpdateThread(QThread):
+    """
+    Wątek roboczy do wykonywania masowych aktualizacji w bazie danych.
+    """
+    progress_updated = Signal(int)
+    finished = Signal(list)
+    error_occurred = Signal(str)
+
+    def __init__(self, change_requests, parent=None):
+        super().__init__(parent)
+        self.change_requests = change_requests
+        self._is_cancelled = False
+
+    def _execute_and_parse_change(self, cursor, req):
+        """
+        Wykonuje pojedynczą operację i interpretuje jej wynik w sposób
+        identyczny do oryginalnej, synchronicznej funkcji w main.py.
+        """
+        try:
+            cursor.execute(
+                f"EXEC {SQL_OBJECTS['p_importzmianynaserwer']} @Nr_Kadrowy = ?, @Rok = ?, @Miesiac = ?, @Data = ?, @Symbol = ?, @CzyPobieranieSugestii = ?",
+                (req['nr_kadrowy'], req['rok'], req['miesiac'], req['data'], req['symbol'], None)
+            )
+
+            all_results = []
+            while True:
+                try:
+                    rows = cursor.fetchall()
+                    if rows:
+                        all_results.extend(rows)
+                    if not cursor.nextset():
+                        break
+                except pyodbc.ProgrammingError:
+                    break
+
+            returned_symbol, success, message = req['symbol'], True, "Operacja zakończona pomyślnie"
+            for row in all_results:
+                if row and len(row) > 0 and row[0] is not None:
+                    raw_value = row[0]
+                    if isinstance(raw_value, int) and raw_value == 0: continue
+                    value_str = str(raw_value).strip()
+                    if not value_str or value_str == "0": continue
+
+                    is_likely_a_symbol = ' ' not in value_str and len(value_str) <= 50
+                    if is_likely_a_symbol:
+                        returned_symbol = value_str
+                    else:
+                        success, message = False, value_str
+                        break
+
+            req_result = req.copy()
+            req_result.update({'success': success, 'message': message, 'returned_symbol': returned_symbol})
+            return req_result
+
+        except Exception as e:
+            error_msg = f"Błąd wykonania procedury: {e}"
+            log_error(f"Błąd przetwarzania {req.get('nr_kadrowy')} dla daty {req.get('data')}: {e}", exception=e)
+            req_result = req.copy()
+            req_result.update({'success': False, 'message': error_msg, 'returned_symbol': req['symbol']})
+            return req_result
+
+    def run(self):
+        conn = None
+        results = []
+        try:
+            conn = DatabaseConnector.get_connection()
+            cursor = conn.cursor()
+            total = len(self.change_requests)
+
+            for i, req in enumerate(self.change_requests):
+                if self._is_cancelled:
+                    break
+
+                result = self._execute_and_parse_change(cursor, req)
+                results.append(result)
+                self.progress_updated.emit(i + 1)
+
+            if not self._is_cancelled:
+                conn.commit()
+
+            conn.close()
+            self.finished.emit(results)
+
+        except Exception as e:
+            log_error(f"Krytyczny błąd w wątku aktualizującym: {e}", exception=e)
+            self.error_occurred.emit(str(e))
+            if conn:
+                conn.close()
+
+    def cancel(self):
+        self._is_cancelled = True
+
+
+class BatchUpdater:
+    """
+    Klasa zarządzająca procesem masowej aktualizacji.
+    """
+
+    def __init__(self, parent_window):
+        self.parent = parent_window
+        self.thread = None
+        self.on_results_processed_callback = None
+
+    def start_update(self, change_requests, on_results_processed=None):
+        """
+        Rozpoczyna masową aktualizację w tle.
+
+        Args:
+            change_requests (list): Lista słowników z żądaniami zmian.
+            on_results_processed (callable, optional): Funkcja zwrotna (callback)
+                wywoływana po zakończeniu operacji. Otrzymuje dwa argumenty:
+                listę udanych operacji i listę nieudanych operacji.
+        """
+        if not change_requests:
+            return
+
+        self.on_results_processed_callback = on_results_processed
+
+        self.progress_dialog = QProgressDialog("Aktualizowanie grafiku...", "Anuluj", 0, len(change_requests),
+                                               self.parent)
+        self.progress_dialog.setWindowModality(Qt.WindowModal)
+        self.progress_dialog.setWindowTitle("Przetwarzanie zmian")
+
+        self.thread = BatchUpdateThread(change_requests)
+        self.thread.progress_updated.connect(self.progress_dialog.setValue)
+        self.thread.finished.connect(self._on_finished)
+        self.thread.error_occurred.connect(self._on_error)
+        self.progress_dialog.canceled.connect(self.thread.cancel)
+
+        self.thread.start()
+        self.progress_dialog.open()
+
+    def _on_finished(self, results):
+        self.progress_dialog.close()
+        successful_updates = []
+        failed_updates = []
+        error_messages = []
+
+        for res in results:
+            if res.get('success'):
+                successful_updates.append(res)
+            else:
+                failed_updates.append(res)
+                error_messages.append(
+                    f"- {res.get('user_name', '')} ({res.get('data', '')}): {res.get('message', 'Nieznany błąd')}")
+
+        if successful_updates:
+            updates_for_main_window = [(res['user_id'], res['data'], res.get('returned_symbol')) for res in
+                                       successful_updates]
+            self.parent._update_cells_with_new_symbols(updates_for_main_window)
+            self.parent.statusBar().showMessage(f"Pomyślnie zaktualizowano {len(successful_updates)} komórek.", 5000)
+
+        # KROK 1: Wywołaj callback, aby zaktualizować UI okna dialogowego
+        if self.on_results_processed_callback:
+            try:
+                self.on_results_processed_callback(successful_updates, failed_updates)
+            except Exception as e:
+                log_error(f"Błąd podczas wywoływania on_results_processed_callback: {e}", exception=e)
+
+        # KROK 2: Dopiero teraz wyświetl podsumowanie błędów
+        if error_messages:
+            error_dialog = ErrorSummaryDialog(self.parent, error_messages)
+            error_dialog.exec()
+
+        self.parent._update_modification_date()
+        self.thread = None
+        self.on_results_processed_callback = None  # Zresetuj callback
+
+    def _on_error(self, error_message):
+        self.progress_dialog.close()
+        QMessageBox.critical(self.parent, "Błąd krytyczny",
+                             f"Wystąpił błąd podczas masowej aktualizacji:\n{error_message}")
+        self.thread = None
