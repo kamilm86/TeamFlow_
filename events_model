@@ -85,75 +85,75 @@ class EventsTableModel(QAbstractTableModel):
         elif col == 10: return "" # Puste dla delegata przycisku
         return ""
 
-    def _get_background_color(self, event, col):
-        """Zwraca kolor tła dla danej kolumny"""
-        # Kolorowanie w zależności od typu zdarzenia
-        if col == 1:  # Kolumna typu
-            event_type = event.get('type', '')
-            if event_type == 'Spotkanie':
-                return QBrush(QColor(100, 149, 237))  # Cornflower Blue
-            elif event_type == 'Szkolenie':
-                return QBrush(QColor(144, 238, 144))  # Light Green
-            elif event_type == 'Nadgodziny':
-                return QBrush(QColor(255, 165, 0))  # Orange
+    # def _get_background_color(self, event, col):
+    #     """Zwraca kolor tła dla danej kolumny"""
+    #     # Kolorowanie w zależności od typu zdarzenia
+    #     if col == 1:  # Kolumna typu
+    #         event_type = event.get('type', '')
+    #         if event_type == 'Spotkanie':
+    #             return QBrush(QColor(100, 149, 237))  # Cornflower Blue
+    #         elif event_type == 'Szkolenie':
+    #             return QBrush(QColor(144, 238, 144))  # Light Green
+    #         elif event_type == 'Nadgodziny':
+    #             return QBrush(QColor(255, 165, 0))  # Orange
+    #
+    #     return None
 
-        return None
+    # def _get_foreground_color(self, event, col):
+    #     """Zwraca kolor tekstu dla danej kolumny"""
+    #     # Dla większości przypadków używamy domyślnego koloru tekstu
+    #     base_color = QColor(255, 255, 255) if self._is_dark_theme else QColor(0, 0, 0)
+    #
+    #     # Dla niektórych typów zdarzeń możemy chcieć inny kolor tekstu
+    #     if col == 1:  # Kolumna typu
+    #         event_type = event.get('type', '')
+    #         if event_type == 'Nadgodziny':
+    #             # Nadgodziny mają pomarańczowe tło, więc użyjmy czarnego tekstu dla lepszej czytelności
+    #             return QBrush(QColor(0, 0, 0))
+    #
+    #     return None
 
-    def _get_foreground_color(self, event, col):
-        """Zwraca kolor tekstu dla danej kolumny"""
-        # Dla większości przypadków używamy domyślnego koloru tekstu
-        base_color = QColor(255, 255, 255) if self._is_dark_theme else QColor(0, 0, 0)
+    # def _get_text_alignment(self, col):
+    #     """Zwraca wyrównanie tekstu dla danej kolumny"""
+    #     # Wszystkie kolumny wyrównane do środka oprócz Tematu i Nazwy
+    #     if col in [2, 3]:  # Temat, Nazwa
+    #         return Qt.AlignLeft | Qt.AlignVCenter
+    #     else:
+    #         return Qt.AlignCenter
 
-        # Dla niektórych typów zdarzeń możemy chcieć inny kolor tekstu
-        if col == 1:  # Kolumna typu
-            event_type = event.get('type', '')
-            if event_type == 'Nadgodziny':
-                # Nadgodziny mają pomarańczowe tło, więc użyjmy czarnego tekstu dla lepszej czytelności
-                return QBrush(QColor(0, 0, 0))
-
-        return None
-
-    def _get_text_alignment(self, col):
-        """Zwraca wyrównanie tekstu dla danej kolumny"""
-        # Wszystkie kolumny wyrównane do środka oprócz Tematu i Nazwy
-        if col in [2, 3]:  # Temat, Nazwa
-            return Qt.AlignLeft | Qt.AlignVCenter
-        else:
-            return Qt.AlignCenter
-
-    def _get_tooltip(self, event, col):
-        """Zwraca podpowiedź dla danej kolumny"""
-        # Przygotuj szczegółowe podpowiedzi dla kolumn
-        if col == 0:  # Id
-            return f"ID: {event.get('id', '')}"
-        elif col == 1:  # Typ
-            return f"Typ zdarzenia: {event.get('type', '')}"
-        elif col == 2:  # Temat
-            return event.get('topic', '')
-        elif col == 3:  # Nazwa
-            return event.get('name', '')
-        elif col == 4:  # Użytkownik
-            user_name = event.get('user_name', '')
-            user_id = event.get('user_id', '')
-            if user_id:
-                return f"{user_name} (ID: {user_id})"
-            return user_name
-        elif col == 5:  # Data
-            return f"Data: {event.get('date', '')}"
-        elif col == 6:  # Od
-            return f"Czas rozpoczęcia: {event.get('time_from', '')}"
-        elif col == 7:  # Do
-            return f"Czas zakończenia: {event.get('time_to', '')}"
-        elif col == 8:  # Status
-            status = event.get('status', '')
-            if status == '0':
-                return "Status: Nieaktywne"
-            else:
-                return f"Status: {status}"
-        elif col == 9:  # Akcje
-            return "Kliknij, aby usunąć zdarzenie"
-
-        return None
+    # def _get_tooltip(self, event, col):
+    #     """Zwraca podpowiedź dla danej kolumny"""
+    #     # Przygotuj szczegółowe podpowiedzi dla kolumn
+    #     if col == 0:  # Id
+    #         return f"ID: {event.get('id', '')}"
+    #     elif col == 1:  # Typ
+    #         return f"Typ zdarzenia: {event.get('type', '')}"
+    #     elif col == 2:  # Temat
+    #         return event.get('topic', '')
+    #     elif col == 3:  # Nazwa
+    #         return event.get('name', '')
+    #     elif col == 4:  # Użytkownik
+    #         user_name = event.get('user_name', '')
+    #         user_id = event.get('user_id', '')
+    #         if user_id:
+    #             return f"{user_name} (ID: {user_id})"
+    #         return user_name
+    #     elif col == 5:  # Data
+    #         return f"Data: {event.get('date', '')}"
+    #     elif col == 6:  # Od
+    #         return f"Czas rozpoczęcia: {event.get('time_from', '')}"
+    #     elif col == 7:  # Do
+    #         return f"Czas zakończenia: {event.get('time_to', '')}"
+    #     elif col == 8:  # Status
+    #         status = event.get('status', '')
+    #         if status == '0':
+    #             return "Status: Nieaktywne"
+    #         else:
+    #             return f"Status: {status}"
+    #     elif col == 9:  # Akcje
+    #         return "Kliknij, aby usunąć zdarzenie"
+    #
+    #     return None
 
     # ---- Metody publiczne ----
 
