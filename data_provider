@@ -42,8 +42,8 @@ class DataProvider(QObject):
         self.audit_cache: Dict[Tuple[int, int], List[Dict]] = {}
         self._icons_cache_by_month: Dict[Tuple[int, int], Dict[Tuple[int, str], Dict]] = {}
         self.publish_status_cache = {}  # Pamięć podręczna dla statusu publikacji
-        from column_mapper import ColumnMapper
-        self.column_mapper = ColumnMapper()
+        # from column_mapper import ColumnMapper
+        # self.column_mapper = ColumnMapper()
         self._current_year: Optional[int] = None
         self._current_month: Optional[int] = None
 
@@ -458,29 +458,29 @@ class DataProvider(QObject):
 
         debug_print(f"DataProvider (ZMODYFIKOWANA WERSJA): Zakończono _update_dynamic_icons.")
 
-    def get_performance_stats(self):
-        """
-        NOWA METODA: Zwraca statystyki wydajności
-        """
-        stats = {
-            'monthly_cache_size': len(self.monthly_cache),
-            'icons_cache_size': len(self._icons_cache_by_month),
-            'total_memory_mb': 0  # Można dodać rzeczywiste pomiary pamięci
-        }
-
-        # Dodaj statystyki cache symboli
-        try:
-            # Zmieniono import na zgodny z plikiem symbol_parser.py
-            from symbol_parser import get_cache_stats
-            stats['symbol_cache'] = get_cache_stats()
-        except ImportError:
-            log_warning("Nie można zaimportować get_cache_stats z symbol_parser.py")
-            stats['symbol_cache'] = "Niedostępne (ImportError)"
-        except Exception as e:
-            log_error(f"Błąd podczas pobierania statystyk cache symboli: {e}")
-            stats['symbol_cache'] = f"Niedostępne ({type(e).__name__})"
-
-        return stats
+    # def get_performance_stats(self):
+    #     """
+    #     NOWA METODA: Zwraca statystyki wydajności
+    #     """
+    #     stats = {
+    #         'monthly_cache_size': len(self.monthly_cache),
+    #         'icons_cache_size': len(self._icons_cache_by_month),
+    #         'total_memory_mb': 0  # Można dodać rzeczywiste pomiary pamięci
+    #     }
+    #
+    #     # Dodaj statystyki cache symboli
+    #     try:
+    #         # Zmieniono import na zgodny z plikiem symbol_parser.py
+    #         from symbol_parser import get_cache_stats
+    #         stats['symbol_cache'] = get_cache_stats()
+    #     except ImportError:
+    #         log_warning("Nie można zaimportować get_cache_stats z symbol_parser.py")
+    #         stats['symbol_cache'] = "Niedostępne (ImportError)"
+    #     except Exception as e:
+    #         log_error(f"Błąd podczas pobierania statystyk cache symboli: {e}")
+    #         stats['symbol_cache'] = f"Niedostępne ({type(e).__name__})"
+    #
+    #     return stats
 
     def _build_processed_data_without_icons(self, schedule_data: List[Dict]) -> Dict:
         """
@@ -516,7 +516,8 @@ class DataProvider(QObject):
                 'nr_kadrowy': row_dict.get('NumerKadrowy', ''),
                 'lokalizacja_domyslna': row_dict.get('LokalizacjaDomyslna', 'h'),
                 'komentarz_grafik': row_dict.get('KomentarzGrafik', ''),
-                'system_czasu_pracy': row_dict.get('SystemCzasuPracy', '')
+                'system_czasu_pracy': row_dict.get('SystemCzasuPracy', ''),
+                'login_windows': row_dict.get('LoginWindows', '')
             }
 
             # --- NOWA LOGIKA: Obliczanie sumy godzin po stronie aplikacji ---
@@ -550,27 +551,27 @@ class DataProvider(QObject):
         """Cache key dla miesiąca"""
         return (year, month)
 
-    def clear_symbol_cache(self):
-        """
-        Czyści cache symboli, jeśli jest taka potrzeba.
-        """
-        try:
-            from symbol_parser import clear_cache as clear_symbol_parser_cache, \
-                get_cache_stats  # Zmieniono nazwę importu
-
-            cache_stats = get_cache_stats()  # Użyj nowej nazwy funkcji
-            debug_print(f"DataProvider: Cache symboli przed czyszczeniem: {cache_stats}")
-
-            # Dostosuj warunki czyszczenia cache, jeśli potrzebne
-            # Np. jeśli parse_cache_size jest większe niż pewien próg
-            if cache_stats.get('parse_cache_size', 0) > 1500:
-                clear_symbol_parser_cache()  # Użyj nowej nazwy funkcji
-                debug_print("DataProvider: Wyczyszczono cache symboli (był za duży)")
-
-        except ImportError:
-            log_warning("DataProvider: Nie można zaimportować funkcji z symbol_parser.py do zarządzania cache.")
-        except Exception as e:
-            log_error(f"DataProvider: Błąd czyszczenia cache symboli: {e}")
+    # def clear_symbol_cache(self):
+    #     """
+    #     Czyści cache symboli, jeśli jest taka potrzeba.
+    #     """
+    #     try:
+    #         from symbol_parser import clear_cache as clear_symbol_parser_cache, \
+    #             get_cache_stats  # Zmieniono nazwę importu
+    #
+    #         cache_stats = get_cache_stats()  # Użyj nowej nazwy funkcji
+    #         debug_print(f"DataProvider: Cache symboli przed czyszczeniem: {cache_stats}")
+    #
+    #         # Dostosuj warunki czyszczenia cache, jeśli potrzebne
+    #         # Np. jeśli parse_cache_size jest większe niż pewien próg
+    #         if cache_stats.get('parse_cache_size', 0) > 1500:
+    #             clear_symbol_parser_cache()  # Użyj nowej nazwy funkcji
+    #             debug_print("DataProvider: Wyczyszczono cache symboli (był za duży)")
+    #
+    #     except ImportError:
+    #         log_warning("DataProvider: Nie można zaimportować funkcji z symbol_parser.py do zarządzania cache.")
+    #     except Exception as e:
+    #         log_error(f"DataProvider: Błąd czyszczenia cache symboli: {e}")
 
     def get_events_for_user_date(self, user_id: int, date_str: str, active_only: bool = True) -> List[Dict]:
         """
@@ -704,45 +705,45 @@ class DataProvider(QObject):
         debug_print(
             f"DataProvider: Wyczyszczono CAŁY cache: {cache_count} kontenerów, {icons_count} wpisów cache ikon")
 
-    def on_month_change(self, new_year: int, new_month: int):
-        """
-        Wywoływane przy zmianie miesiąca w interfejsie.
-        Czyści cache dla *innych* miesięcy, aby oszczędzać pamięć.
-        """
-        debug_print(f"DataProvider: ZMIANA MIESIĄCA na {new_year}-{new_month}")
+    # def on_month_change(self, new_year: int, new_month: int):
+    #     """
+    #     Wywoływane przy zmianie miesiąca w interfejsie.
+    #     Czyści cache dla *innych* miesięcy, aby oszczędzać pamięć.
+    #     """
+    #     debug_print(f"DataProvider: ZMIANA MIESIĄCA na {new_year}-{new_month}")
+    #
+    #     current_key_tuple = (new_year, new_month)  # Poprawiono nazwę zmiennej
+    #
+    #     # Stwórz listę kluczy do usunięcia, aby uniknąć modyfikacji słownika podczas iteracji
+    #     keys_to_remove_monthly = [k for k in self.monthly_cache if k != current_key_tuple]
+    #     keys_to_remove_icons = [k for k in self._icons_cache_by_month if k != current_key_tuple]
+    #
+    #     for key in keys_to_remove_monthly:
+    #         del self.monthly_cache[key]
+    #     for key in keys_to_remove_icons:
+    #         del self._icons_cache_by_month[key]
+    #
+    #     if keys_to_remove_monthly or keys_to_remove_icons:
+    #         debug_print(
+    #             f"DataProvider: Wyczyszczono cache dla poprzednich miesięcy, pozostawiono dla {new_year}-{new_month} (jeśli istniał).")
+    #     else:
+    #         debug_print(f"DataProvider: Cache był pusty lub zawierał tylko dane dla {new_year}-{new_month}.")
+    #
+    #     # Ustaw aktualny miesiąc/rok dla _build_processed_data_without_icons
+    #     self._current_year = new_year
+    #     self._current_month = new_month
 
-        current_key_tuple = (new_year, new_month)  # Poprawiono nazwę zmiennej
-
-        # Stwórz listę kluczy do usunięcia, aby uniknąć modyfikacji słownika podczas iteracji
-        keys_to_remove_monthly = [k for k in self.monthly_cache if k != current_key_tuple]
-        keys_to_remove_icons = [k for k in self._icons_cache_by_month if k != current_key_tuple]
-
-        for key in keys_to_remove_monthly:
-            del self.monthly_cache[key]
-        for key in keys_to_remove_icons:
-            del self._icons_cache_by_month[key]
-
-        if keys_to_remove_monthly or keys_to_remove_icons:
-            debug_print(
-                f"DataProvider: Wyczyszczono cache dla poprzednich miesięcy, pozostawiono dla {new_year}-{new_month} (jeśli istniał).")
-        else:
-            debug_print(f"DataProvider: Cache był pusty lub zawierał tylko dane dla {new_year}-{new_month}.")
-
-        # Ustaw aktualny miesiąc/rok dla _build_processed_data_without_icons
-        self._current_year = new_year
-        self._current_month = new_month
-
-    def _format_date_display(self, date_str: str) -> str:
-        """Formatuje datę z YYYY-MM-DD na DD.MM.YYYY"""
-        if not date_str: return ""
-        try:
-            if isinstance(date_str, str) and '-' in date_str and len(date_str.split('-')) == 3:
-                year, month, day_part = date_str.split('-')
-                day = day_part.split(' ')[0].split('T')[0]  # Dodatkowe czyszczenie dla formatów z czasem
-                return f"{day}.{month}.{year}"
-        except Exception as e:
-            log_warning(f"DataProvider: Błąd formatowania daty '{date_str}': {e}")
-        return date_str  # Zwróć oryginał w razie problemu
+    # def _format_date_display(self, date_str: str) -> str:
+    #     """Formatuje datę z YYYY-MM-DD na DD.MM.YYYY"""
+    #     if not date_str: return ""
+    #     try:
+    #         if isinstance(date_str, str) and '-' in date_str and len(date_str.split('-')) == 3:
+    #             year, month, day_part = date_str.split('-')
+    #             day = day_part.split(' ')[0].split('T')[0]  # Dodatkowe czyszczenie dla formatów z czasem
+    #             return f"{day}.{month}.{year}"
+    #     except Exception as e:
+    #         log_warning(f"DataProvider: Błąd formatowania daty '{date_str}': {e}")
+    #     return date_str  # Zwróć oryginał w razie problemu
 
     def _standardize_date(self, date_obj) -> str:
         """Standaryzuje format daty do 'YYYY-MM-DD'"""
