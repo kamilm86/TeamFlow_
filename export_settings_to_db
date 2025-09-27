@@ -1,7 +1,7 @@
 import json
 from collections import OrderedDict
 from db_connector import DatabaseConnector, SQL_OBJECTS
-from config import APP_VERSION
+from _version import __version__ as APP_VERSION
 
 
 def get_config_as_json(data, ensure_ascii=False, indent=4):
@@ -54,7 +54,11 @@ def export_settings():
 
         # Klucz: 'action_clear_special_symbol'
         # Opis: Zezwala na użycie funkcji (domyślnie F12) do usunięcia tylko symbolu specjalnego (np. urlopu) bez usuwania godzin pracy.
-        'action_clear_special_symbol': ['Pracownik WPR', 'Lider OUT', 'Lider']
+        'action_clear_special_symbol': ['Pracownik WPR', 'Lider OUT', 'Lider'],
+
+        # Klucz: 'button_send_email'
+        # Opis: Kontroluje widoczność przycisku "Wyślij e-mail" do zaznaczonych pracowników.
+        'button_send_email': ['Pracownik WPR', 'Lider OUT', 'Lider']
     }
 
     # Definicja symboli, które oznaczają świadczenie pracy (nie absencję)
