@@ -78,7 +78,7 @@ class AuditLogWindow(QDialog):
     def __init__(self, audit_data, is_dark_theme, parent=None, is_limited_view=False, year=None, month=None, limit=50):
         super().__init__(parent)
         self.setWindowTitle("Historia Zmian Grafiku")
-        self.setMinimumSize(800, 500)  # Zwiększono domyślny rozmiar dla lepszej czytelności
+        self.setMinimumSize(1000, 500)  # Zwiększono domyślny rozmiar dla lepszej czytelności
 
         main_layout = QVBoxLayout(self)
         # Dodajemy etykietę informacyjną na górze okna
