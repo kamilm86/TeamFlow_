@@ -136,6 +136,9 @@ def export_settings():
     logging_users_for_file = ["", ""]  # <-- ZMIEŃ NA LISTĘ LOGINÓW
     logging_users_for_console = ["kamil"]  # <-- ZMIEŃ NA LISTĘ LOGINÓW
 
+    # --- NOWA SEKCJA: Lista "Super Liderów" z rozszerzonymi uprawnieniami ---
+    super_lider_logins = ["kamil"]  # <-- TUTAJ WPISZ LOGINY LIDERÓW
+
     # 5. Finalny słownik do eksportu
     settings_to_export = {
         "current_version": APP_VERSION,
@@ -148,7 +151,8 @@ def export_settings():
         "GroupMapping": get_config_as_json(group_mapping),
         "ShiftColorMap": get_config_as_json(shift_color_map),
         "SymbolPermissions": get_config_as_json(symbol_permissions),
-        "WorkLikeSymbols": get_config_as_json(work_like_symbols)
+        "WorkLikeSymbols": get_config_as_json(work_like_symbols),
+        "SuperLiderLogins": ",".join(super_lider_logins) # <-- NOWY WPIS
 
     }
 
