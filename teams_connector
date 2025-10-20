@@ -1,0 +1,29 @@
+# teams_connector.py
+import webbrowser
+from typing import List
+from debug_utils import log_error, debug_print
+
+
+def open_teams_chat(recipient_emails: List[str]):
+    """
+    Otwiera czat w Microsoft Teams z podanymi użytkownikami.
+
+    Args:
+        recipient_emails (List[str]): Lista adresów e-mail użytkowników.
+
+    Returns:
+        tuple[bool, str]: (Sukces, Wiadomość)
+    """
+    if not recipient_emails:
+        return False, "Brak zdefiniowanych odbiorców."
+
+    users_param = ",".join(recipient_emails)
+    teams_url = f"msteams:/l/chat/0/0?users={users_param}"
+
+    try:
+        debug_print(f"Otwieranie linku Teams: {teams_url}")
+        webbrowser.open(teams_url)
+        return True, "OK"
+    except Exception as e:
+        log_error(f"Nie udało się otworzyć czatu w Teams: {e}", exception=e)
+        return False, f"Wystąpił błąd podczas próby otwarcia aplikacji Teams: {e}"
