@@ -16,6 +16,7 @@ ROLE_HAS_OVERTIME = Qt.UserRole + 4
 ROLE_SPECIAL_SYMBOL = Qt.UserRole + 5
 ROLE_LOCATION_SYMBOL = Qt.UserRole + 6
 ROLE_ICON_COLOR = Qt.UserRole + 7
+ROLE_IS_SUGGESTED_OFF = Qt.UserRole + 8  # <-- NOWA ROLA
 ROLE_HEADER_TYPE = Qt.UserRole + 10
 
 
@@ -31,6 +32,7 @@ class ScheduleTableModel(QAbstractTableModel):
     ROLE_SPECIAL_SYMBOL = Qt.UserRole + 5
     ROLE_LOCATION_SYMBOL = Qt.UserRole + 6
     ROLE_ICON_COLOR = Qt.UserRole + 7
+    ROLE_IS_SUGGESTED_OFF = Qt.UserRole + 8  # <-- NOWA ROLA
     ROLE_HEADER_TYPE = Qt.UserRole + 10
 
     def __init__(self, parent=None, user_role=None):
@@ -77,10 +79,13 @@ class ScheduleTableModel(QAbstractTableModel):
         is_employee_column = col < len(self._visible_columns)
 
         full_symbol_text = ""
+        day_data = {}
         if not is_employee_column:
             schedule_col_check = col - len(self._visible_columns)
             if schedule_col_check < 31:
-                full_symbol_text = row_data.get('days', {}).get(schedule_col_check + 1, {}).get('symbol', '')
+                day = schedule_col_check + 1
+                day_data = row_data.get('days', {}).get(day, {})
+                full_symbol_text = day_data.get('symbol', '')
 
         if role == Qt.ForegroundRole:
             if not is_employee_column:
@@ -90,7 +95,7 @@ class ScheduleTableModel(QAbstractTableModel):
                     special_symbol = parsed_symbol.get('special_symbol')
 
                     if special_symbol:
-                        if special_symbol in ["OS", "U"]:
+                        if special_symbol in ["OS", "U", "UZ"]:
                             return QBrush(QColor(Qt.GlobalColor.black))
                         # ZMIANA: Odwołanie do app_settings zamiast BusinessRules
                         elif special_symbol in app_settings.get_absence_symbols():
@@ -117,6 +122,12 @@ class ScheduleTableModel(QAbstractTableModel):
             if not is_employee_column:
                 return self._get_foreground_color(row_data, key, col, is_employee_column)
             return None
+
+        if role == ROLE_IS_SUGGESTED_OFF:
+            is_off = day_data.get('is_suggested_off', False)
+            if is_off:
+                debug_print(f"ScheduleModel: ROLE_IS_SUGGESTED_OFF dla {key[2]} w dniu {day} -> ZWRACAM {is_off}")
+            return is_off
 
         if role == Qt.DisplayRole:
             if is_employee_column:
@@ -174,6 +185,12 @@ class ScheduleTableModel(QAbstractTableModel):
         if role == Qt.BackgroundRole:
             if not is_employee_column:
                 schedule_col = col - len(self._visible_columns)
+
+                # --- NOWA ZMIANA: Dodanie koloru dla sugerowanego wolnego ---
+                if day_data.get('is_suggested_off', False):
+                    debug_print(f"ScheduleModel: BackgroundRole dla {key[2]} w dniu {day} -> ZWRACAM ZIELONY")
+                    return QBrush(QColor("#006400"))  # Ciemny zielony
+
                 if schedule_col == self._days_in_month + 1:
                     try:
                         etat = float(row_data.get('etat'));
@@ -192,7 +209,7 @@ class ScheduleTableModel(QAbstractTableModel):
                         parsed_symbol = parse_symbol(full_symbol_text)
                         special_symbol = parsed_symbol.get('special_symbol')
                         if special_symbol:
-                            if special_symbol in ["OS", "U"]:
+                            if special_symbol in ["OS", "U", "UZ"]:
                                 return QBrush(QColor(255, 255, 0))
                             # ZMIANA: Odwołanie do app_settings zamiast BusinessRules
                             elif special_symbol in app_settings.get_absence_symbols():
@@ -261,7 +278,7 @@ class ScheduleTableModel(QAbstractTableModel):
             'wydzial': key[0] or '',
                 'przelozony': key[1] or '',
                 'przelozony_nazwisko_imie': row_data.get('przelozony_nazwisko_imie', ''),
-                'nazwisko_imie': row_data.get('nazwisko_imie',''),
+                'nazwisko_imie': row_data.get('nazwisko_imie', ''),
                 'uzytkownik_dane': key[2] or '',
                 'uzytkownik_id': key[3] or 0,
                 'nr_kadrowy': row_data.get('nr_kadrowy', ''),
@@ -297,6 +314,7 @@ class ScheduleTableModel(QAbstractTableModel):
                     'has_meeting': day_data.get('spotkania', 0) > 0,
                     'has_training': day_data.get('szkolenia', 0) > 0,
                     'has_overtime': day_data.get('nadgodziny', 0) > 0,
+                    'is_suggested_off': day_data.get('is_suggested_off', False),
                     'events': day_data.get('events', []),
                     'column_type': 'schedule'
                 }
@@ -383,39 +401,6 @@ class ScheduleTableModel(QAbstractTableModel):
         self._row_count = len(self._keys)
         self._update_column_structure()
         self.endResetModel()
-
-    # def update_event_indicator(self, user_id, date_str, event_type, is_active=True):
-    #     if not all([user_id, date_str]) or date_str.count('-') != 2:
-    #         return False
-    #     try:
-    #         year, month, day_str_part = date_str.split('-')
-    #         day, year, month = int(day_str_part), int(year), int(month)
-    #     except ValueError:
-    #         return False
-    #     if year != self._year or month != self._month:
-    #         return False
-    #     row_index = -1
-    #     for idx, key in enumerate(self._keys):
-    #         if str(key[3]) == str(user_id):
-    #             row_index = idx
-    #             break
-    #     if row_index == -1: return False
-    #     col = len(self._visible_columns) + day - 1
-    #     if 0 <= row_index < self._row_count and 0 <= col < self._column_count:
-    #         cell_key = (user_id, date_str)
-    #         if hasattr(self, '_icons_cache') and cell_key in self._icons_cache:
-    #             del self._icons_cache[cell_key]
-    #         if self._data_provider and hasattr(self._data_provider, '_icons_cache_by_month'):
-    #             try:
-    #                 if (year, month) in self._data_provider._icons_cache_by_month:
-    #                     if cell_key in self._data_provider._icons_cache_by_month[(year, month)]:
-    #                         del self._data_provider._icons_cache_by_month[(year, month)][cell_key]
-    #             except:
-    #                 pass
-    #         model_index = self.index(row_index, col)
-    #         self.dataChanged.emit(model_index, model_index, [self.ROLE_HAS_MEETING, self.ROLE_HAS_OVERTIME])
-    #         return True
-    #     return False
 
     def sort(self, column, order):
         if column >= len(self._visible_columns): return
