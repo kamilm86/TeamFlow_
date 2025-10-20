@@ -44,7 +44,10 @@ def create_outlook_email(recipients: list, subject: str = "", body: str = "", se
         # Jeśli `body` jest puste, w wiadomości zostanie tylko stopka.
         mail.HTMLBody = body + original_body
 
-        mail.Display(True)  # Pokaż okno użytkownikowi
+        # --- NOWA, BARDZIEJ NIEZAWODNA METODA ---
+        # Zamiast Display(True), aktywujemy "inspektora" (okno) wiadomości.
+        # To w bardziej zdecydowany sposób przenosi okno na wierzch.
+        mail.GetInspector.Activate()
 
         return True, "OK"
     except Exception as e:
