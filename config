@@ -2,7 +2,7 @@ import configparser
 import os
 import sys
 from debug_utils import log_error
-
+from _version import __version__ as APP_VERSION
 # ### POCZĄTEK NOWEGO KODU ###
 def resource_path(relative_path):
     """ Zwraca poprawną ścieżkę do zasobu, działa zarówno dla trybu developerskiego,
