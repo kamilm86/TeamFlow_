@@ -1,0 +1,36 @@
+Opis Zmian (Changelog)
+Poniższa lista zawiera opis nowych funkcji, poprawek i usprawnień wprowadzonych do aplikacji TeamFlowApp.
+Nowe funkcje
+1.Integracja z Microsoft Teams i Outlook:
+  ◦Dodano przyciski na górnym pasku narzędzi, które pozwalają na szybkie rozpoczęcie czatu w Microsoft Teams lub utworzenie nowej wiadomości e-mail w Outlook dla zaznaczonych pracowników.
+  ◦Przyciski tekstowe zostały zastąpione ikonami aplikacji dla nowocześniejszego wyglądu.
+  ◦Wprowadzono skróty klawiszowe: Ctrl+T dla Teams i Ctrl+O dla Outlooka.
+  ◦Zaktualizowano podpowiedzi (tooltips) dla przycisków, aby zawierały informację o skrótach.
+  ◦Poprawiono działanie otwierania okna Outlook, aby zawsze pojawiało się na wierzchu.
+2.Wizualizacja sugerowanych dni wolnych:
+  ◦Dla miesięcy, w których grafik nie jest jeszcze opublikowany, aplikacja pobiera z bazy danych sugestie dni wolnych zgłoszone przez konsultantów.
+  ◦Komórki z sugerowanym dniem wolnym są teraz podświetlane na ciemnozielony kolor, co ułatwia planowanie grafiku.
+3.Rozszerzone uprawnienia "Super Lidera":
+  ◦Wprowadzono nową, centralnie zarządzaną w bazie danych listę SuperLiderLogins.
+  ◦Użytkownicy z rolą "Lider", których login Windows znajduje się na tej liście, otrzymują rozszerzone uprawnienia do edycji godzin pracy dla wszystkich pracowników w swoim wydziale (a nie tylko dla innych Liderów).
+
+Poprawki i usprawnienia1.
+
+Logika biznesowa i stabilność:
+◦Usuwanie wpisów z grafiku: Naprawiono krytyczny błąd, w wyniku którego usunięcie zmiany z grafiku (np. urlopu) nie odwoływało powiązanych z tym dniem zdarzeń (spotkań, nadgodzin). Teraz zdarzenia są odwoływane w pierwszej kolejności.
+◦Stabilność okna "Obsada": Rozwiązano problem, przez który okno "Obsada" nie otwierało się po długim czasie bezczynności aplikacji. Zoptymalizowano zarządzanie połączeniami z bazą danych, aby były one odnawiane przy każdym zapytaniu.
+◦Obsługa nadgodzin:▪Naprawiono błąd, który uniemożliwiał usunięcie wpisu o nadgodzinach zaraz po ich dodaniu.
+▪Poprawiono mechanizm obsługi błędów, aby komunikaty zwracane przez procedurę składowaną w bazie danych (np. o nakładających się godzinach) były poprawnie wyświetlane użytkownikowi.
+◦Kopiowanie i eksport danych:▪Funkcja kopiowania (Ctrl+C) wstawia teraz do schowka pełny symbol (np. h;8;8;), a nie tylko skróconą wersję.▪Ujednolicono format nagłówków w danych kopiowanych oraz eksportowanych do Excela (teraz oba zawierają dwuwierszowy nagłówek z nazwą dnia tygodnia i numerem dnia).
+
+2.Interfejs użytkownika (UI/UX):
+◦Polonizacja przycisków: Wszystkie standardowe przyciski "Yes" i "No" w oknach dialogowych zostały zastąpione polskimi odpowiednikami "Tak" i "Nie" za pomocą centralnej funkcji pomocniczej.
+◦Polskie znaki: Usunięto problemy z wyświetlaniem polskich znaków w komentarzach i powiadomieniach poprzez dodanie deklaracji kodowania UTF-8 do wszystkich plików .py.
+◦Minimalizacja okna "Obsada": Dodano standardowe przyciski minimalizacji i maksymalizacji do okna "Obsada", co ułatwia przełączanie się między widokami.
+◦Układ przycisków: Zmieniono kolejność przycisków na górnym pasku narzędzi dla lepszej ergonomii.
+◦Ikona eksportu do Excel: Przycisk tekstowy "Eksportuj do Excel" został zastąpiony ikoną.
+◦Formatowanie komunikatów (HTML): Naprawiono błąd, przez który komunikaty z formatowaniem HTML (np. pogrubieniem) wyświetlały tagi jako zwykły tekst. Włączono obsługę "Rich Text" i dostosowano sposób budowania wiadomości, aby poprawnie renderowały formatowanie i przejścia do nowej linii.
+3.Poprawki techniczne:
+◦Usunięto ostrzeżenie DeprecationWarning dotyczące QMouseEvent.pos(), zastępując je nowszą metodą event.position().toPoint().
+◦Naprawiono błędy AttributeError i TypeError związane z niepoprawnym odświeżaniem danych po dodaniu nadgodzin.
+
