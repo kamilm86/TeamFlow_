@@ -57,11 +57,12 @@ def get_modifier_id():
         result = cursor.fetchone()
         conn.close()
         if result and len(result) >= 5:
-            return result[0], result[1], result[2], bool(result[3]), result[4]
-        return "System", username, "Użytkownik", False, None
+            # --- ZMIANA: Dodajemy 'username' do zwracanej krotki ---
+            return result[0], result[1], result[2], bool(result[3]), result[4], username
+        return "System", username, "Użytkownik", False, None, username
     except Exception as e:
         log_error(f"Błąd podczas pobierania informacji o użytkowniku ({username}): {e}", exception=e)
-        return "System", username, "Użytkownik", False, None
+        return "System", username, "Użytkownik", False, None, username
 
 
 def load_all_app_settings(existing_conn=None):
