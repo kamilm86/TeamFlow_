@@ -857,3 +857,37 @@ class AppStyles:
                     background-color: {pressed_bg};
                 }}
             """
+
+    @staticmethod
+    def get_icon_button_style(theme="dark"):
+        """
+        Zwraca styl dla "płaskich" przycisków z ikonami, które podświetlają się po najechaniu.
+        """
+        if theme == "dark":
+            bg_color = "transparent"
+            border_color = "transparent"
+            hover_bg = AppStyles.DARK_BACKGROUND_HOVER
+            pressed_bg = AppStyles.DARK_BACKGROUND_PRESSED
+        else:
+            bg_color = "transparent"
+            border_color = "transparent"
+            hover_bg = AppStyles.LIGHT_BACKGROUND_HOVER
+            pressed_bg = AppStyles.LIGHT_BACKGROUND_PRESSED
+
+        return f"""
+        QPushButton {{
+                background-color: {bg_color};
+                border: 1px solid {border_color};
+                padding: 4px;
+                border-radius: {AppStyles.BORDER_RADIUS};
+            }}
+            QPushButton:hover {{
+                background-color: {hover_bg};
+            }}
+            QPushButton:pressed {{
+                background-color: {pressed_bg};
+            }}
+            QPushButton:disabled {{
+                background-color: transparent;
+            }}
+        """
