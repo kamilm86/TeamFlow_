@@ -17,6 +17,7 @@ class AppSettings:
         self.WORK_LIKE_SYMBOLS = set()
         self.LOGGING_USERS_FILE = set()
         self.LOGGING_USERS_CONSOLE = set()
+        self.SUPER_LIDER_LOGINS = set() # <-- NOWY ATRYBUT
 
     def parse_and_apply(self, key, value):
         """Paruje i ustawia wartość dla danego klucza."""
@@ -40,6 +41,10 @@ class AppSettings:
                 self.LOGGING_USERS_FILE = {user.strip().lower() for user in value.split(',') if user.strip()}
             elif key == 'LoggingUserConsole':
                 self.LOGGING_USERS_CONSOLE = {user.strip().lower() for user in value.split(',') if user.strip()}
+            elif key == 'SuperLiderLogins':
+                self.SUPER_LIDER_LOGINS = {login.strip().lower() for login in value.split(',') if login.strip()}
+                from debug_utils import debug_print
+                debug_print(f"AppSettings: Załadowano Super Liderów: {self.SUPER_LIDER_LOGINS}")
 
         except (json.JSONDecodeError, TypeError) as e:
             log_error(f"BŁĄD: Nie udało się sparsować ustawienia '{key}' z bazy danych. Błąd: {e}")
