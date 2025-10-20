@@ -1,0 +1,42 @@
+# ui_utils.py
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QPushButton
+from PySide6.QtWidgets import QMessageBox
+
+
+def show_confirmation_dialog(parent, title: str, message: str, default_button=QMessageBox.Yes) -> QMessageBox.StandardButton:
+    """
+    Wyświetla standardowe okno dialogowe z potwierdzeniem, ale z polskimi przyciskami "Tak" i "Nie".
+
+    Args:
+        parent: Widget nadrzędny.
+        title (str): Tytuł okna.
+        message (str): Treść wiadomości.
+        default_button (QMessageBox.StandardButton): Domyślnie zaznaczony przycisk.
+
+    Returns:
+        QMessageBox.StandardButton: Zwraca QMessageBox.Yes lub QMessageBox.No w zależności od wyboru.
+    """
+    msg_box = QMessageBox(parent)
+    msg_box.setWindowTitle(title)
+    msg_box.setTextFormat(Qt.RichText)  # <-- KLUCZOWA ZMIANA
+    msg_box.setText(message)
+    msg_box.setIcon(QMessageBox.Question)
+
+    yes_button = msg_box.addButton("Tak", QMessageBox.YesRole)
+    no_button = msg_box.addButton("Nie", QMessageBox.NoRole)
+
+    if default_button == QMessageBox.Yes:
+        msg_box.setDefaultButton(yes_button)
+    else:
+        msg_box.setDefaultButton(no_button)
+
+    msg_box.exec()
+
+    # --- POPRAWIONA LOGIKA ---
+    # Sprawdzamy, kt\u00f3ry przycisk zosta\u0142 klikni\u0119ty i zwracamy odpowiedni\u0105 warto\u015b\u0107 enum.
+    clicked_btn = msg_box.clickedButton()
+    if clicked_btn == yes_button:
+        return QMessageBox.Yes
+    else:
+        return QMessageBox.No
