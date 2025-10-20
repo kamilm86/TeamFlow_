@@ -7,7 +7,7 @@ import time
 from app_settings import app_settings  # ZMIANA
 from debug_utils import debug_print, log_warning, log_error
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple, Optional, Any
+from typing import Dict, List, Tuple, Optional, Any, Set
 from functools import lru_cache
 from symbol_parser import parse_symbols_batch, parse_symbol
 from config import SQL_OBJECTS
@@ -47,19 +47,49 @@ class DataProvider(QObject):
         self._current_year: Optional[int] = None
         self._current_month: Optional[int] = None
 
+    def _fetch_suggested_off_days(self, year: int, month: int) -> Set[Tuple[str, str]]:
+        """Pobiera z bazy danych sugestie dni wolnych dla nieopublikowanego grafiku."""
+        suggestions = set()
+        conn = None
+        try:
+            conn = self.db_connector.get_connection()
+            cursor = conn.cursor()
+            query = f"EXEC {SQL_OBJECTS['p_sugestiewolne']} ?, ?"
+            cursor.execute(query, (year, month))
+            
+            # Procedura zwraca nr_kadrowy i datę
+            results = cursor.fetchall()
+            for row in results:
+                if len(row) >= 2 and row[0] and row[1]:
+                    nr_kadrowy = str(row[0])
+                    # Data może być obiektem datetime, konwertujemy ją do stringa YYYY-MM-DD
+                    date_obj = row[1]
+                    if hasattr(date_obj, 'strftime'):
+                        date_str = date_obj.strftime('%Y-%m-%d')
+                        suggestions.add((nr_kadrowy, date_str))
+
+            debug_print(f"DataProvider: Pobrano {len(suggestions)} sugestii wolnego dla {year}-{month}.")
+            return suggestions
+        except Exception as e:
+            log_error(f"Błąd podczas pobierania sugestii wolnego: {e}", exception=e)
+            return set()
+        finally:
+            if conn:
+                conn.close()
+
     def is_schedule_published(self, year: int, month: int) -> bool:
         """Sprawdza, czy grafik na dany miesiąc jest opublikowany. Używa prostej pamięci podręcznej."""
         cache_key = (year, month)
         if cache_key in self.publish_status_cache:
             return self.publish_status_cache[cache_key]
 
+        conn = None # ZMIANA: Inicjalizacja conn jako None
         try:
-            conn = self.db_connector.get_connection()
+            conn = self.db_connector.get_connection() # ZMIANA: Otwarcie nowego połączenia
             cursor = conn.cursor()
             query = f"SELECT TOP 1 1 FROM {SQL_OBJECTS['datypublikacjigrafiku']} WHERE Rok=? AND Miesiac=? AND Status=1"
             cursor.execute(query, (year, month))
             result = cursor.fetchone()
-            conn.close()
 
             is_published = result is not None
             self.publish_status_cache[cache_key] = is_published
@@ -69,6 +99,9 @@ class DataProvider(QObject):
             log_error(f"Błąd podczas sprawdzania statusu publikacji dla {year}-{month}: {e}", exception=e)
             # W przypadku błędu, dla bezpieczeństwa załóż, że jest opublikowany (wymagaj potwierdzeń)
             return True
+        finally: # ZMIANA: Zapewnienie zamknięcia połączenia
+            if conn:
+                conn.close()
 
     def clear_publish_status_cache(self, year: int, month: int):
         """Czyści pamięć podręczną statusu publikacji dla konkretnego miesiąca."""
@@ -88,8 +121,9 @@ class DataProvider(QObject):
             debug_print(f"DataProvider: Używam cache dla danych audytowych dla {year}-{month}")
             return self.audit_cache[cache_key]
 
+        conn = None # ZMIANA
         try:
-            conn = self.db_connector.get_connection()
+            conn = self.db_connector.get_connection() # ZMIANA
             cursor = conn.cursor()
 
             # Dynamiczne budowanie zapytania w zależności od limitu
@@ -104,7 +138,6 @@ class DataProvider(QObject):
             cursor.execute(query, params)
             columns = [column[0] for column in cursor.description]
             data = [dict(zip(columns, row)) for row in cursor.fetchall()]
-            conn.close()
 
             debug_print(f"Pobrano {len(data)} wierszy historii zmian dla {year}-{month} (limit: {limit})")
 
@@ -116,6 +149,9 @@ class DataProvider(QObject):
         except Exception as e:
             log_error(f"Błąd podczas pobierania danych audytowych: {e}", exception=e)
             return []
+        finally: # ZMIANA
+            if conn:
+                conn.close()
 
     def clear_audit_cache(self, year: int, month: int):
         """Czyści cache dla danych audytowych dla konkretnego miesiąca."""
@@ -249,8 +285,9 @@ class DataProvider(QObject):
             debug_print(f"Używam cache dla prognozy dla {year}-{month}")
             return self.forecast_cache[cache_key]
 
+        conn = None # ZMIANA
         try:
-            conn = self.db_connector.get_connection()
+            conn = self.db_connector.get_connection() # ZMIANA
             cursor = conn.cursor()
             query = f"SELECT * FROM {SQL_OBJECTS['fn_getforecastdata']} (?, ?)"
             cursor.execute(query, (year, month))
@@ -259,13 +296,15 @@ class DataProvider(QObject):
             columns = [column[0] for column in cursor.description]
             data = [dict(zip(columns, row)) for row in cursor.fetchall()]
 
-            conn.close()
             debug_print(f"Pobrano {len(data)} wierszy prognozy dla {year}-{month}")
             self.forecast_cache[cache_key] = data
             return data
         except Exception as e:
             log_error(f"Błąd podczas pobierania danych prognozy: {e}", exception=e)
             return []
+        finally: # ZMIANA
+            if conn:
+                conn.close()
 
     def _get_or_load_monthly_data(self, year: int, month: int, grupa: int, funkcja: int, use_cache: bool = True) -> \
             Optional[MonthlyDataContainer]:
@@ -322,24 +361,50 @@ class DataProvider(QObject):
 
     def get_processed_data(self, year: int, month: int, grupa: int, funkcja: int) -> Dict:
         """
-        Zwraca processed_data z dynamicznie obliczonymi ikonami.
+        Zwraca processed_data z dynamicznie obliczonymi ikonami i sugestiami wolnego.
         """
         container = self._get_or_load_monthly_data(year, month, grupa, funkcja, use_cache=True)
         if not container:
             return {}
 
+        # --- NOWA, POPRAWIONA LOGIKA: Sugestie wolnego ---
+        # Sprawdzamy, czy sugestie zostały już zaaplikowane dla tego kontenera
+        if not getattr(container, '_suggestions_applied', False):
+            is_published = self.is_schedule_published(year, month)
+            debug_print(f"DataProvider: Status publikacji dla {year}-{month} to: {is_published}")
+            if not is_published:
+                debug_print(f"DataProvider: Grafik dla {year}-{month} nieopublikowany. Sprawdzam sugestie wolnego.")
+                suggested_off_days = self._fetch_suggested_off_days(year, month)
+                if suggested_off_days:
+                    debug_print(f"DataProvider: Znaleziono {len(suggested_off_days)} sugestii. Aplikuję do danych.")
+                    nr_kadrowy_to_key_map = {
+                        data.get('nr_kadrowy'): key
+                        for key, data in container.processed_data_base.items()
+                        if data.get('nr_kadrowy')
+                    }
+                    for nr_kadrowy, date_str in suggested_off_days:
+                        user_key = nr_kadrowy_to_key_map.get(nr_kadrowy)
+                        if user_key:
+                            try:
+                                day = int(date_str.split('-')[2])
+                                day_data = container.processed_data_base[user_key].setdefault('days', {}).setdefault(day, {})
+                                day_data['is_suggested_off'] = True
+                                debug_print(f"DataProvider: Ustawiono is_suggested_off=True dla {nr_kadrowy} w dniu {day}")
+                            except (ValueError, IndexError, KeyError) as e:
+                                log_warning(f"Nie udało się zastosować sugestii dla {nr_kadrowy} w dniu {date_str}: {e}")
+                else:
+                    debug_print(f"DataProvider: Brak sugestii wolnego dla {year}-{month}.")
+            # Oznacz, że sugestie zostały przetworzone dla tego kontenera
+            container._suggestions_applied = True
+
         # Sprawdź, czy ikony zostały już obliczone w tej sesji dla tego kontenera
         if not container._icons_calculated_on_this_instance:
             debug_print(f"DataProvider: Obliczam ikony dla {year}-{month} na żądanie w get_processed_data")
-
-            # --- KLUCZOWA ZMIANA ---
-            # Zawsze przekazuj do obliczeń aktualny events_cache z kontenera
             self._update_dynamic_icons(container.processed_data_base, container.events_cache)
-            # --- KONIEC ZMIANY ---
-
             container._icons_calculated_on_this_instance = True
 
         return container.processed_data_base
+
 
     def get_department_to_group_mapping(self):
         """
@@ -377,6 +442,28 @@ class DataProvider(QObject):
             self.data_changed.emit("icons", year, month)
         else:
             log_error(f"DataProvider: Nie udało się odświeżyć danych dla {year}-{month}")
+
+    def refresh_events_data(self, year: int, month: int):
+        """
+        Wymusza odświeżenie tylko danych o zdarzeniach (events) dla danego miesiąca,
+        zachowując resztę cache'u.
+        """
+        cache_key = (year, month)
+        container = self.monthly_cache.get(cache_key)
+
+        if not container:
+            debug_print(f"DataProvider: Brak kontenera dla {year}-{month} do odświeżenia zdarzeń. Pomijam.")
+            return
+
+        debug_print(f"DataProvider: Wymuszone odświeżenie ZDARZEŃ dla {year}-{month}.")
+
+        # Pobierz świeże dane o zdarzeniach i przebuduj ich cache
+        fresh_events_data = self._fetch_events_data(year, month)
+        container.events_data = fresh_events_data
+        container.events_cache = self._build_events_cache(fresh_events_data)
+        container.last_updated = time.time()
+        container._icons_calculated_on_this_instance = False
+        self.data_changed.emit("events", year, month)
 
     def _update_dynamic_icons(self, processed_data_target: Dict, events_cache: Dict):
         """
@@ -458,30 +545,6 @@ class DataProvider(QObject):
 
         debug_print(f"DataProvider (ZMODYFIKOWANA WERSJA): Zakończono _update_dynamic_icons.")
 
-    # def get_performance_stats(self):
-    #     """
-    #     NOWA METODA: Zwraca statystyki wydajności
-    #     """
-    #     stats = {
-    #         'monthly_cache_size': len(self.monthly_cache),
-    #         'icons_cache_size': len(self._icons_cache_by_month),
-    #         'total_memory_mb': 0  # Można dodać rzeczywiste pomiary pamięci
-    #     }
-    #
-    #     # Dodaj statystyki cache symboli
-    #     try:
-    #         # Zmieniono import na zgodny z plikiem symbol_parser.py
-    #         from symbol_parser import get_cache_stats
-    #         stats['symbol_cache'] = get_cache_stats()
-    #     except ImportError:
-    #         log_warning("Nie można zaimportować get_cache_stats z symbol_parser.py")
-    #         stats['symbol_cache'] = "Niedostępne (ImportError)"
-    #     except Exception as e:
-    #         log_error(f"Błąd podczas pobierania statystyk cache symboli: {e}")
-    #         stats['symbol_cache'] = f"Niedostępne ({type(e).__name__})"
-    #
-    #     return stats
-
     def _build_processed_data_without_icons(self, schedule_data: List[Dict]) -> Dict:
         """
         Przetwarza dane z już spivotowanego zapytania SQL.
@@ -519,7 +582,8 @@ class DataProvider(QObject):
                 'system_czasu_pracy': row_dict.get('SystemCzasuPracy', ''),
                 'login_windows': row_dict.get('LoginWindows', '')
             }
-
+            # --- NOWA ZMIANA: Dodajemy pole email ---
+            processed_data[key]['email'] = row_dict.get('Email', '')
             # --- NOWA LOGIKA: Obliczanie sumy godzin po stronie aplikacji ---
             calculated_total_hours = 0
             for day in range(1, 32):
@@ -550,28 +614,6 @@ class DataProvider(QObject):
     def _get_month_cache_key(self, year: int, month: int) -> tuple:
         """Cache key dla miesiąca"""
         return (year, month)
-
-    # def clear_symbol_cache(self):
-    #     """
-    #     Czyści cache symboli, jeśli jest taka potrzeba.
-    #     """
-    #     try:
-    #         from symbol_parser import clear_cache as clear_symbol_parser_cache, \
-    #             get_cache_stats  # Zmieniono nazwę importu
-    #
-    #         cache_stats = get_cache_stats()  # Użyj nowej nazwy funkcji
-    #         debug_print(f"DataProvider: Cache symboli przed czyszczeniem: {cache_stats}")
-    #
-    #         # Dostosuj warunki czyszczenia cache, jeśli potrzebne
-    #         # Np. jeśli parse_cache_size jest większe niż pewien próg
-    #         if cache_stats.get('parse_cache_size', 0) > 1500:
-    #             clear_symbol_parser_cache()  # Użyj nowej nazwy funkcji
-    #             debug_print("DataProvider: Wyczyszczono cache symboli (był za duży)")
-    #
-    #     except ImportError:
-    #         log_warning("DataProvider: Nie można zaimportować funkcji z symbol_parser.py do zarządzania cache.")
-    #     except Exception as e:
-    #         log_error(f"DataProvider: Błąd czyszczenia cache symboli: {e}")
 
     def get_events_for_user_date(self, user_id: int, date_str: str, active_only: bool = True) -> List[Dict]:
         """
@@ -607,32 +649,31 @@ class DataProvider(QObject):
 
     def _fetch_schedule_data(self, year: int, month: int, grupa: int, funkcja: int) -> List[Dict]:
         """Pobiera dane grafiku z bazy z dodatkowymi parametrami."""
-        query = f"SELECT * FROM {SQL_OBJECTS['fn_getscheduledata']}(?, ?, ?, ?)"  # ZAPYTANIE Z 4 PARAMETRAMI
-        conn = self.db_connector.get_connection()
-        cursor = conn.cursor()
-        cursor.execute(query, (year, month, grupa, funkcja))  # PRZEKAZANIE PARAMETRÓW
-
-        # Pobierz nazwy kolumn z kursora
-        columns = [column[0] for column in cursor.description]
-
-        # Zmapuj każdy wiersz na słownik
-        schedule_data = [dict(zip(columns, row)) for row in cursor.fetchall()]
-
-        conn.close()
-        debug_print(f"DataProvider: Pobrane dane grafiku (nowy format): {len(schedule_data)} wierszy.")
-        return schedule_data
+        conn = None # ZMIANA
+        try:
+            query = f"SELECT * FROM {SQL_OBJECTS['fn_getscheduledata']}(?, ?, ?, ?)"  # ZAPYTANIE Z 4 PARAMETRAMI
+            conn = self.db_connector.get_connection() # ZMIANA
+            cursor = conn.cursor()
+            cursor.execute(query, (year, month, grupa, funkcja))  # PRZEKAZANIE PARAMETRÓW
+            columns = [column[0] for column in cursor.description]
+            schedule_data = [dict(zip(columns, row)) for row in cursor.fetchall()]
+            debug_print(f"DataProvider: Pobrane dane grafiku (nowy format): {len(schedule_data)} wierszy.")
+            return schedule_data
+        finally: # ZMIANA
+            if conn:
+                conn.close()
 
     def _fetch_events_data(self, year: int, month: int) -> List[Dict]:
         """Pobiera i mapuje zdarzenia, używając jawnego tłumaczenia nazw kolumn."""
+        conn = None # ZMIANA
         try:
             query = f"SELECT * FROM {SQL_OBJECTS['fn_geteventsdata']}(?, ?)"
-            conn = self.db_connector.get_connection()
+            conn = self.db_connector.get_connection() # ZMIANA
             cursor = conn.cursor()
             cursor.execute(query, (year, month))
 
             columns = [column[0] for column in cursor.description]
             raw_events_as_dicts = [dict(zip(columns, row)) for row in cursor.fetchall()]
-            conn.close()
 
             debug_print(f"DataProvider: Pobrane surowe zdarzenia: {len(raw_events_as_dicts)} wierszy.")
 
@@ -675,6 +716,9 @@ class DataProvider(QObject):
         except Exception as e:
             log_error(f"Krytyczny błąd w _fetch_events_data: {e}", exception=e)
             return []
+        finally: # ZMIANA
+            if conn:
+                conn.close()
 
     def _build_events_cache(self, events_data: List[Dict]) -> Dict[Tuple[int, str], List[Dict]]:
         """Buduje cache zdarzeń (user_id, date_key) -> [list_of_events]"""
@@ -704,46 +748,6 @@ class DataProvider(QObject):
 
         debug_print(
             f"DataProvider: Wyczyszczono CAŁY cache: {cache_count} kontenerów, {icons_count} wpisów cache ikon")
-
-    # def on_month_change(self, new_year: int, new_month: int):
-    #     """
-    #     Wywoływane przy zmianie miesiąca w interfejsie.
-    #     Czyści cache dla *innych* miesięcy, aby oszczędzać pamięć.
-    #     """
-    #     debug_print(f"DataProvider: ZMIANA MIESIĄCA na {new_year}-{new_month}")
-    #
-    #     current_key_tuple = (new_year, new_month)  # Poprawiono nazwę zmiennej
-    #
-    #     # Stwórz listę kluczy do usunięcia, aby uniknąć modyfikacji słownika podczas iteracji
-    #     keys_to_remove_monthly = [k for k in self.monthly_cache if k != current_key_tuple]
-    #     keys_to_remove_icons = [k for k in self._icons_cache_by_month if k != current_key_tuple]
-    #
-    #     for key in keys_to_remove_monthly:
-    #         del self.monthly_cache[key]
-    #     for key in keys_to_remove_icons:
-    #         del self._icons_cache_by_month[key]
-    #
-    #     if keys_to_remove_monthly or keys_to_remove_icons:
-    #         debug_print(
-    #             f"DataProvider: Wyczyszczono cache dla poprzednich miesięcy, pozostawiono dla {new_year}-{new_month} (jeśli istniał).")
-    #     else:
-    #         debug_print(f"DataProvider: Cache był pusty lub zawierał tylko dane dla {new_year}-{new_month}.")
-    #
-    #     # Ustaw aktualny miesiąc/rok dla _build_processed_data_without_icons
-    #     self._current_year = new_year
-    #     self._current_month = new_month
-
-    # def _format_date_display(self, date_str: str) -> str:
-    #     """Formatuje datę z YYYY-MM-DD na DD.MM.YYYY"""
-    #     if not date_str: return ""
-    #     try:
-    #         if isinstance(date_str, str) and '-' in date_str and len(date_str.split('-')) == 3:
-    #             year, month, day_part = date_str.split('-')
-    #             day = day_part.split(' ')[0].split('T')[0]  # Dodatkowe czyszczenie dla formatów z czasem
-    #             return f"{day}.{month}.{year}"
-    #     except Exception as e:
-    #         log_warning(f"DataProvider: Błąd formatowania daty '{date_str}': {e}")
-    #     return date_str  # Zwróć oryginał w razie problemu
 
     def _standardize_date(self, date_obj) -> str:
         """Standaryzuje format daty do 'YYYY-MM-DD'"""
