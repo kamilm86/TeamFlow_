@@ -1,0 +1,84 @@
+# preparation_thread.py
+
+from PySide6.QtCore import QThread, Signal, QMutex, QMutexLocker
+from db_connector import DatabaseConnector
+from symbol_parser import parse_symbol, build_symbol
+from debug_utils import log_error
+
+
+class PreparationThread(QThread):
+    """
+    Wątek roboczy do przygotowywania listy zmian w tle.
+    """
+    progress_updated = Signal(int)
+    preparation_finished = Signal(list)
+    error_occurred = Signal(str)
+
+    def __init__(self, main_window, cells_to_modify, parent=None):
+        super().__init__(parent)
+        self.main_window = main_window
+        self.cells_to_modify = cells_to_modify
+        self.mutex = QMutex()
+        self._is_cancelled = False
+
+    def run(self):
+        change_requests = []
+        conn = None
+        try:
+            conn = DatabaseConnector.get_connection()
+            cursor = conn.cursor()
+            total_cells = len(self.cells_to_modify)
+
+            for i, cell_data in enumerate(self.cells_to_modify):
+                if self.is_cancelled():
+                    break
+
+                permissions = self.main_window._get_permission_for_cell(cell_data)
+                if not permissions['can_edit_symbol']:
+                    continue
+
+                parsed = parse_symbol(cell_data.get('symbol', ''))
+                final_location = parsed.get('location') or self.main_window.determine_correct_location(cell_data,
+                                                                                                       cursor=cursor)
+
+                new_symbol = build_symbol(
+                    location=final_location,
+                    start_hour=parsed.get('start_hour'),
+                    work_hours=parsed.get('work_hours'),
+                    special_symbol=None
+                )
+
+                user_id = cell_data.get('uzytkownik_id')
+                date_str = cell_data.get('date_str')
+                nr_kadrowy = cell_data.get('nr_kadrowy')
+                year, month, _ = date_str.split('-')
+
+                change_requests.append({
+                    'nr_kadrowy': nr_kadrowy, 'rok': int(year), 'miesiac': int(month),
+                    'data': date_str, 'symbol': new_symbol, 'user_id': user_id,
+                    'user_name': cell_data.get('uzytkownik_dane', '')
+                })
+
+                self.progress_updated.emit(i + 1)
+
+            # Emituj sygnał tylko, jeśli operacja nie została anulowana
+            if not self.is_cancelled():
+                self.preparation_finished.emit(change_requests)
+
+        except Exception as e:
+            log_error(f"Krytyczny błąd w wątku przygotowawczym: {e}", exception=e)
+            if not self.is_cancelled():
+                self.error_occurred.emit(str(e))
+        finally:
+            if conn:
+                conn.close()
+
+    def cancel(self):
+        """Metoda do bezpiecznego anulowania wątku."""
+        with QMutexLocker(self.mutex):
+            self._is_cancelled = True
+
+    def is_cancelled(self):
+        """Sprawdza, czy zażądano anulowania."""
+        with QMutexLocker(self.mutex):
+            return self._is_cancelled
