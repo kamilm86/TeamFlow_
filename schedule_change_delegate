@@ -1,0 +1,228 @@
+# schedule_change_delegate.py
+from PySide6.QtWidgets import (QStyledItemDelegate, QApplication, QStyle)
+from PySide6.QtCore import Qt, Signal, QEvent, QDate
+from PySide6.QtGui import QColor, QPainter
+
+from app_settings import app_settings
+from symbol_parser import parse_symbol
+from ui_components import DigitSelectionDialog, LocationSelectionDialog
+from styles import AppStyles
+
+
+class ScheduleChangeDelegate(QStyledItemDelegate):
+    """
+    Delegat dla tabeli w oknie 'Wstaw Zmianę'.
+    Zarządza rysowaniem niestandardowych widgetów (przycisków) w komórkach
+    oraz logiką ich edycji, uwzględniając złożone uprawnienia i reguły biznesowe.
+    """
+    apply_clicked = Signal(int)
+
+    def __init__(self, main_dialog):
+        super().__init__(main_dialog)
+        self.main_dialog = main_dialog
+
+    def paint(self, painter: QPainter, option, index):
+        """Rysuje zawartość komórki, w tym niestandardowe przyciski i statusy."""
+        model = index.model()
+        if not model:
+            super().paint(painter, option, index)
+            return
+
+        row_data = model.data(index, Qt.UserRole)
+        if not row_data:
+            super().paint(painter, option, index)
+            return
+
+        # Rysowanie tła dla zaznaczonych komórek
+        if option.state & QStyle.State_Selected:
+            painter.fillRect(option.rect, option.palette.highlight())
+
+        col = index.column()
+        permissions = self.main_dialog.parent_widget._get_permission_for_cell(row_data)
+
+        if col == model.COL_LOCATION:
+            self._paint_location_button(painter, option, row_data, permissions)
+        elif col in [model.COL_START_HOUR, model.COL_WORK_HOURS]:
+            self._paint_digit_button(painter, option, row_data, col, permissions, model)
+        elif col == model.COL_ACTIONS:
+            self._paint_apply_button(painter, option, row_data, permissions)
+        elif col == model.COL_STATUS:
+            self._paint_status(painter, option, row_data)
+        else:
+            # Dla pozostałych kolumn użyj domyślnego rysowania
+            super().paint(painter, option, index)
+
+    def createEditor(self, parent, option, index):
+        """Wyłącza domyślny edytor (np. po dwukliku)."""
+        return None
+
+    def editorEvent(self, event, model, option, index):
+        """Obsługuje kliknięcia myszą, aby otworzyć niestandardowe dialogi edycji."""
+        if event.type() == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+            col = index.column()
+            row_data = model.data(index, Qt.UserRole)
+            permissions = self.main_dialog.parent_widget._get_permission_for_cell(row_data)
+
+            if col == model.COL_LOCATION and self._is_location_editable(row_data, permissions):
+                self.show_location_dialog(index)
+                return True
+            elif col in [model.COL_START_HOUR, model.COL_WORK_HOURS] and self._are_hours_editable(row_data,
+                                                                                                  permissions):
+                is_hour = (col == model.COL_START_HOUR)
+                self.show_digit_dialog(index, is_hour=is_hour)
+                return True
+            elif col == model.COL_ACTIONS and self._is_apply_enabled(row_data, permissions):
+                self.apply_clicked.emit(index.row())
+                return True
+        return super().editorEvent(event, model, option, index)
+
+    # --- Metody pomocnicze do sprawdzania uprawnień ---
+
+    def _is_location_editable(self, row_data, permissions) -> bool:
+        """Sprawdza, czy pole lokalizacji jest edytowalne."""
+        # 1. Sprawdź podstawowe uprawnienia
+        if not permissions.get('can_edit_location', False):
+            return False
+
+        # 2. Sprawdź, czy symbol w ogóle może mieć lokalizację
+        parsed = parse_symbol(row_data.get('symbol', ''))
+        special = parsed.get('special_symbol')
+        if special and special.upper() not in app_settings.WORK_LIKE_SYMBOLS:
+            return False
+
+        # 3. Sprawdź regułę daty dla Lidera
+        if self.main_dialog.user_role == 'Lider':
+            cell_date = QDate.fromString(row_data.get('date_str', ''), "yyyy-MM-dd")
+            if cell_date.isValid() and cell_date < QDate.currentDate():
+                return False
+
+        return True
+
+    def _are_hours_editable(self, row_data, permissions) -> bool:
+        """Sprawdza, czy pola godzin są edytowalne."""
+        # 1. Sprawdź podstawowe uprawnienia
+        if not permissions.get('can_edit_hours', False):
+            return False
+
+        # 2. Sprawdź, czy to nie jest symbol absencji
+        parsed = parse_symbol(row_data.get('symbol', ''))
+        special = parsed.get('special_symbol')
+        if special and special in app_settings.ABSENCE_SYMBOLS:
+            return False
+
+        return True
+
+    def _is_apply_enabled(self, row_data, permissions) -> bool:
+        """Sprawdza, czy przycisk 'Zastosuj' powinien być aktywny."""
+        has_any_permission = any(permissions.values())
+        has_start_hour = row_data.get('current_start_hour') is not None
+        return has_any_permission and has_start_hour
+
+    # --- Metody do rysowania komórek ---
+
+    def _paint_location_button(self, painter: QPainter, option, row_data, permissions):
+        is_dark = self.main_dialog.determined_theme == 'dark'
+        is_enabled = self._is_location_editable(row_data, permissions)
+
+        bg_color, text_color, border_color = self._get_button_colors(is_dark, is_enabled)
+
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(QColor(border_color))
+        painter.setBrush(QColor(bg_color))
+        painter.drawRoundedRect(option.rect.adjusted(2, 2, -2, -2), 3, 3)
+        painter.setPen(QColor(text_color))
+
+        location_map = {'h': "Home Office (h)", 's': "SBC (s)", 'p': "mPrzystanek (p)"}
+        text = location_map.get(row_data.get('current_location')) if row_data.get('current_location') else ""
+
+        if not is_enabled and "symbol" in row_data:
+            # Sprawdz, czy w ogole symbol obsluguje lokalizacje
+            parsed = parse_symbol(row_data.get('symbol', ''))
+            special = parsed.get('special_symbol')
+            if special and special.upper() not in app_settings.WORK_LIKE_SYMBOLS:
+                text = ""  # Nie wyswietlaj lokalizacji dla absencji
+
+        painter.drawText(option.rect, Qt.AlignCenter, text)
+        painter.restore()
+
+    def _paint_digit_button(self, painter: QPainter, option, row_data, col, permissions, model):
+        is_dark = self.main_dialog.determined_theme == 'dark'
+        is_enabled = self._are_hours_editable(row_data, permissions)
+
+        bg_color, text_color, border_color = self._get_button_colors(is_dark, is_enabled)
+
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(QColor(border_color))
+        painter.setBrush(QColor(bg_color))
+        painter.drawRoundedRect(option.rect.adjusted(2, 2, -2, -2), 3, 3)
+        painter.setPen(QColor(text_color))
+
+        value = row_data.get('current_start_hour') if col == model.COL_START_HOUR else row_data.get(
+            'current_work_hours')
+        text = str(value) if value is not None and is_enabled else ""
+        painter.drawText(option.rect, Qt.AlignCenter, text)
+        painter.restore()
+
+    def _paint_apply_button(self, painter, option, row_data, permissions):
+        is_dark = self.main_dialog.determined_theme == 'dark'
+        is_enabled = self._is_apply_enabled(row_data, permissions)
+
+        bg_color, text_color, border_color = self._get_button_colors(is_dark, is_enabled)
+
+        painter.save()
+        painter.setRenderHint(QPainter.Antialiasing)
+        painter.setPen(QColor(border_color))
+        painter.setBrush(QColor(bg_color))
+        painter.drawRoundedRect(option.rect.adjusted(2, 2, -2, -2), 3, 3)
+        painter.setPen(QColor(text_color))
+        painter.drawText(option.rect, Qt.AlignCenter, "Zastosuj")
+        painter.restore()
+
+    def _paint_status(self, painter, option, row_data):
+        status = row_data.get('status', '')
+        color, text = option.palette.text().color(), ""
+        if status == 'success':
+            color, text = QColor("green"), "Sukces ✓"
+        elif status == 'no_change':
+            color, text = QColor("orange"), "Brak zmiany"
+        elif status == 'failure':
+            color, text = QColor("red"), "Porażka ❌"
+        elif status == 'pending':
+            color, text = QColor("#007bff"), "W kolejce..."
+
+        painter.save()
+        painter.setPen(color)
+        painter.drawText(option.rect, Qt.AlignCenter, text)
+        painter.restore()
+
+    # --- Dialogi pomocnicze ---
+
+    def show_location_dialog(self, index):
+        dialog = LocationSelectionDialog(self.main_dialog, current_theme=self.main_dialog.determined_theme)
+        if dialog.exec():
+            index.model().setData(index, dialog.get_selected_location(), Qt.EditRole)
+
+    def show_digit_dialog(self, index, is_hour):
+        title = "Wybierz godzinę rozp." if is_hour else "Wybierz liczbę godzin"
+        values = list(range(24)) if is_hour else list(range(1, 14))
+        dialog = DigitSelectionDialog(self.main_dialog, title, values, current_theme=self.main_dialog.determined_theme)
+        if dialog.exec():
+            index.model().setData(index, dialog.get_selected_value(), Qt.EditRole)
+
+    def _get_button_colors(self, is_dark, is_enabled):
+        """Zwraca kolory (tło, tekst, ramka) dla przycisku w zależności od motywu i stanu."""
+        if is_enabled:
+            if is_dark:
+                return (AppStyles.BUTTON_DARK_BG, AppStyles.BUTTON_DARK_TEXT, AppStyles.BUTTON_DARK_BORDER)
+            else:
+                return (AppStyles.BUTTON_GRAY_BACKGROUND, AppStyles.BUTTON_GRAY_TEXT_COLOR,
+                        AppStyles.BUTTON_GRAY_BORDER)
+        else:  # disabled
+            if is_dark:
+                return (AppStyles.DARK_BACKGROUND_PRESSED, AppStyles.DARK_TEXT_SECONDARY,
+                        AppStyles.DARK_BORDER_SECONDARY)
+            else:
+                return (AppStyles.LIGHT_BACKGROUND_PRESSED, AppStyles.LIGHT_TEXT_SECONDARY,
+                        AppStyles.LIGHT_BORDER_PRIMARY)
