@@ -1,0 +1,110 @@
+# ui_components.py
+from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QPushButton, QGridLayout)
+from PySide6.QtCore import Qt
+from styles import AppStyles
+
+
+class LocationSelectionDialog(QDialog):
+    """NOWY DIALOG: Okno do wyboru lokalizacji za pomocą przycisków."""
+
+    def __init__(self, parent=None, current_theme="dark"):
+        super().__init__(parent)
+        self.current_theme = current_theme
+        self.setWindowTitle("Wybierz lokalizację")
+        self.setModal(True)
+        self.selected_location = None
+        self.setup_ui()
+
+    def setup_ui(self):
+        main_layout = QVBoxLayout(self)
+
+        self.sbc_button = QPushButton("SBC (s)")
+        self.sbc_button.clicked.connect(lambda: self.on_value_selected("s"))
+        self.przystanek_button = QPushButton("mPrzystanek (p)")
+        self.przystanek_button.clicked.connect(lambda: self.on_value_selected("p"))
+        self.ho_button = QPushButton("Home Office (h)")
+        self.ho_button.clicked.connect(lambda: self.on_value_selected("h"))
+
+        main_layout.addWidget(self.sbc_button)
+        main_layout.addWidget(self.przystanek_button)
+        main_layout.addWidget(self.ho_button)
+
+        self.cancel_button = QPushButton("Anuluj")
+        self.cancel_button.clicked.connect(self.reject)
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        button_layout.addWidget(self.cancel_button)
+        main_layout.addLayout(button_layout)
+
+        self.apply_dialog_theme()
+
+    def apply_dialog_theme(self):
+        self.setStyleSheet(AppStyles.get_dialog_style(self.current_theme))
+        button_style = AppStyles.get_button_style(self.current_theme)
+        self.sbc_button.setStyleSheet(button_style)
+        self.przystanek_button.setStyleSheet(button_style)
+        self.ho_button.setStyleSheet(button_style)
+        self.cancel_button.setStyleSheet(button_style)
+
+    def on_value_selected(self, location_code):
+        self.selected_location = location_code
+        self.accept()
+
+    def get_selected_location(self):
+        return self.selected_location
+
+
+class DigitSelectionDialog(QDialog):
+    def __init__(self, parent=None, title="Wybierz wartość", values=None, current_theme="dark"):
+        super().__init__(parent)
+        self.current_theme = current_theme
+        self.setWindowTitle(title)
+        self.setModal(True)
+        self.selected_value = None
+        self.values = values if values is not None else list(range(10))
+        self.setup_ui()
+
+    def setup_ui(self):
+        main_layout = QVBoxLayout(self)
+        self.grid_layout = QGridLayout();
+        self.grid_layout.setSpacing(5)
+        cols = min(6, len(self.values));
+        cols = 1 if cols == 0 else cols
+        for i, value in enumerate(self.values):
+            row, col = i // cols, i % cols
+            button = QPushButton(str(value))
+            button.setProperty("value", value)
+            button.clicked.connect(self.on_value_selected)
+            self.grid_layout.addWidget(button, row, col)
+        main_layout.addLayout(self.grid_layout)
+        self.clear_button = QPushButton("Wyczyść")
+        self.clear_button.clicked.connect(self.on_clear_selected)
+        self.cancel_button = QPushButton("Anuluj")
+        self.cancel_button.clicked.connect(self.reject)
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        button_layout.addWidget(self.clear_button)
+        button_layout.addWidget(self.cancel_button)
+        main_layout.addLayout(button_layout)
+        self.adjustSize()
+        self.apply_dialog_theme()
+
+    def apply_dialog_theme(self):
+        self.setStyleSheet(AppStyles.get_dialog_style(self.current_theme))
+        button_style = AppStyles.get_button_style(self.current_theme)
+        for i in range(self.grid_layout.count()):
+            widget = self.grid_layout.itemAt(i).widget()
+            if isinstance(widget, QPushButton): widget.setStyleSheet(button_style)
+        self.clear_button.setStyleSheet(button_style)
+        self.cancel_button.setStyleSheet(button_style)
+
+    def on_value_selected(self):
+        self.selected_value = self.sender().property("value")
+        self.accept()
+
+    def on_clear_selected(self):
+        self.selected_value = None
+        self.accept()
+
+    def get_selected_value(self):
+        return self.selected_value
