@@ -1,0 +1,100 @@
+# schedule_change_model.py
+from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QDate
+from debug_utils import log_error
+
+
+class ScheduleChangeModel(QAbstractTableModel):
+    """
+    Model danych dla okna dialogowego 'Wstaw zmianę'.
+    Przechowuje dane i zarządza ich modyfikacją oraz sortowaniem.
+    """
+    # Definicja kolumn dla łatwiejszego zarządzania
+    (COL_DATE, COL_DAY_OF_WEEK, COL_USER, COL_SYMBOL, COL_LOCATION,
+     COL_START_HOUR, COL_WORK_HOURS, COL_ACTIONS, COL_STATUS) = range(9)
+    COLUMN_COUNT = 9
+
+    def __init__(self, data, parent=None):
+        super().__init__(parent)
+        self._data = data
+        self._headers = ["Data", "Dzień tyg.", "Użytkownik", "Symbol", "Lokalizacja",
+                         "Godzina rozp.", "Liczba godzin", "Akcje", "Status"]
+
+    def rowCount(self, parent=QModelIndex()):
+        return len(self._data)
+
+    def columnCount(self, parent=QModelIndex()):
+        return self.COLUMN_COUNT
+
+    def headerData(self, section, orientation, role=Qt.DisplayRole):
+        if role == Qt.DisplayRole and orientation == Qt.Horizontal:
+            return self._headers[section]
+        return None
+
+    def data(self, index, role=Qt.DisplayRole):
+        if not index.isValid(): return None
+        row, col = index.row(), index.column()
+        row_data = self._data[row]
+
+        if role == Qt.UserRole:
+            return row_data
+
+        if role == Qt.DisplayRole:
+            if col == self.COL_DATE: return row_data.get('date_str_display', '')
+            if col == self.COL_DAY_OF_WEEK: return row_data.get('day_of_week_str', '')
+            if col == self.COL_USER: return row_data.get('uzytkownik_dane', 'Nieznany')
+            if col == self.COL_SYMBOL: return row_data.get('symbol', '')
+
+        if role == Qt.TextAlignmentRole:
+            if col in [self.COL_DAY_OF_WEEK, self.COL_STATUS]:
+                return Qt.AlignCenter
+
+        return None
+
+    def setData(self, index, value, role=Qt.EditRole):
+        if not index.isValid() or role != Qt.EditRole:
+            return False
+
+        row, col = index.row(), index.column()
+        field_map = {
+            self.COL_LOCATION: 'current_location',
+            self.COL_START_HOUR: 'current_start_hour',
+            self.COL_WORK_HOURS: 'current_work_hours'
+        }
+        if col in field_map:
+            self._data[row][field_map[col]] = value
+            self.dataChanged.emit(index, index, [role, Qt.DisplayRole])
+            return True
+        return False
+
+    def get_row_data(self, row: int):
+        if 0 <= row < len(self._data):
+            return self._data[row]
+        return None
+
+    def update_status(self, row: int, status: str, message: str = ""):
+        if 0 <= row < len(self._data):
+            row_data = self._data[row]
+            row_data['status'] = status
+            row_data['status_message'] = message
+            status_index = self.index(row, self.COL_STATUS)
+            self.dataChanged.emit(status_index, status_index, [Qt.DisplayRole])
+
+    def sort(self, column, order):
+        """Sortuje dane w modelu na podstawie wybranej kolumny."""
+        self.layoutAboutToBeChanged.emit()
+        key_func = None
+        if column == self.COL_DATE:
+            key_func = lambda rd: QDate.fromString(rd.get('date_str', ''), "yyyy-MM-dd")
+        elif column == self.COL_DAY_OF_WEEK:
+            key_func = lambda rd: QDate.fromString(rd.get('date_str', ''), "yyyy-MM-dd").dayOfWeek()
+        elif column in [self.COL_USER, self.COL_SYMBOL]:
+            key = 'uzytkownik_dane' if column == self.COL_USER else 'symbol'
+            key_func = lambda rd: rd.get(key, '')
+
+        if key_func:
+            try:
+                self._data.sort(key=key_func, reverse=(order == Qt.DescendingOrder))
+            except Exception as e:
+                log_error(f"Błąd sortowania: {e}")
+
+        self.layoutChanged.emit()
