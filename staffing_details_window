@@ -1,4 +1,4 @@
-# staffing_details_window.py - Kompletny zapis z wszystkimi poprawkami
+# -*- coding: utf-8 -*-
 
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QTableView, QPushButton, QComboBox,
                                QHeaderView, QLabel, QHBoxLayout, QSplitter, QWidget, QTabWidget,
@@ -580,6 +580,10 @@ class StaffingDetailsWindow(QDialog):
         self.is_dark_theme = parent.is_dark_theme if hasattr(parent, 'is_dark_theme') else False
         self._filtered_schedule_data = {}
 
+        # --- NOWA ZMIANA: Dodanie przycisków minimalizacji i maksymalizacji ---
+        self.setWindowFlags(self.windowFlags() | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint)
+        # --- KONIEC ZMIANY ---
+
         self.setWindowTitle(f"Szczegóły obsady i analizy dla {month:02}/{year}")
         self.setMinimumSize(1300, 800)
 
@@ -1076,13 +1080,18 @@ class StaffingDetailsWindow(QDialog):
 
         self.absence_chart.setChart(chart)
 
-    def _handle_bar_hover(self, status, index, bar_set):
+    def _handle_bar_hover(self, status, index, bar_set, categories):
         """Obsługuje najechanie na słupek wykresu słupkowego."""
         if status:
-            category = self.sender().series().attachedAxes()[0].categories()[index]
-            value = bar_set.at(index)
-            tooltip_text = f"Wydział: {category}\nSuma godzin: {value:.1f}"
-            QToolTip.showText(QCursor.pos(), tooltip_text, self)
+            try:
+                # --- ZMIANA: Bezpośredni i niezawodny dostęp do nazwy kategorii ---
+                category = categories[index]
+                value = bar_set.at(index)
+                tooltip_text = f"Wydział: {category}\\nSuma godzin: {value:.1f}"
+                QToolTip.showText(QCursor.pos(), tooltip_text, self)
+            except IndexError:
+                # Zabezpieczenie na wypadek, gdyby index był poza zakresem
+                QToolTip.hideText()
         else:
             QToolTip.hideText()
 
@@ -1151,7 +1160,11 @@ class StaffingDetailsWindow(QDialog):
                 bar_set.append(dept_hours[dept])
                 categories.append(dept)
             bar_series.append(bar_set)
-            bar_set.hovered.connect(lambda status, index, s=bar_set: self._handle_bar_hover(status, index, s))
+
+            # --- ZMIANA: Przekazujemy listę kategorii 'c' bezpośrednio do handlera ---
+            bar_set.hovered.connect(
+                lambda status, index, s=bar_set, c=categories: self._handle_bar_hover(status, index, s, c)
+            )
             bar_series.setLabelsVisible(True)
 
         bar_chart = QChart()
@@ -1168,14 +1181,12 @@ class StaffingDetailsWindow(QDialog):
         bar_chart.addAxis(axis_y, Qt.AlignmentFlag.AlignLeft)
         bar_series.attachAxis(axis_y)
 
-        # --- NOWA, POPRAWIONA LOGIKA STYLIZACJI ---
         if self.is_dark_theme:
             bar_chart.setTheme(QChart.ChartTheme.ChartThemeDark)
             bar_chart.legend().setLabelColor(QColor("white"))
         else:
             bar_chart.setTheme(QChart.ChartTheme.ChartThemeLight)
             bar_chart.legend().setLabelColor(QColor("black"))
-        # --- KONIEC NOWEJ LOGIKI ---
 
         self.overtime_chart.setChart(bar_chart)
 
@@ -1192,7 +1203,7 @@ class StaffingDetailsWindow(QDialog):
             for name, value in type_hours.items():
                 if value > 0:
                     pie_slice = pie_series.append(f"{name} ({value:.1f}h)", value)
-                    pie_slice.setLabel(f"{name}\n{value / total_overtime:.1%}")
+                    pie_slice.setLabel(f"{name}\\n{value / total_overtime:.1%}")
                     pie_slice.setLabelVisible(True)
 
         pie_chart = QChart()
@@ -1200,14 +1211,12 @@ class StaffingDetailsWindow(QDialog):
         pie_chart.setTitle("Podział nadgodzin wg typu")
         pie_chart.legend().setVisible(False)
 
-        # --- NOWA, POPRAWIONA LOGIKA STYLIZACJI ---
         if self.is_dark_theme:
             pie_chart.setTheme(QChart.ChartTheme.ChartThemeDark)
             pie_chart.legend().setLabelColor(QColor("white"))
         else:
             pie_chart.setTheme(QChart.ChartTheme.ChartThemeLight)
             pie_chart.legend().setLabelColor(QColor("black"))
-        # --- KONIEC NOWEJ LOGIKI ---
 
         self.overtime_pie_chart.setChart(pie_chart)
 
@@ -1587,16 +1596,27 @@ class StaffingDetailsWindow(QDialog):
     def _calculate_overtime_summary_detailed(self, schedule_data, all_events):
         summary = defaultdict(lambda: {"wypłata": 0.0, "odbiór": 0.0, "odpracowanie": 0.0})
         user_info = {key[3]: (key[0] or "Brak", key[2] or "Brak") for key in schedule_data.keys()}
+
         for event in all_events:
             if event.get('type') == 'Nadgodziny':
                 user_id = event.get('user_id')
                 if user_id in user_info:
                     try:
-                        t_from = dt.datetime.strptime(event.get('time_from', '00:00'), '%H:%M')
-                        t_to = dt.datetime.strptime(event.get('time_to', '00:00'), '%H:%M')
+                        # --- POPRAWKA: Użyj prawidłowego formatu daty i czasu 'YYYY-MM-DD HH:MM' ---
+                        time_from_str = event.get('time_from')
+                        time_to_str = event.get('time_to')
+
+                        if not time_from_str or not time_to_str:
+                            continue
+
+                        t_from = dt.datetime.strptime(time_from_str, '%Y-%m-%d %H:%M')
+                        t_to = dt.datetime.strptime(time_to_str, '%Y-%m-%d %H:%M')
+                        # --- KONIEC POPRAWKI ---
+
                         duration = (t_to - t_from).total_seconds() / 3600.0
                         if duration < 0:
                             duration += 24.0
+
                         status = event.get('status', '').lower()
                         if 'wypłata' in status:
                             summary[user_id]['wypłata'] += duration
@@ -1606,15 +1626,17 @@ class StaffingDetailsWindow(QDialog):
                             summary[user_id]['odpracowanie'] += duration
                         else:
                             summary[user_id]['wypłata'] += duration
-                    except (ValueError, IndexError):
+                    except (ValueError, IndexError) as e:
+                        log_error(f"Błąd przetwarzania zdarzenia nadgodzin: {event}. Błąd: {e}")
                         continue
+
         result = []
         for user_id, hours in summary.items():
             if sum(hours.values()) > 0:
                 wydzial, nazwa = user_info.get(user_id, ("N/A", "N/A"))
                 result.append(
                     [wydzial, nazwa, hours['wypłata'], hours['odbiór'], hours['odpracowanie'], sum(hours.values())])
-        return sorted(result, key=lambda x: (x[0], x[1]))  # Sortowanie po wydziale i nazwie
+        return sorted(result, key=lambda x: (x[0], x[1]))
 
     def _adjust_columns(self):
         # DODANO self.forecast_table_view DO LISTY
