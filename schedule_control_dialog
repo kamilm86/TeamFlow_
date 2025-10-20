@@ -1,4 +1,4 @@
-# schedule_control_dialog.py
+# -*- coding: utf-8 -*-
 
 import datetime
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
 from PySide6.QtCore import Qt, Signal, QDate, QDateTime
 from styles import AppStyles
 from db_connector import DatabaseConnector, get_modifier_id
+from ui_utils import show_confirmation_dialog
 from config import SQL_OBJECTS
 from debug_utils import log_error
 
@@ -179,14 +180,11 @@ class ScheduleControlDialog(QDialog):
         # ZMIANA: Styl dla nowej kontrolki
         self.blocking_date_edit.setStyleSheet(AppStyles.get_date_edit_style(theme))
 
-
     def get_vacation_plans(self):
         """Obsługuje pobieranie planów urlopowych."""
-        # Ta funkcja jest przeznaczona dla roli 'Pracownik WPR', która nie wybiera grup.
-        # Wywołujemy procedurę dla wszystkich.
-        reply = QMessageBox.question(self, "Potwierdzenie",
-                                     "Czy na pewno chcesz pobrać plany urlopowe dla wszystkich? Może to spowodować nadpisanie wprowadzonych już danych.",
-                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        reply = show_confirmation_dialog(self, "Potwierdzenie",
+                                         "Czy na pewno chcesz pobrać plany urlopowe dla wszystkich? Może to spowodować nadpisanie wprowadzonych już danych.",
+                                         default_button=QMessageBox.No)
 
         if reply == QMessageBox.No:
             return
@@ -201,7 +199,7 @@ class ScheduleControlDialog(QDialog):
             QMessageBox.information(self, "Sukces", "Plany urlopowe zostały pobrane.")
             self.data_refresh_needed.emit()
         except Exception as e:
-            QMessageBox.critical(self, "Błąd Bazy Danych", f"Wystąpił błąd podczas pobierania planów urlopowych:\n{e}")
+            QMessageBox.critical(self, "Błąd Bazy Danych", f"Wystąpił błąd podczas pobierania planów urlopowych:<br>{e}")
 
     def _execute_procedure(self, sql_query):
         """Pomocnicza metoda do wykonywania zapytań."""
@@ -213,7 +211,7 @@ class ScheduleControlDialog(QDialog):
             conn.close()
             return True
         except Exception as e:
-            QMessageBox.critical(self, "Błąd Bazy Danych", f"Wystąpił błąd:\n{e}")
+            QMessageBox.critical(self, "Błąd Bazy Danych", f"Wystąpił błąd:<br>{e}")
             return False
 
     def load_initial_status(self):
@@ -299,7 +297,7 @@ class ScheduleControlDialog(QDialog):
 
         except Exception as e:
             log_error(f"Błąd zapisu daty blokady PU: {e}", exception=e)
-            QMessageBox.critical(self, "Błąd Bazy Danych", f"Wystąpił błąd podczas zapisu daty blokady:\n{e}")
+            QMessageBox.critical(self, "Błąd Bazy Danych", f"Wystąpił błąd podczas zapisu daty blokady:<br>{e}")
 
     def _save_blocking_date(self):
         """Zapisuje lub aktualizuje datę i czas blokady PU w bazie danych."""
@@ -327,7 +325,7 @@ class ScheduleControlDialog(QDialog):
 
         except Exception as e:
             log_error(f"Błąd zapisu daty blokady PU: {e}", exception=e)
-            QMessageBox.critical(self, "Błąd Bazy Danych", f"Wystąpił błąd podczas zapisu daty blokady:\n{e}")
+            QMessageBox.critical(self, "Błąd Bazy Danych", f"Wystąpił błąd podczas zapisu daty blokady:<br>{e}")
 
     def unlock_suggestions(self):
         self._set_suggestions_status(0)
@@ -352,13 +350,10 @@ class ScheduleControlDialog(QDialog):
         }
         status_name = status_map.get(status_code, "Nieznany")
 
-        reply = QMessageBox.question(
-            self,
-            "Potwierdzenie zmiany statusu",
-            # POPRAWKA: Użyto <br> zamiast \\n dla poprawnego łamania linii w trybie HTML
+        reply = show_confirmation_dialog(
+            self, "Potwierdzenie zmiany statusu",
             f"Czy na pewno chcesz zmienić status sugestii na:<br><b>{status_name}</b>?",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No
+            default_button=QMessageBox.No
         )
 
         if reply == QMessageBox.StandardButton.No:
@@ -382,7 +377,7 @@ class ScheduleControlDialog(QDialog):
 
         except Exception as e:
             log_error(f"Błąd podczas zmiany statusu sugestii na {status_code}: {e}", exception=e)
-            QMessageBox.critical(self, "Błąd Bazy Danych", f"Wystąpił błąd podczas zmiany statusu sugestii:\\n{e}")
+            QMessageBox.critical(self, "Błąd Bazy Danych", f"Wystąpił błąd podczas zmiany statusu sugestii:\<br>{e}")
 
     def publish_schedule(self):
         sql = f"exec {SQL_OBJECTS['p_publikowaniegrafiku']} {self.year}, {self.month}, '{self.login_windows}', 1"
@@ -409,7 +404,7 @@ class ScheduleControlDialog(QDialog):
         # i emituje sygnał do odświeżenia głównego okna.
         sql = f"exec {SQL_OBJECTS['p_pobierzsugestieii']} {self.year}, {self.month}, {self.month}, {self.year}, 1, 0"
         if self._execute_procedure(sql):
-             QMessageBox.information(self, "Sukces", "Procedura pobierania sugestii została uruchomiona.\nDane zostaną odświeżone.")
+             QMessageBox.information(self, "Sukces", "Procedura pobierania sugestii została uruchomiona.<br>Dane zostaną odświeżone.")
              self.data_refresh_needed.emit()
 
 
@@ -504,17 +499,16 @@ class SuggestionsOutDialog(QDialog):
             for row in results:
                 self.groups_list.addItem(row[0])
         except Exception as e:
-            QMessageBox.critical(self, "Błąd Bazy Danych", f"Nie udało się wczytać listy grup:\n{e}")
+            QMessageBox.critical(self, "Błąd Bazy Danych", f"Nie udało się wczytać listy grup:<br>{e}")
 
     def _get_consultant_suggestions(self):
         """Adaptacja logiki VBA dla przycisku 'Pobierz sugestie Konsultantów'."""
         selected_groups_str = self._get_selected_groups_str()
-        if not selected_groups_str:
-            return
+        if not selected_groups_str: return
 
-        reply = QMessageBox.question(self, "Potwierdzenie",
-                                     "Czy na pewno chcesz pobrać sugestie? Może to spowodować nadpisanie wprowadzonych już danych.",
-                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        reply = show_confirmation_dialog(self, "Potwierdzenie",
+                                         "Czy na pewno chcesz pobrać sugestie? Może to spowodować nadpisanie wprowadzonych już danych.",
+                                         default_button=QMessageBox.No)
 
         if reply == QMessageBox.No:
             return
@@ -528,7 +522,7 @@ class SuggestionsOutDialog(QDialog):
             QMessageBox.information(self, "Sukces", "Sugestie Konsultantów zostały pobrane do grafiku.")
             self.data_refresh_needed.emit()
         except Exception as e:
-            QMessageBox.critical(self, "Błąd Bazy Danych", f"Wystąpił błąd podczas pobierania sugestii:\n{e}")
+            QMessageBox.critical(self, "Błąd Bazy Danych", f"Wystąpił błąd podczas pobierania sugestii:<br>{e}")
 
     def _get_vacation_plans(self):
         """Adaptacja logiki VBA dla przycisku 'Pobierz plany urlopowe'."""
@@ -540,9 +534,9 @@ class SuggestionsOutDialog(QDialog):
         if not selected_groups_str:
             return
 
-        reply = QMessageBox.question(self, "Potwierdzenie",
-                                     "Czy na pewno chcesz pobrać plany urlopowe? Może to spowodować nadpisanie wprowadzonych już danych.",
-                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        reply = show_confirmation_dialog(self, "Potwierdzenie",
+                                         "Czy na pewno chcesz pobrać plany urlopowe? Może to spowodować nadpisanie wprowadzonych już danych.",
+                                         default_button=QMessageBox.No)
 
         if reply == QMessageBox.No:
             return
@@ -557,4 +551,4 @@ class SuggestionsOutDialog(QDialog):
             QMessageBox.information(self, "Sukces", "Plany urlopowe zostały pobrane.")
             self.data_refresh_needed.emit()
         except Exception as e:
-            QMessageBox.critical(self, "Błąd Bazy Danych", f"Wystąpił błąd podczas pobierania planów urlopowych:\n{e}")
+            QMessageBox.critical(self, "Błąd Bazy Danych", f"Wystąpił błąd podczas pobierania planów urlopowych:<br>{e}")
