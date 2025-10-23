@@ -688,6 +688,9 @@ class WorkScheduleWindow(QMainWindow):
         self.shortcut_f12 = QShortcut(QKeySequence(Qt.Key_F12), self)
         self.shortcut_f12.activated.connect(self.clear_special_symbol_from_selected_cells)
 
+        self.shortcut_f6 = QShortcut(QKeySequence(Qt.Key_F6), self)
+        self.shortcut_f6.activated.connect(self.toggle_staffing_window_visibility)
+
         self.copy_shortcut = QShortcut(QKeySequence.Copy, self)
         self.copy_shortcut.activated.connect(self.copy_selection_to_clipboard)
 
@@ -779,6 +782,24 @@ class WorkScheduleWindow(QMainWindow):
             )
             self.staffing_details_win.set_current_theme(self.is_dark_theme)
             self.staffing_details_win.show()
+
+    def toggle_staffing_window_visibility(self):
+        """
+        Przełącza widoczność okna Obsady (F6). Jeśli jest widoczne, minimalizuje je.
+        Jeśli jest zminimalizowane, przywraca je. Jeśli jest zamknięte, otwiera je.
+        """
+        if self.staffing_details_win and not self.staffing_details_win.isHidden():
+            # Okno jest widoczne
+            if self.staffing_details_win.isMinimized():
+                # Jest zminimalizowane, więc je przywracamy
+                self.staffing_details_win.showNormal()
+                self.staffing_details_win.activateWindow()
+            else:
+                # Jest normalnie widoczne, więc je minimalizujemy
+                self.staffing_details_win.showMinimized()
+        else:
+            # Okno jest zamknięte lub ukryte, więc je otwieramy
+            self.show_staffing_details_window()
 
     def setup_keyboard_editing(self):
         """Konfiguruje edycję klawiatury dla komórek grafiku"""
@@ -3351,6 +3372,9 @@ class WorkScheduleWindow(QMainWindow):
         layout.addWidget(form_frame)
 
         def add_overtime():
+            # Krok 1: Zapisz stan widoku (zaznaczenie i przewinięcie)
+            view_state = self._save_view_state()
+
             result = self.call_add_overtime_procedure_fixed(
                 selected_user_id, selected_date.year(), selected_date.month(),
                 selected_date.toString("yyyy-MM-dd"), time_combo.currentText(),
@@ -3359,6 +3383,31 @@ class WorkScheduleWindow(QMainWindow):
                 ld_combo.currentText(), nr_kadrowy
             )
             if result["success"]:
+                # --- POCZĄTEK POPRAWKI ---
+                # Krok 2: Po sukcesie w bazie, unieważniamy cache dla tej komórki.
+                # To zmusi DataProvider do ponownego załadowania danych (w tym zdarzeń) przy następnym zapytaniu.
+                self.data_provider.invalidate_complete_cache_for_pairs([(selected_user_id, date_str)])
+
+                # --- POCZĄTEK NOWEJ, ZOPTYMALIZOWANEJ LOGIKI ---
+                # Krok 3: Zamiast pobierać wszystkie zdarzenia dla miesiąca, pobieramy je tylko dla zmienionej komórki.
+                fresh_events_for_cell = self.data_provider.get_events_for_user_date(selected_user_id, date_str, active_only=False)
+
+                # Krok 4: Inteligentnie zaktualizuj `self.all_events_data`, aby uniknąć pełnego przeładowania.
+                # Usuń stare zdarzenia dla tej komórki i dodaj nowe, świeżo pobrane.
+                self.all_events_data = [e for e in self.all_events_data if not (e.get('user_id') == selected_user_id and e.get('date_key') == date_str)]
+                self.all_events_data.extend([self._convert_dp_event_to_local(e) for e in fresh_events_for_cell])
+                debug_print(f"Zaktualizowano `self.all_events_data` tylko dla komórki ({selected_user_id}, {date_str}). Nowa liczba zdarzeń: {len(self.all_events_data)}")
+                # --- KONIEC NOWEJ, ZOPTYMALIZOWANEJ LOGIKI ---
+
+                # Krok 5: Przywracamy zaznaczenie komórki, które było zapamiętane przed otwarciem okna.
+                self._restore_view_state(view_state)
+
+                # Krok 6: Wywołujemy metodę, która jest odpowiedzialna za aktualizację tabeli zdarzeń.
+                # Użyje ona świeżych danych z DataProvider (dzięki krokowi 2) i poprawnie wyświetli
+                # nowo dodane nadgodziny. To również zaktualizuje `self.all_events_data`.
+                self.on_selection_changed()
+                # --- KONIEC POPRAWKI ---
+
                 self.statusBar().showMessage("Pomyślnie dodano nadgodziny.", 3000)
                 dialog.accept()
             else:
@@ -5779,7 +5828,7 @@ class WorkScheduleWindow(QMainWindow):
         try:
             conn = DatabaseConnector.get_connection()
             cursor = conn.cursor()
-            _, user_app_id, _, _, _ = get_modifier_id()
+            user_app_id, _, _, _, _, _ = get_modifier_id()
 
             for event in events_to_cancel:
                 event_id, event_type = event.get('id'), event.get('type')
@@ -5820,6 +5869,10 @@ class WorkScheduleWindow(QMainWindow):
         """
         Odwołuje pojedyncze zdarzenie z tabeli zdarzeń. Zawsze prosi o potwierdzenie.
         """
+        # --- POCZĄTEK LOGOWANIA DIAGNOSTYCZNEGO ---
+        debug_print(f"--- delete_event: Próba odwołania zdarzenia ID: {event_id} (typ: {type(event_id)}), Typ: {event_type} ---")
+        # --- KONIEC LOGOWANIA DIAGNOSTYCZNEGO ---
+
         # Krok 1: Zawsze wyświetlaj dialog potwierdzenia.
         reply = show_confirmation_dialog(self, "Potwierdzenie",
             f"Czy na pewno chcesz odwołać {event_type.lower()} o ID {event_id}?",
@@ -5829,8 +5882,15 @@ class WorkScheduleWindow(QMainWindow):
 
         # Krok 2: Zbierz dane tylko dla tego jednego zdarzenia.
         event_to_cancel = next(
-            (e for e in (self.all_events_data or []) if e.get('id') == event_id and e.get('type') == event_type), None)
+            (e for e in (self.all_events_data or []) if str(e.get('id')) == str(event_id) and e.get('type') == event_type), None)
         if not event_to_cancel:
+            # --- POCZĄTEK LOGOWANIA DIAGNOSTYCZNEGO ---
+            debug_print(f"BŁĄD: Nie znaleziono zdarzenia ID: {event_id} w self.all_events_data.")
+            if hasattr(self, 'all_events_data') and self.all_events_data:
+                debug_print("Ostatnie 5 zdarzeń w `all_events_data` do porównania:")
+                for event in self.all_events_data[-5:]:
+                    debug_print(f"  -> ID: {event.get('id')} (typ: {type(event.get('id'))}), Typ: {event.get('type')}")
+            # --- KONIEC LOGOWANIA DIAGNOSTYCZNEGO ---
             QMessageBox.warning(self, "Błąd", "Nie można odnaleźć zdarzenia do odwołania.")
             return
 
@@ -6016,19 +6076,19 @@ class WorkScheduleWindow(QMainWindow):
             cursor.execute(sql, params)
 
             # --- NOWA, OSTATECZNA LOGIKA: Niezawodna analiza wyników z procedury ---
-            all_results = []
-            new_event_id = None
             success = True
             message = "Nadgodziny zostały pomyślnie dodane."
+            all_results = []
 
             # Pętla do odczytywania WSZYSTKICH zestawów wyników zwróconych przez procedurę
             while True:
-                try: #
+                try:
                     rows = cursor.fetchall()
-                    if rows: all_results.extend(rows)
+                    if rows:
+                        all_results.extend(rows)
                     if not cursor.nextset():
                         break
-                except pyodbc.ProgrammingError: #
+                except pyodbc.ProgrammingError:
                     # Koniec zestawów wyników
                     break
 
@@ -6036,42 +6096,48 @@ class WorkScheduleWindow(QMainWindow):
             for row in all_results:
                 if row and len(row) > 0 and row[0] is not None:
                     raw_value = row[0]
- 
-                    # Sprawdź, czy to ID nowego rekordu (liczba całkowita) #
-                    if isinstance(raw_value, int):
-                        new_event_id = raw_value
-                        continue  # Przejdź do następnego wyniku
- 
-                    # Sprawdź, czy to komunikat o błędzie (string) #
-                    value_str = str(raw_value).strip()
-                    if value_str and value_str != "0":
-                        # Jeśli znaleziono tekst, jest to komunikat o błędzie
+                    # Jeśli to tekst, jest to komunikat o błędzie
+                    if isinstance(raw_value, str):
                         success = False
-                        message = value_str
-                        break  # Przerywamy dalsze przetwarzanie, bo wystąpił błąd
- 
+                        message = raw_value
+                        break  # Przerywamy, bo wystąpił błąd
+
             conn.commit()
             conn.close()
 
-            # --- KONIEC NOWEJ LOGIKI ---
+            if success:
+                # Krok 2: Rejestracja własnej zmiany i unieważnienie cache
+                self._update_modification_date()
 
-            if success and new_event_id is not None:
-                # Jeśli operacja się powiodła, odśwież UI
-                self._refresh_data_after_overtime_addition(new_event_id, user_id, date_str, year, month)
-            elif success and new_event_id is None: #
-                # Sytuacja awaryjna: procedura nie zwróciła błędu, ale nie zwróciła też ID
-                success = False
-                message = "Procedura zakończyła działanie, ale nie zwróciła ID nowego rekordu."
-                log_warning(message)
- 
-            return {"success": success, "message": message, "new_event_id": new_event_id}
- 
+                # --- POCZĄTEK POPRAWKI 2.0 ---
+                # Krok 2a: Niezawodne wyodrębnienie ID nowego rekordu i ręczne dodanie go do
+                # głównej listy `all_events_data`, aby był od razu dostępny dla operacji "Odwołaj".
+                if hasattr(self, 'all_events_data'):
+                    try:
+                        # Próbujemy wyodrębnić liczbę z komunikatu zwrotnego
+                        new_event_id = int(str(message).strip())
+                        new_event_data = self._fetch_specific_event_from_db(year, month, new_event_id, 'Nadgodziny')
+                        if new_event_data:
+                            local_event = self._convert_dp_event_to_local(new_event_data)
+                            self.all_events_data.append(local_event)
+                            debug_print(f"Ręcznie dodano nowe nadgodziny (ID: {new_event_id}) do self.all_events_data.")
+                    except (ValueError, TypeError) as e:
+                        log_warning(f"Nie udało się wyodrębnić ID nadgodzin z komunikatu: '{message}'. Błąd: {e}")
+
+                # --- KONIEC POPRAWKI 2.0 ---
+
+                self.data_provider.invalidate_complete_cache_for_pairs([(user_id, date_str)])
+
+                # Krok 3: Odświeżenie dolnej tabeli zdarzeń
+                self.on_selection_changed()
+
+            return {"success": success, "message": message}
+
         except Exception as e:
             log_error(f"Błąd podczas dodawania nadgodzin: {e}", exception=e)
             return {
                 "success": False,
-                "message": f"Wystąpił błąd podczas dodawania nadgodzin: {str(e)}",
-                "new_event_id": None
+                "message": f"Wystąpił błąd podczas dodawania nadgodzin: {str(e)}"
             }
 
     def _refresh_data_after_overtime_addition(self, new_id, user_id, date_str, year, month):
@@ -6814,17 +6880,15 @@ class WorkScheduleWindow(QMainWindow):
         day_letters = []
         day_numbers = []
         for col in selected_schedule_cols:
-            header_text = str(self.schedule_model.headerData(col, Qt.Horizontal, Qt.DisplayRole))
-            parts = header_text.split('<br>')
+            # --- POPRAWKA: Używamy roli RawTextRole, aby pobrać tekst bez formatowania HTML ---
+            header_text = str(self.schedule_model.headerData(col, Qt.Horizontal, self.schedule_model.RawTextRole))
+            parts = header_text.split('\n')
             if len(parts) == 2:
                 day_numbers.append(parts[0])
                 day_letters.append(parts[1])
             else:
                 day_numbers.append(header_text)
                 day_letters.append('')
-
-        clipboard_string = "\t".join([''] * len(employee_headers) + day_letters) + "<br>"
-        clipboard_string += "\t".join(employee_headers + day_numbers) + "<br>"
 
         # Krok 3: Przygotuj wiersze z danymi
         for row in selected_rows:
@@ -6847,7 +6911,7 @@ class WorkScheduleWindow(QMainWindow):
                 else:
                     row_values.append('')
 
-            clipboard_string += "\t".join(row_values) + "<br>"
+            clipboard_string += "\t".join(row_values) + "\n"
 
         # Krok 4: Wstaw sformatowany tekst do schowka
         QApplication.clipboard().setText(clipboard_string)
