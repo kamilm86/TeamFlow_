@@ -137,7 +137,7 @@ def export_settings():
     logging_users_for_console = ["kamil"]  # <-- ZMIEŃ NA LISTĘ LOGINÓW
 
     # --- NOWA SEKCJA: Lista "Super Liderów" z rozszerzonymi uprawnieniami ---
-    super_lider_logins = ["kamil"]  # <-- TUTAJ WPISZ LOGINY LIDERÓW
+    super_lider_logins = [""]  # <-- TUTAJ WPISZ LOGINY LIDERÓW
 
     # 5. Finalny słownik do eksportu
     settings_to_export = {
