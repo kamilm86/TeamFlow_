@@ -6177,17 +6177,10 @@ class WorkScheduleWindow(QMainWindow):
                 if cell_data and (
                         parse_symbol(cell_data[0].get('symbol', '')).get('special_symbol') or '').upper() == 'S':
                     self._remove_s_symbol_directly(cell_data)
-
-            canceled_count = self._cancel_delegations_in_db([event_to_cancel])
-
-            if canceled_count > 0:
-                self.data_provider.invalidate_complete_cache_for_pairs([(user_id, date_str)])
-                self._restore_view_state(view_state)
-                self.on_selection_changed()
-                QMessageBox.information(self, "Sukces", f"Pomyślnie odwołano zdarzenie.", QMessageBox.Ok)
-            else:
-                QMessageBox.warning(self, "Brak zmian", "Nie udało się odwołać zdarzenia.", QMessageBox.Ok)
-
+            
+            # --- POCZĄTEK POPRAWKI: Użycie asynchronicznego DelegationCanceler ---
+            self.delegation_canceler.start_cancellation([event_to_cancel])
+            # --- KONIEC POPRAWKI ---
         except Exception as e:
             log_error(f"Błąd podczas usuwania zdarzenia: {e}", exception=e)
             QMessageBox.critical(self, "Błąd", f"Wystąpił błąd podczas usuwania zdarzenia: {str(e)}", QMessageBox.Ok)
@@ -6364,12 +6357,19 @@ class WorkScheduleWindow(QMainWindow):
             # Przetwarzanie zebranych wyników
             for row in all_results:
                 if row and len(row) > 0 and row[0] is not None:
-                    raw_value = row[0]
-                    # Jeśli to tekst, jest to komunikat o błędzie
-                    if isinstance(raw_value, str):
+                    # --- POCZĄTEK POPRAWKI: Lepsza obsługa wyników procedury ---
+                    result_value = row[0]
+                    # Scenariusz 1: Procedura zwróciła tekst - to zawsze jest błąd
+                    if isinstance(result_value, str):
                         success = False
-                        message = raw_value
-                        break  # Przerywamy, bo wystąpił błąd
+                        message = result_value
+                        break
+                    # Scenariusz 2: Procedura zwróciła ID nowego rekordu (liczba > 0)
+                    elif isinstance(result_value, int) and result_value > 0:
+                        message = str(result_value) # Zapisujemy ID jako wiadomość do dalszego przetwarzania
+                    # Scenariusz 3: Procedura zwróciła 0 - to też jest sukces, ale bez ID
+                    # W tym przypadku `message` pozostaje domyślną wiadomością o sukcesie.
+                    # --- KONIEC POPRAWKI ---
 
             conn.commit()
             conn.close()
