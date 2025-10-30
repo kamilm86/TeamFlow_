@@ -17,6 +17,7 @@ ROLE_SPECIAL_SYMBOL = Qt.UserRole + 5
 ROLE_LOCATION_SYMBOL = Qt.UserRole + 6
 ROLE_ICON_COLOR = Qt.UserRole + 7
 ROLE_IS_SUGGESTED_OFF = Qt.UserRole + 8  # <-- NOWA ROLA
+ROLE_RAW_TEXT = Qt.UserRole + 9
 ROLE_HEADER_TYPE = Qt.UserRole + 10
 
 
@@ -33,6 +34,7 @@ class ScheduleTableModel(QAbstractTableModel):
     ROLE_LOCATION_SYMBOL = Qt.UserRole + 6
     ROLE_ICON_COLOR = Qt.UserRole + 7
     ROLE_IS_SUGGESTED_OFF = Qt.UserRole + 8  # <-- NOWA ROLA
+    RawTextRole = ROLE_RAW_TEXT
     ROLE_HEADER_TYPE = Qt.UserRole + 10
 
     def __init__(self, parent=None, user_role=None):
@@ -226,6 +228,10 @@ class ScheduleTableModel(QAbstractTableModel):
             if role == Qt.DisplayRole:
                 if section < len(self._column_headers):
                     return self._column_headers[section]
+            # --- NOWA LOGIKA: Zwracanie surowego tekstu bez formatowania HTML ---
+            elif role == self.RawTextRole:
+                if section < len(self._column_headers):
+                    return self._column_headers[section].replace('<br>', '\n')
 
             elif role == ROLE_HEADER_TYPE:
                 visible_columns_count = len(self._visible_columns)
