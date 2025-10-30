@@ -1,0 +1,89 @@
+# -*- coding: utf-8 -*-
+
+from PySide6.QtCore import QThread, Signal
+from PySide6.QtWidgets import QMessageBox
+import pyodbc
+
+from db_connector import DatabaseConnector, SQL_OBJECTS
+from debug_utils import log_error, debug_print
+
+
+class OvertimeAdderThread(QThread):
+    """Wątek roboczy do dodawania nadgodzin w tle."""
+    finished = Signal(dict)
+
+    def __init__(self, params, parent=None):
+        super().__init__(parent)
+        self.params = params
+
+    def run(self):
+        conn = None
+        try:
+            conn = DatabaseConnector.get_connection()
+            cursor = conn.cursor()
+
+            sql = f"{{CALL {SQL_OBJECTS['p_nadgodzinywstawienie']} ({', '.join(['?'] * len(self.params))})}}"
+            cursor.execute(sql, self.params)
+
+            error_message = None
+            while True:
+                try:
+                    rows = cursor.fetchall()
+                    if rows:
+                        for row in rows:
+                            if row and len(row) > 0 and isinstance(row[0], str):
+                                error_message = row[0]
+                                break
+                    if error_message or not cursor.nextset():
+                        break
+                except pyodbc.ProgrammingError:
+                    break
+
+            conn.commit()
+
+            if error_message:
+                self.finished.emit({"success": False, "message": error_message})
+            else:
+                self.finished.emit({"success": True, "message": "Nadgodziny zostały pomyślnie dodane."})
+
+        except Exception as e:
+            log_error(f"Krytyczny błąd w OvertimeAdderThread: {e}", exception=e)
+            self.finished.emit({"success": False, "message": f"Błąd bazy danych: {e}"})
+        finally:
+            if conn:
+                conn.close()
+
+
+class OvertimeManager:
+    """Klasa zarządzająca procesem asynchronicznego dodawania nadgodzin."""
+
+    def __init__(self, parent_window):
+        self.parent = parent_window
+        self.thread = None
+
+    def start_addition(self, params: list, user_id: int, date_str: str):
+        self.parent.statusBar().showMessage("Dodawanie nadgodzin...", 3000)
+
+        self.thread = OvertimeAdderThread(params)
+        self.thread.finished.connect(lambda result: self._on_finished(result, user_id, date_str))
+        self.thread.start()
+
+    def _on_finished(self, result: dict, user_id: int, date_str: str):
+        success = result.get("success", False)
+        message = result.get("message", "Nieznany błąd.")
+
+        if success:
+            self.parent.statusBar().showMessage(message, 5000)
+            QMessageBox.information(self.parent, "Sukces", message)
+
+            # Rejestracja zmiany i odświeżenie UI
+            self.parent._update_modification_date()
+            self.parent.data_provider.invalidate_complete_cache_for_pairs([(user_id, date_str)])
+            self.parent.on_selection_changed()
+        else:
+            self.parent.statusBar().showMessage(f"Błąd: {message}", 8000)
+            QMessageBox.warning(self.parent, "Błąd dodawania nadgodzin", message)
+
+        if self.thread:
+            self.thread.deleteLater()
+            self.thread = None
