@@ -1,0 +1,216 @@
+# async_operations.py
+
+from PySide6.QtCore import QThread, Signal, Qt
+from PySide6.QtWidgets import QProgressDialog, QMessageBox
+from db_connector import DatabaseConnector, SQL_OBJECTS, get_modifier_id
+from debug_utils import log_error, debug_print
+
+class LocationExceptionThread(QThread):
+    """Wątek roboczy do zarządzania wyjątkami lokalizacyjnymi w tle."""
+    progress_updated = Signal(int)
+    finished = Signal(bool, list)  # Sygnał: sukces, lista błędów
+    error_occurred = Signal(str)
+
+    def __init__(self, operations: list, parent=None):
+        super().__init__(parent)
+        self.operations = operations
+        self._is_cancelled = False
+
+    def run(self):
+        conn = None
+        errors = []
+        try:
+            conn = DatabaseConnector.get_connection()
+            cursor = conn.cursor()
+            query = f"EXEC {SQL_OBJECTS['p_lokalizacjewyjatki']} ?, ?, ?, ?, ?, ?, ?, ?"
+
+            for i, params in enumerate(self.operations):
+                if self._is_cancelled:
+                    break
+                try:
+                    cursor.execute(query, params)
+                    while cursor.nextset():
+                        pass
+                except Exception as e:
+                    date_str = params[2] if len(params) > 2 else "N/A"
+                    errors.append(f"Dzień {date_str}: {e}")
+                self.progress_updated.emit(i + 1)
+
+            if not self._is_cancelled:
+                conn.commit()
+
+            self.finished.emit(not errors, errors)
+
+        except Exception as e:
+            log_error(f"Krytyczny błąd w wątku wyjątków lokalizacyjnych: {e}", exception=e)
+            self.error_occurred.emit(str(e))
+        finally:
+            if conn:
+                conn.close()
+
+    def cancel(self):
+        self._is_cancelled = True
+
+class CancelDelegationsThread(QThread):
+    """Wątek roboczy do odwoływania delegacji w tle."""
+    progress_updated = Signal(int)
+    finished = Signal(int, list)  # Zwraca liczbę odwołanych i listę par (user_id, date_key)
+    error_occurred = Signal(str)
+
+    def __init__(self, events_to_cancel, parent=None):
+        super().__init__(parent)
+        self.events_to_cancel = events_to_cancel
+        self._is_cancelled = False
+
+    def run(self):
+        successful_updates = 0
+        affected_user_date_pairs = set()
+        conn = None
+        try:
+            conn = DatabaseConnector.get_connection()
+            cursor = conn.cursor()
+            modyfikujacy_id, _, _, _, _, _ = get_modifier_id()
+            total = len(self.events_to_cancel)
+
+            for i, event in enumerate(self.events_to_cancel):
+                if self._is_cancelled:
+                    break
+
+                event_id, event_type = event.get('id'), event.get('type')
+                if not all([event_id, event_type]): continue
+
+                table_name = ""
+                if event_type == "Spotkanie": table_name = SQL_OBJECTS['spotkania']
+                elif event_type == "Szkolenie": table_name = SQL_OBJECTS['szkolenia']
+                elif event_type == "Nadgodziny": table_name = SQL_OBJECTS['nadgodziny']
+                if not table_name: continue
+
+                try:
+                    if event_type in ["Spotkanie", "Szkolenie"]:
+                        query = f"UPDATE {table_name} SET Status = 0, DataDo = NULL, DataOd = Data, Modyfikujacy = ? WHERE Id = ?"
+                        cursor.execute(query, (modyfikujacy_id, event_id))
+                    else:
+                        query = f"DELETE FROM {table_name} WHERE Id = ?"
+                        cursor.execute(query, (event_id,))
+
+                    if cursor.rowcount > 0:
+                        successful_updates += 1
+                        affected_user_date_pairs.add((event.get('user_id'), event.get('date_key')))
+
+                except Exception as db_err:
+                    log_error(f"Błąd DB podczas odwoływania {event_type} ID {event_id}: {db_err}", exception=db_err)
+                self.progress_updated.emit(i + 1)
+
+            if not self._is_cancelled and successful_updates > 0:
+                conn.commit()
+
+            self.finished.emit(successful_updates, list(affected_user_date_pairs))
+        except Exception as e:
+            log_error(f"Krytyczny błąd w wątku odwoływania delegacji: {e}", exception=e)
+            self.error_occurred.emit(str(e))
+        finally:
+            if conn: conn.close()
+
+    def cancel(self):
+        self._is_cancelled = True
+
+class DelegationCanceler:
+    """Klasa zarządzająca procesem odwoływania delegacji w tle."""
+
+    def __init__(self, parent_window):
+        self.parent = parent_window
+        self.thread = None
+
+    def start_cancellation(self, events_to_cancel: list):
+        if not events_to_cancel:
+            return
+
+        self.progress_dialog = QProgressDialog("Odwoływanie delegacji...", "Anuluj", 0, len(events_to_cancel),
+                                               self.parent)
+        self.progress_dialog.setWindowModality(Qt.WindowModal)
+        self.progress_dialog.setWindowTitle("Przetwarzanie")
+
+        self.thread = CancelDelegationsThread(events_to_cancel)
+        self.thread.progress_updated.connect(self.progress_dialog.setValue)
+        self.thread.finished.connect(self._on_finished)
+        self.thread.error_occurred.connect(self._on_error)
+        self.progress_dialog.canceled.connect(self.thread.cancel)
+
+        self.thread.start()
+        self.progress_dialog.open()
+
+    def _on_finished(self, canceled_count, affected_user_date_pairs):
+        self.progress_dialog.close()
+
+        if canceled_count > 0:
+            self.parent.statusBar().showMessage(f"Pomyślnie odwołano {canceled_count} zdarzeń.", 5000)
+            self.parent._update_modification_date()
+
+            if affected_user_date_pairs:
+                debug_print(f"DelegationCanceler: Uruchamiam odświeżanie dla {len(affected_user_date_pairs)} par.")
+                self.parent.data_provider.invalidate_complete_cache_for_pairs(affected_user_date_pairs)
+
+                # Przywróć stan widoku, aby zaznaczenie było poprawne
+                if hasattr(self.parent, '_state_to_restore') and self.parent._state_to_restore:
+                    self.parent._restore_view_state(self.parent._state_to_restore)
+
+                # Odśwież tabelę zdarzeń na podstawie aktualnego zaznaczenia
+                self.parent.on_selection_changed()
+        else:
+            QMessageBox.warning(self.parent, "Brak zmian", "Nie udało się odwołać żadnej delegacji.")
+
+        self.thread = None
+
+    def _on_error(self, error_message):
+        self.progress_dialog.close()
+        QMessageBox.critical(self.parent, "Błąd krytyczny",
+                             f"Wystąpił błąd podczas odwoływania delegacji:\n{error_message}")
+        self.thread = None
+
+
+class LocationExceptionManager:
+    """Klasa zarządzająca operacjami na wyjątkach lokalizacyjnych w tle."""
+
+    def __init__(self, parent_window):
+        self.parent = parent_window
+        self.thread = None
+        self.on_finish_callback = None
+
+    def start_operations(self, operations: list, on_finish: callable = None):
+        if not operations:
+            return
+
+        self.on_finish_callback = on_finish
+
+        self.progress_dialog = QProgressDialog("Przetwarzanie wyjątków...", "Anuluj", 0, len(operations),
+                                               self.parent)
+        self.progress_dialog.setWindowModality(Qt.WindowModal)
+        self.progress_dialog.setWindowTitle("Przetwarzanie")
+
+        self.thread = LocationExceptionThread(operations)
+        self.thread.progress_updated.connect(self.progress_dialog.setValue)
+        self.thread.finished.connect(self._on_finished)
+        self.thread.error_occurred.connect(self._on_error)
+        self.progress_dialog.canceled.connect(self.thread.cancel)
+
+        self.thread.start()
+        self.progress_dialog.open()
+
+    def _on_finished(self, success, errors):
+        self.progress_dialog.close()
+
+        if errors:
+            QMessageBox.warning(self.parent, "Wystąpiły błędy",
+                                "Nie wszystkie operacje zakończyły się sukcesem:\n\n" + "\n".join(errors))
+
+        if self.on_finish_callback:
+            self.on_finish_callback()
+
+        self.thread = None
+        self.on_finish_callback = None
+
+    def _on_error(self, error_message):
+        self.progress_dialog.close()
+        QMessageBox.critical(self.parent, "Błąd krytyczny",
+                             f"Wystąpił błąd podczas przetwarzania wyjątków:\n{error_message}")
+        self.thread = None
