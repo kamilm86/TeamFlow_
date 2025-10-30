@@ -47,6 +47,7 @@ class DatabaseConnector:
 
         raise ConnectionError(f"Nie udało się nawiązać połączenia z bazą danych przy użyciu żadnego z podanych sterowników: {drivers_str}. Ostatni błąd: {last_error}")
 
+
 def get_modifier_id():
     username = getpass.getuser()
     try:
