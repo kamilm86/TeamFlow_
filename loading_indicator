@@ -1,0 +1,109 @@
+# -*- coding: utf-8 -*-
+
+from PySide6.QtWidgets import QWidget, QLabel, QVBoxLayout
+from PySide6.QtCore import Qt, QTimer, QPropertyAnimation, QEasingCurve, Property, QRectF, QPoint
+from PySide6.QtGui import QPainter, QColor, QBrush, QFont
+
+
+class ModernLoadingIndicator(QWidget):
+    """
+    Nowoczesny, subtelny wskaźnik ładowania w formie animowanego paska.
+    Nie wymaga dodatkowych grafik.
+    """
+
+    def __init__(self, parent=None, text="Ładowanie..."):
+        super().__init__(parent)
+        # Ustawienie jako półprzezroczysty overlay
+        self.setWindowFlags(Qt.FramelessWindowHint | Qt.ToolTip)
+        self.setAttribute(Qt.WA_TranslucentBackground)
+        self.setAttribute(Qt.WA_ShowWithoutActivating)
+
+        self._text = text
+        self._bar_position = 0.0
+
+        # Animacja dla płynnego ruchu paska
+        self.animation = QPropertyAnimation(self, b"barPosition")
+        self.animation.setDuration(1500)
+        self.animation.setStartValue(0.0)
+        self.animation.setEndValue(1.0)
+        self.animation.setLoopCount(-1)  # Nieskończona pętla
+        self.animation.setEasingCurve(QEasingCurve.InOutCubic)
+
+        # Ustawienia wyglądu
+        self.background_color = QColor(0, 0, 0, 160)
+        self.bar_color = QColor("#3498db")  # Jasnoniebieski
+        self.text_color = QColor("white")
+        self.bar_height = 4
+        self.bar_width_factor = 0.3  # Szerokość paska jako ułamek szerokości widgetu
+
+        self.setFixedSize(300, 80)
+
+    @Property(float)
+    def barPosition(self):
+        return self._bar_position
+
+    @barPosition.setter
+    def barPosition(self, value):
+        self._bar_position = value
+        self.update()  # Przerysuj widget przy każdej zmianie pozycji
+
+    def setText(self, text: str):
+        """Ustawia tekst wyświetlany na wskaźniku."""
+        self._text = text
+        self.update()
+
+    def paintEvent(self, event):
+        """Rysuje tło, tekst i animowany pasek."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        # Rysuj zaokrąglone tło
+        painter.setBrush(QBrush(self.background_color))
+        painter.setPen(Qt.NoPen)
+        painter.drawRoundedRect(self.rect(), 10, 10)
+
+        # Rysuj tekst
+        font = QFont()
+        font.setPointSize(11)
+        painter.setFont(font)
+        painter.setPen(self.text_color)
+        painter.drawText(self.rect(), Qt.AlignCenter, self._text)
+
+        # Rysuj animowany pasek na dole
+        painter.setBrush(QBrush(self.bar_color))
+        
+        total_width = self.width()
+        bar_width = total_width * self.bar_width_factor
+        
+        # Oblicz pozycję paska na podstawie animacji
+        # Pasek przesuwa się od lewej do prawej i z powrotem
+        x_pos = self._bar_position * (total_width - bar_width)
+
+        bar_rect = QRectF(x_pos, self.height() - self.bar_height - 5, bar_width, self.bar_height)
+        painter.drawRoundedRect(bar_rect, self.bar_height / 2, self.bar_height / 2)
+
+    def showEvent(self, event):
+        """Uruchamia animację i centruje widget względem rodzica na ekranie."""
+        super().showEvent(event)
+        parent = self.parentWidget()
+        if parent:
+            # Pobierz geometrię rodzica (globalne współrzędne ekranu)
+            parent_geometry = parent.geometry()
+            # Pobierz rozmiar wskaźnika
+            indicator_size = self.size()
+
+            # Oblicz punkt lewego górnego rogu wskaźnika, aby jego środek
+            # pokrywał się ze środkiem rodzica
+            center_point = parent_geometry.center()
+            top_left_x = center_point.x() - indicator_size.width() / 2
+            top_left_y = center_point.y() - indicator_size.height() / 2
+
+            # Przesuń wskaźnik do obliczonej pozycji
+            self.move(int(top_left_x), int(top_left_y))
+
+        self.animation.start()
+
+    def hideEvent(self, event):
+        """Zatrzymuje animację, gdy widget jest ukrywany."""
+        super().hideEvent(event)
+        self.animation.stop()
