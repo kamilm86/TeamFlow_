@@ -98,6 +98,11 @@ class ColumnDefinitions:
         'system_czasu_pracy': ColumnDefinition(
             id='system_czasu_pracy', name='System Pracy', data_type=DataType.STRING,
             default_value='', description='System Pracy', width=120, selectable_in_ui=True
+        ),
+        'rka': ColumnDefinition(
+            id='rka', name='Rka', data_type=DataType.STRING,  # Załóżmy, że kolumna w bazie to 'Rka'
+            default_value='', description='NumerRekrutacji', width=50,  # Dostosuj szerokość
+            required=False, selectable_in_ui=True  # Czy ma być wybieralna w tabeli?
         )
         # ,
         # 'data_modyfikacji': ColumnDefinition(
