@@ -1,77 +1,65 @@
 # preparation_thread.py
 
 from PySide6.QtCore import QThread, Signal, QMutex, QMutexLocker
-from db_connector import DatabaseConnector
-from symbol_parser import parse_symbol, build_symbol
 from debug_utils import log_error
 
 
 class PreparationThread(QThread):
     """
-    Wątek roboczy do przygotowywania listy zmian w tle.
+    Wątek roboczy do asynchronicznego ładowania i przygotowywania danych.
     """
     progress_updated = Signal(int)
-    preparation_finished = Signal(list)
+    preparation_finished = Signal(object) # Zmieniono na obiekt, aby przenosić słownik z danymi
     error_occurred = Signal(str)
 
-    def __init__(self, main_window, cells_to_modify, parent=None):
+    def __init__(self, data_provider, year, month, grupa, funkcja, parent=None):
         super().__init__(parent)
-        self.main_window = main_window
-        self.cells_to_modify = cells_to_modify
+        self.data_provider = data_provider
+        self.year = year
+        self.month = month
+        self.grupa = grupa
+        self.funkcja = funkcja
         self.mutex = QMutex()
         self._is_cancelled = False
 
     def run(self):
-        change_requests = []
-        conn = None
+        """Główna metoda wątku ładującego dane."""
         try:
-            conn = DatabaseConnector.get_connection()
-            cursor = conn.cursor()
-            total_cells = len(self.cells_to_modify)
+            if self.is_cancelled(): return
 
-            for i, cell_data in enumerate(self.cells_to_modify):
-                if self.is_cancelled():
-                    break
+            # Krok 1: Pobierz kontener z danymi bazowymi
+            container = self.data_provider._get_or_load_monthly_data(
+                self.year, self.month, self.grupa, self.funkcja, use_cache=False
+            )
 
-                permissions = self.main_window._get_permission_for_cell(cell_data)
-                if not permissions['can_edit_symbol']:
-                    continue
+            if self.is_cancelled(): return
 
-                parsed = parse_symbol(cell_data.get('symbol', ''))
-                final_location = parsed.get('location') or self.main_window.determine_correct_location(cell_data,
-                                                                                                       cursor=cursor)
+            if not container:
+                error_msg = f"Nie udało się załadować kontenera danych dla {self.year}-{self.month}"
+                self.error_occurred.emit(error_msg)
+                return
 
-                new_symbol = build_symbol(
-                    location=final_location,
-                    start_hour=parsed.get('start_hour'),
-                    work_hours=parsed.get('work_hours'),
-                    special_symbol=None
-                )
+            # Krok 2: Pobierz przetworzone dane z nałożonymi ikonami
+            processed_data_with_icons = self.data_provider.get_processed_data(
+                self.year, self.month, self.grupa, self.funkcja
+            )
 
-                user_id = cell_data.get('uzytkownik_id')
-                date_str = cell_data.get('date_str')
-                nr_kadrowy = cell_data.get('nr_kadrowy')
-                year, month, _ = date_str.split('-')
+            if self.is_cancelled(): return
 
-                change_requests.append({
-                    'nr_kadrowy': nr_kadrowy, 'rok': int(year), 'miesiac': int(month),
-                    'data': date_str, 'symbol': new_symbol, 'user_id': user_id,
-                    'user_name': cell_data.get('uzytkownik_dane', '')
-                })
+            result_data = {
+                'schedule_data': container.schedule_data,
+                'events_data': container.events_data,
+                'processed_data': processed_data_with_icons,
+                'year': self.year,
+                'month': self.month
+            }
 
-                self.progress_updated.emit(i + 1)
-
-            # Emituj sygnał tylko, jeśli operacja nie została anulowana
-            if not self.is_cancelled():
-                self.preparation_finished.emit(change_requests)
+            self.preparation_finished.emit(result_data)
 
         except Exception as e:
-            log_error(f"Krytyczny błąd w wątku przygotowawczym: {e}", exception=e)
+            log_error(f"Krytyczny błąd w wątku ładowania danych: {e}", exception=e)
             if not self.is_cancelled():
                 self.error_occurred.emit(str(e))
-        finally:
-            if conn:
-                conn.close()
 
     def cancel(self):
         """Metoda do bezpiecznego anulowania wątku."""
