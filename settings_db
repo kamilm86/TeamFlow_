@@ -50,7 +50,7 @@ class SettingsDatabase:
             'show_schedule_comment': False, 'import_grupa': 3, 'import_funkcja': 1,
             'is_maximized': True, 'window_size': (1600, 800),
             'column_widths': {}, 'last_filters': {},  'sort_preferences': [],
-            'outlook_template_path': ''
+            'outlook_template_path': '', 'saved_filters': {}
         }
 
         try:
