@@ -191,26 +191,33 @@ class LocationExceptionDialog(QDialog):
         selected_items = self.table.selectedItems()
         if not selected_items: return
         exception_data = selected_items[0].data(Qt.UserRole)
-        reply = show_confirmation_dialog(self, "Potwierdzenie usunięcia",
-                                         f"Czy na pewno chcesz usunąć wyjątek ID: {exception_data['Id']}?",
+        reply = show_confirmation_dialog(self, "Potwierdzenie podziału",
+                                         f"Czy na pewno chcesz podzielić ten wpis (ID: {exception_data['Id']}) na pojedyncze dni?",
                                          default_button=QMessageBox.No)
         if reply == QMessageBox.No: return
-        _, modyfikujacy_id, _, _, _, _ = get_modifier_id()
+
+        # --- POCZĄTEK POPRAWKI: Użycie asynchronicznego menedżera do wszystkich operacji ---
+        modyfikujacy_id, _, _, _, _, _ = get_modifier_id()
+        params_list = []
+
+        # Krok 1: Dodaj operację usunięcia starego wpisu do listy
         delete_params = (None, modyfikujacy_id, None, None, None, None, 3, exception_data['Id'])
+        params_list.append(delete_params)
 
-        # Usunięcie oryginalnego wpisu
-        self.parent_widget.location_exception_manager.start_operations([delete_params])
+        # Krok 2: Przygotuj operacje dodania nowych, jednodniowych wpisów
+        date_from_obj = exception_data.get('DataOd', exception_data.get('Dataod'))
+        date_to_obj = exception_data.get('DataDo', exception_data.get('Datado'))
 
-        errors = []
-        current_date = QDate(exception_data['Dataod'])
-        end_date = QDate(exception_data['Datado'])
+        if not date_from_obj or not date_to_obj:
+            QMessageBox.critical(self, "Błąd danych", "Nie można odczytać dat z zaznaczonego rekordu.")
+            return
+        current_date = QDate(date_from_obj)
+        end_date = QDate(date_to_obj)
 
-        # --- ZMIANA: Tworzenie nowego powodu ---
         original_reason = exception_data.get('Powod', '')
         split_note = f"[Podzielono z ID: {exception_data['Id']}]"
         new_reason = f"{split_note} {original_reason}".strip()[:1000]
 
-        params_list = []
         while current_date <= end_date:
             date_str = current_date.toString("yyyy-MM-dd")
             add_params = (
@@ -218,9 +225,10 @@ class LocationExceptionDialog(QDialog):
             params_list.append(add_params)
             current_date = current_date.addDays(1)
 
-        # Wywołanie operacji wsadowej
+        # Krok 3: Wykonaj wszystkie operacje (usunięcie + dodanie) asynchronicznie
         if params_list:
             self.parent_widget.location_exception_manager.start_operations(params_list, self._on_operation_finished)
+        # --- KONIEC POPRAWKI ---
 
 
     def apply_styles(self):
@@ -235,7 +243,7 @@ class LocationExceptionDialog(QDialog):
         exceptions = self.parent_widget._get_location_exceptions(self.user_id, self.selection_range['start'],
                                                                  self.selection_range['end'])
         self.table.setRowCount(len(exceptions))
-        location_map = {1: 'Home Office', 3: 'SBC', 2: 'mPrzystanek'}
+        location_map = {1: 'Home Office', 3: 'SBC', 2: 'Przystanek'}
 
         for row, exc in enumerate(exceptions):
             id_item = QTableWidgetItem(str(exc.get('Id', '')))
@@ -279,7 +287,7 @@ class LocationExceptionDialog(QDialog):
                 params_list = []
                 current_date = data['date_from']
                 end_date = data['date_to']
-                _, modyfikujacy_id, _, _, _, _ = get_modifier_id()
+                modyfikujacy_id, _, _, _, _, _ = get_modifier_id()
 
                 while current_date <= end_date:
                     date_str = current_date.toString("yyyy-MM-dd")
@@ -307,7 +315,7 @@ class LocationExceptionDialog(QDialog):
         if dialog.exec() == QDialog.Accepted:
             data = dialog.get_data()
             if data:
-                _, modyfikujacy_id, _, _, _, _ = get_modifier_id()
+                modyfikujacy_id, _, _, _, _, _ = get_modifier_id()
                 # POPRAWKA: Użycie prawidłowych kluczy ('date_from', 'date_to') i formatowanie dat do stringów
                 params = (
                     self.user_id, modyfikujacy_id,
