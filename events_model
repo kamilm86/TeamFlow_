@@ -26,6 +26,13 @@ class EventsTableModel(QAbstractTableModel):
             "Czas od", "Czas do", "Status", "Data Modyfikacji", "Akcje"
         ]
         self._column_count = len(self._column_headers)
+        self._column_to_field = {
+            0: 'id', 1: 'type', 2: 'topic', 3: 'name', 4: 'UzytkownikDane',
+            5: 'date_key', 6: 'time_from', 7: 'time_to', 8: 'status', 9: 'DataModyfikacji'
+        }
+        self._display_transformers = {
+            0: str  # ID powinno być stringiem
+        }
         self._is_dark_theme = False
 
     def rowCount(self, parent=QModelIndex()):
@@ -72,20 +79,14 @@ class EventsTableModel(QAbstractTableModel):
 
     def _get_display_data(self, event, col):
         """Zwraca dane do wyświetlenia dla danej kolumny."""
-        if col == 0: return str(event.get('id', ''))
-        elif col == 1: return event.get('type', '')
-        elif col == 2: return event.get('topic', '')
-        elif col == 3: return event.get('name', '')
-        elif col == 4: return event.get('UzytkownikDane', '')
-        elif col == 5: return event.get('date_key', '') # Format RRRR-MM-DD
-        elif col == 6: return event.get('time_from', '')
-        elif col == 7: return event.get('time_to', '')
-        elif col == 8: return event.get('status', '')
-        elif col == 9: return event.get('DataModyfikacji', '')
-        elif col == 10: return "" # Puste dla delegata przycisku
-        return ""
+        field_name = self._column_to_field.get(col)
+        if not field_name:
+            return ""  # Dla kolumny "Akcje" lub nieznanej
+        value = event.get(field_name, '')
+        transformer = self._display_transformers.get(col)
+        return transformer(value) if transformer else value
 
-   
+
     def set_theme(self, is_dark_theme):
         """Ustawia motyw (jasny/ciemny)"""
         if self._is_dark_theme != is_dark_theme:
@@ -110,11 +111,7 @@ class EventsTableModel(QAbstractTableModel):
     def sort(self, column, order):
         """Sortuje dane modelu wedle wskazanej kolumny."""
         self.layoutAboutToBeChanged.emit()
-        key_map = {
-            0: 'id', 1: 'type', 2: 'topic', 3: 'name', 4: 'UzytkownikDane',
-            5: 'date_key', 6: 'time_from', 7: 'time_to', 8: 'status', 9: 'DataModyfikacji'
-        }
-        sort_field = key_map.get(column)
+        sort_field = self._column_to_field.get(column)
         if not sort_field:
             self.layoutChanged.emit()
             return
@@ -156,11 +153,11 @@ class EventsTableModel(QAbstractTableModel):
             filtered_data = []
 
             # Klucze filtrowania
-            date_from = filter_params.get('date_from')
-            date_to = filter_params.get('date_to')
-            topic = filter_params.get('topic')
-            name = filter_params.get('name')
-            allowed_types = filter_params.get('allowed_types')
+            date_from_filter = filter_params.get('date_from')
+            date_to_filter = filter_params.get('date_to')
+            topic_filter = filter_params.get('topic', '').lower()
+            name_filter = filter_params.get('name', '').lower()
+            allowed_types_filter = filter_params.get('allowed_types')
 
             # Użyj cache'a filtrowania jeśli istnieje i parametry się zgadzają
             cache_key = self._generate_filter_cache_key(filter_params)
@@ -169,20 +166,26 @@ class EventsTableModel(QAbstractTableModel):
             else:
                 # Filtruj wszystkie dane według kryteriów
                 for event in self._data:
+                    event_type = event.get('type')
+                    event_date_str = event.get('date_key', '')
+                    event_topic = str(event.get('topic', '')).lower()
+                    event_name = str(event.get('name', '')).lower()
+
                     # Najpierw sprawdź typ zdarzenia - najszybsze kryterium
-                    if allowed_types and event.get('type') not in allowed_types:
+                    if allowed_types_filter and event_type not in allowed_types_filter:
                         continue
 
                     # Następnie sprawdź datę - kolejne najszybsze kryterium
-                    event_date = self._standardize_date(event.get('date_key', ''))
-                    if (date_from and event_date < date_from) or (date_to and event_date > date_to):
+                    event_date = self._standardize_date(event_date_str)
+                    if (date_from_filter and event_date < date_from_filter) or \
+                       (date_to_filter and event_date > date_to_filter):
                         continue
 
                     # Na końcu sprawdź kryteria tekstowe - najwolniejsze
-                    if topic and topic.lower() not in str(event.get('topic', '')).lower():
+                    if topic_filter and topic_filter not in event_topic:
                         continue
 
-                    if name and name.lower() not in str(event.get('name', '')).lower():
+                    if name_filter and name_filter not in event_name:
                         continue
 
                     # Jeśli wszystkie kryteria są spełnione, dodaj zdarzenie do przefiltrowanych danych
