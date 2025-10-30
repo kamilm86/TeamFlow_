@@ -1,7 +1,7 @@
 # schedule_change_delegate.py
 from PySide6.QtWidgets import (QStyledItemDelegate, QApplication, QStyle)
-from PySide6.QtCore import Qt, Signal, QEvent, QDate
-from PySide6.QtGui import QColor, QPainter
+from PySide6.QtCore import Qt, Signal, QEvent, QDate, QPoint
+from PySide6.QtGui import QColor, QPainter, QCursor
 
 from app_settings import app_settings
 from symbol_parser import parse_symbol
@@ -200,14 +200,18 @@ class ScheduleChangeDelegate(QStyledItemDelegate):
     # --- Dialogi pomocnicze ---
 
     def show_location_dialog(self, index):
-        dialog = LocationSelectionDialog(self.main_dialog, current_theme=self.main_dialog.determined_theme)
+        dialog = LocationSelectionDialog(parent=None, current_theme=self.main_dialog.determined_theme)
+        dialog.move(QCursor.pos())
         if dialog.exec():
             index.model().setData(index, dialog.get_selected_location(), Qt.EditRole)
 
     def show_digit_dialog(self, index, is_hour):
         title = "Wybierz godzinę rozp." if is_hour else "Wybierz liczbę godzin"
         values = list(range(24)) if is_hour else list(range(1, 14))
-        dialog = DigitSelectionDialog(self.main_dialog, title, values, current_theme=self.main_dialog.determined_theme)
+        dialog = DigitSelectionDialog(parent=None, title=title, values=values,
+                                      current_theme=self.main_dialog.determined_theme)
+        dialog.move(QCursor.pos())
+
         if dialog.exec():
             index.model().setData(index, dialog.get_selected_value(), Qt.EditRole)
 
