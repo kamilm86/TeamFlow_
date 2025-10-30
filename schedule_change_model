@@ -11,7 +11,7 @@ class ScheduleChangeModel(QAbstractTableModel):
     # Definicja kolumn dla łatwiejszego zarządzania
     (COL_DATE, COL_DAY_OF_WEEK, COL_USER, COL_SYMBOL, COL_LOCATION,
      COL_START_HOUR, COL_WORK_HOURS, COL_ACTIONS, COL_STATUS) = range(9)
-    COLUMN_COUNT = 9
+    COLUMN_COUNT = 9  # Kolumny od 0 do 8, czyli 9 kolumn
 
     def __init__(self, data, parent=None):
         super().__init__(parent)
