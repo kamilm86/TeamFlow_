@@ -17,6 +17,7 @@ from db_connector import get_modifier_id
 from symbol_parser import parse_symbol, build_symbol
 from schedule_change_model import ScheduleChangeModel
 from schedule_change_delegate import ScheduleChangeDelegate
+from schedule_change_processor import ChangeType
 from ui_utils import show_confirmation_dialog
 from ui_components import DigitSelectionDialog
 
@@ -672,11 +673,11 @@ class ScheduleChangeDialog(QDialog):
         self.apply_location_check.toggled.connect(self._update_apply_all_button_state)
         self.apply_time_check.toggled.connect(self._update_apply_all_button_state)
         self.apply_hours_check.toggled.connect(self._update_apply_all_button_state)
-        self.all_time_button.clicked.connect(self.show_digit_selection)
-        self.all_hours_button.clicked.connect(self.show_digit_selection)
+        self.all_time_button.clicked.connect(self.show_digit_selection)  # Przywrócenie połączenia
+        self.all_hours_button.clicked.connect(self.show_digit_selection)  # Przywrócenie połączenia
         self.apply_all_button.clicked.connect(self._apply_all_changes)
         self._update_apply_all_button_state()  # Ustaw stan początkowy
-
+        
         return group
 
     def _update_apply_all_button_state(self):
@@ -688,17 +689,51 @@ class ScheduleChangeDialog(QDialog):
         )
         self.apply_all_button.setEnabled(is_any_checked)
 
+    def on_table_clicked(self, index):
+        """
+        NOWA METODA: Obsługuje kliknięcia w tabelę, aby otworzyć odpowiedni
+        dialog edycji (lokalizacji, godziny, itp.).
+        """
+        if not index.isValid():
+            return
+
+        col = index.column()
+        model = index.model()
+        row_data = model.data(index, Qt.UserRole)
+        permissions = self.main_window._get_permission_for_cell(row_data)
+
+        if col == model.COL_LOCATION and self.delegate._is_location_editable(row_data, permissions):
+            self.delegate.show_location_dialog(index)
+        elif col in [model.COL_START_HOUR, model.COL_WORK_HOURS] and self.delegate._are_hours_editable(row_data, permissions):
+            is_hour = (col == model.COL_START_HOUR)
+            self.delegate.show_digit_dialog(index, is_hour=is_hour)
+
     def show_digit_selection(self):
+        # --- POCZĄTEK OSTATECZNEGO TESTU LOGOWANIA ---
+        # --- KONIEC OSTATECZNEGO TESTU LOGOWANIA ---
+        # Używamy print(), aby ominąć system logowania i mieć pewność, że zobaczymy ten komunikat.
+        print("--- TEST: Funkcja 'show_digit_selection' została wywołana. ---")
         target_button = self.sender()
         if not target_button: return
         field_type = target_button.property("field_type")
         is_hour = (field_type == "hour")
         values = list(range(24)) if is_hour else list(range(1, 14))
         title = "Wybierz godzinę rozp." if is_hour else "Wybierz liczbę godzin"
-        dialog = DigitSelectionDialog(self, title, values, current_theme=self.determined_theme)
+
+        # --- POCZĄTEK OSTATECZNEJ POPRAWKI ---
+        # Tworzymy dialog bez rodzica (parent=None), aby mieć pełną kontrolę nad jego pozycją.
+        dialog = DigitSelectionDialog(parent=None, title=title, values=values, current_theme=self.determined_theme)
+
+        from PySide6.QtGui import QCursor
+        cursor_pos = QCursor.pos()
+        print(f"--- TEST: Pozycja kursora (x, y): {cursor_pos.x()}, {cursor_pos.y()} ---")
+
+        # Przesuwamy dialog do pozycji kursora
+        dialog.move(cursor_pos)
+
         if dialog.exec():
             selected_value = dialog.get_selected_value()
-            target_button.setText(str(selected_value) if selected_value is not None else "")
+            target_button.setText(str(selected_value) if selected_value is not None else "Wybierz")
 
     def _update_row_data_from_global_settings(self, visual_row: int):
         """Aktualizuje dane w modelu dla danego wiersza na podstawie globalnych ustawień."""
@@ -735,11 +770,14 @@ class ScheduleChangeDialog(QDialog):
     def apply_change_by_index(self, visual_row: int):
         row_data = self.model.get_row_data(visual_row)
         if not row_data: return
-        change_request = self._prepare_change_request_for_row(row_data, visual_row)
-        if not change_request: return
-        if self._handle_location_logic_for_request(change_request):
+        change_request_tuple = self._prepare_change_request_for_row(row_data, visual_row) # Zmieniono nazwę zmiennej
+        if not change_request_tuple: return
+
+        # --- ZMIANA: Przekazujemy krotkę do _handle_location_logic_for_request ---
+        if self._handle_location_logic_for_request(change_request_tuple):
             self.model.update_status(visual_row, 'pending')
-            self.changes_requested.emit([change_request])
+            self.changes_requested.emit([change_request_tuple]) # Emitujemy listę z krotką
+        # --- KONIEC ZMIANY ---
 
     def _apply_all_changes(self):
         if not any([self.apply_location_check.isChecked(), self.apply_time_check.isChecked(),
@@ -751,20 +789,23 @@ class ScheduleChangeDialog(QDialog):
                                          default_button=QMessageBox.No)
         if reply == QMessageBox.No: return
 
-        all_change_requests = [];
-        self.reason_cache = {}  # Zerowanie cache dla nowej operacji
+        all_change_requests_tuples = []  # Zmieniono nazwę listy
+        self.reason_cache = {}
 
         for row in range(self.model.rowCount()):
             self._update_row_data_from_global_settings(row)
             row_data = self.model.get_row_data(row)
-            change_request = self._prepare_change_request_for_row(row_data, row)
-            if not change_request: continue
-            if self._handle_location_logic_for_request(change_request):
-                self.model.update_status(row, 'pending')
-                all_change_requests.append(change_request)
+            change_request_tuple = self._prepare_change_request_for_row(row_data, row)  # Zmieniono nazwę zmiennej
+            if not change_request_tuple: continue
 
-        if all_change_requests:
-            self.changes_requested.emit(all_change_requests)
+            # --- ZMIANA: Przekazujemy krotkę do _handle_location_logic_for_request ---
+            if self._handle_location_logic_for_request(change_request_tuple):
+                self.model.update_status(row, 'pending')
+                all_change_requests_tuples.append(change_request_tuple)  # Dodajemy krotkę
+            # --- KONIEC ZMIANY ---
+
+        if all_change_requests_tuples:
+            self.changes_requested.emit(all_change_requests_tuples)  # Emitujemy listę krotek
         else:
             QMessageBox.information(self, "Informacja", "Nie wykryto żadnych zmian do zatwierdzenia.")
 
@@ -774,49 +815,81 @@ class ScheduleChangeDialog(QDialog):
                                          default_button=QMessageBox.Yes)
         if reply == QMessageBox.No: return
 
-        all_change_requests = [];
-        self.reason_cache = {}  # Zerowanie cache dla nowej operacji
+        all_change_requests_tuples = []  # Zmieniono nazwę listy
+        self.reason_cache = {}
 
         for row in range(self.model.rowCount()):
             row_data = self.model.get_row_data(row)
-            change_request = self._prepare_change_request_for_row(row_data, row)
-            if not change_request: continue
-            if self._handle_location_logic_for_request(change_request):
-                self.model.update_status(row, 'pending')
-                all_change_requests.append(change_request)
+            change_request_tuple = self._prepare_change_request_for_row(row_data, row)  # Zmieniono nazwę zmiennej
+            if not change_request_tuple: continue
 
-        if all_change_requests:
-            self.changes_requested.emit(all_change_requests)
+            # --- ZMIANA: Przekazujemy krotkę do _handle_location_logic_for_request ---
+            if self._handle_location_logic_for_request(change_request_tuple):
+                self.model.update_status(row, 'pending')
+                all_change_requests_tuples.append(change_request_tuple)  # Dodajemy krotkę
+            # --- KONIEC ZMIANY ---
+
+        if all_change_requests_tuples:
+            self.changes_requested.emit(all_change_requests_tuples)  # Emitujemy listę krotek
         else:
             QMessageBox.information(self, "Informacja", "Nie wykryto żadnych zmian do zatwierdzenia.")
 
-    def _handle_location_logic_for_request(self, change_request):
-        cell_data, visual_row = change_request['cell_data'], change_request['visual_row']
-        original_loc = parse_symbol(cell_data.get('symbol', '')).get('location') or cell_data.get(
-            'lokalizacja_domyslna',)
-        new_loc = change_request['new_location_code']
-        if original_loc != new_loc:
+    def _handle_location_logic_for_request(self, change_request_tuple): # Zmieniono nazwę argumentu
+        """Obsługuje logikę zmiany lokalizacji dla przygotowanej krotki żądania."""
+        if not change_request_tuple: return False # Dodano sprawdzenie
+
+        change_type, cell_data, new_symbol = change_request_tuple # Rozpakowanie krotki
+        visual_row = -1 # Musimy znaleźć wiersz na nowo lub przekazać go inaczej
+
+        # Znajdź visual_row na podstawie user_id i date_str
+        target_user_id = cell_data.get('uzytkownik_id')
+        target_date_str = cell_data.get('date_str')
+        for r in range(self.model.rowCount()):
+            rd = self.model.get_row_data(r)
+            if rd and rd.get('uzytkownik_id') == target_user_id and rd.get('date_str') == target_date_str:
+                visual_row = r
+                break
+
+        if visual_row == -1:
+            log_error(f"Nie znaleziono wiersza dla {target_user_id} / {target_date_str} w _handle_location_logic")
+            return False # Nie znaleziono wiersza
+
+        original_loc = parse_symbol(cell_data.get('symbol', '')).get('location') or cell_data.get('lokalizacja_domyslna')
+        # Pobierz nową lokalizację z nowego symbolu
+        new_loc = parse_symbol(new_symbol).get('location')
+
+        # --- POPRAWKA: Użyj `new_loc`, jeśli jest dostępny, inaczej `original_loc` ---
+        # To obsługuje przypadki, gdy `new_symbol` nie ma lokalizacji (np. absencja)
+        loc_code_to_handle = new_loc if new_loc is not None else original_loc
+        # --- KONIEC POPRAWKI ---
+
+
+        if original_loc != loc_code_to_handle:
             user_id, user_name = cell_data.get('uzytkownik_id'), cell_data.get('uzytkownik_dane', '')
             reason = None
-            if new_loc != cell_data.get('lokalizacja_domyslna'):
+            if loc_code_to_handle != cell_data.get('lokalizacja_domyslna'):
                 if user_id not in self.reason_cache:
                     reason_dialog = ReasonDialog(self, user_name=user_name)
                     if reason_dialog.exec() == QDialog.Accepted:
                         self.reason_cache[user_id] = reason_dialog.getReason()
                     else:
-                        if len(self.reason_cache) > 0: QMessageBox.information(self, "Anulowano",
-                                                                               "Operacja masowa została przerwana.")
+                        if len(self.reason_cache) > 0: QMessageBox.information(self, "Anulowano", "Operacja masowa została przerwana.")
                         return False
                 reason = self.reason_cache.get(user_id)
-            result = self.main_window._handle_location_change_logic(cell_data, new_loc, reason)
-            if not result.get('success'): self.model.update_status(visual_row, 'failure',
-                                                                   result.get('message')); return False
+
+            # --- POPRAWKA: Przekaż `loc_code_to_handle` do logiki ---
+            result = self.main_window._handle_location_change_logic(cell_data, loc_code_to_handle, reason)
+            # --- KONIEC POPRAWKI ---
+            if not result.get('success'):
+                self.model.update_status(visual_row, 'failure', result.get('message'))
+                return False
         return True
 
-    def _prepare_change_request_for_row(self, row_data: dict, visual_row: int) -> dict | None:
+    def _prepare_change_request_for_row(self, row_data: dict, visual_row: int) -> tuple | None:
         """
-        Sprawdza, czy nastąpiła zmiana i przygotowuje słownik z żądaniem.
+        Sprawdza, czy nastąpiła zmiana i przygotowuje krotkę z żądaniem.
         Zawiera ostateczną walidację, aby zapobiec zapisowi niekompletnych danych.
+        Zwraca krotkę (ChangeType, cell_data, new_symbol) lub None.
         """
         try:
             parsed = parse_symbol(row_data.get('symbol', ''))
@@ -832,11 +905,8 @@ class ScheduleChangeDialog(QDialog):
             previous_start = parsed.get('start_hour')
             previous_hours = parsed.get('work_hours')
 
-            # <<< KRYTYCZNA POPRAWKA: Obsługa pustego pola lokalizacji >>>
-            # Jeśli z UI nie przychodzi żadna nowa lokalizacja (pole jest puste),
-            # traktujemy to jako brak zmiany, używając do porównania poprzedniej wartości.
+            # Użyj poprzedniej lokalizacji, jeśli nowa jest None (puste pole)
             new_loc = previous_loc if new_loc_from_ui is None else new_loc_from_ui
-            # --- KONIEC POPRAWKI ---
 
             # Ostateczna walidacja: zmiana robocza musi mieć godzinę rozpoczęcia
             if not special_symbol and new_start is None:
@@ -859,12 +929,24 @@ class ScheduleChangeDialog(QDialog):
                 special_symbol=special_symbol
             )
 
-            return {
-                'cell_data': row_data, 'nr_kadrowy': row_data.get('nr_kadrowy'), 'rok': self.year,
-                'miesiac': self.month, 'data': row_data.get('date_str'), 'symbol': new_symbol,
-                'user_id': row_data.get('uzytkownik_id'), 'user_name': row_data.get('uzytkownik_dane'),
-                'visual_row': visual_row, 'new_location_code': new_loc
+            # Przygotuj cell_data tylko z niezbędnymi polami
+            # To zapobiega przekazywaniu zbędnych danych, jak status z dialogu
+            essential_cell_data = {
+                'nr_kadrowy': row_data.get('nr_kadrowy'),
+                'date_str': row_data.get('date_str'),
+                'uzytkownik_id': row_data.get('uzytkownik_id'),
+                'uzytkownik_dane': row_data.get('uzytkownik_dane'),
+                'symbol': row_data.get('symbol'),  # Oryginalny symbol
+                'etat': row_data.get('etat'),
+                'system_czasu_pracy': row_data.get('system_czasu_pracy'),
+                'lokalizacja_domyslna': row_data.get('lokalizacja_domyslna'),
+                'wydzial': row_data.get('wydzial'),
+                'rola_nazwa': row_data.get('rola_nazwa'),
+                'visual_row': visual_row  # <-- DODANY INDEKS WIERSZA Z DIALOGU
             }
+
+            return (ChangeType.APPLY_BUILT_SYMBOL, essential_cell_data, new_symbol)
+
         except Exception as e:
             self.model.update_status(visual_row, 'failure', str(e))
             log_error(f"Błąd przygotowania żądania: {e}", exception=e)
@@ -873,7 +955,7 @@ class ScheduleChangeDialog(QDialog):
     def update_status_for_row(self, visual_row: int, status: str, result: dict = None):
         message = result.get('message', '') if result else ''
         self.model.update_status(visual_row, status, message)
-        if status == 'success' and result and 'returned_symbol' in result:
+        if status == 'success':
             self.refresh_row_data(visual_row)
 
     def refresh_row_data(self, visual_row: int):
@@ -929,8 +1011,7 @@ class DigitSelectionDialog(QDialog):
     """Dialog do wyboru cyfry z siatki przycisków."""
 
     def __init__(self, parent=None, title="Wybierz wartość", values=None, current_theme="dark"):
-        super().__init__(parent)
-        self.parent_widget = parent
+        super().__init__(parent) # Przekazujemy rodzica do superkonstruktora
         self.current_theme = current_theme
         self.setWindowTitle(title)
         self.setModal(True)
@@ -942,10 +1023,7 @@ class DigitSelectionDialog(QDialog):
 
     def apply_dialog_theme(self):
         """Stosuje motyw dla dialogu DigitSelectionDialog."""
-        # --- TUTAJ BYŁ BŁĄD ---
-        actual_theme = self.current_theme  # POPRAWKA: Użyj 'self.current_theme'
-        # --- KONIEC POPRAWKI ---
-
+        actual_theme = self.current_theme
         self.setStyleSheet(AppStyles.get_dialog_style(actual_theme))
         button_style_qss = AppStyles.get_button_style(actual_theme)
 
