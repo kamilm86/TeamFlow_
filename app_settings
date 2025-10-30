@@ -2,11 +2,12 @@
 import json
 from collections import defaultdict
 from debug_utils import log_error
+from _version import __version__ as APP_VERSION
 
 class AppSettings:
     """Globalny kontener na ustawienia i logikę biznesową ładowaną z bazy danych."""
     def __init__(self):
-        self.REQUIRED_VERSION = '0.0.0'
+        self.REQUIRED_VERSION = APP_VERSION
         self.FORCE_UPDATE = False
         self.PERMISSIONS = defaultdict(set)
         self.SYMBOL_CATEGORIES = {}
