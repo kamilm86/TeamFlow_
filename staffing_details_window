@@ -569,7 +569,10 @@ class StaffingDetailsWindow(QDialog):
     Wersja przepisana na PySide6.QtCharts, bez zależności od Matplotlib i Numpy.
     """
     def __init__(self, parent, data_provider, year, month, grupa, funkcja):
-        super().__init__(parent)
+        # --- ZMIANA: Usunięcie rodzica z konstruktora, aby okno było niezależne ---
+        super().__init__(None)
+        # --- KONIEC ZMIANY ---
+
         self.parent_widget = parent
         self.data_provider = data_provider
         self._year = year
@@ -580,8 +583,8 @@ class StaffingDetailsWindow(QDialog):
         self.is_dark_theme = parent.is_dark_theme if hasattr(parent, 'is_dark_theme') else False
         self._filtered_schedule_data = {}
 
-        # --- NOWA ZMIANA: Dodanie przycisków minimalizacji i maksymalizacji ---
-        self.setWindowFlags(self.windowFlags() | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint)
+        # --- ZMIANA: Ustawienie okna jako niezależnego w pasku zadań ---
+        self.setWindowFlags(Qt.Window | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint)
         # --- KONIEC ZMIANY ---
 
         self.setWindowTitle(f"Szczegóły obsady i analizy dla {month:02}/{year}")
@@ -1271,10 +1274,22 @@ class StaffingDetailsWindow(QDialog):
                     final_hours = base_hours + korekta
                     if final_hours > 0:
                         for h in range(int(final_hours)):
-                            hour = (start + h) % 24
-                            schedule_matrix[hour][day_idx] += 1.0
-                            if events_map.get(user_key[3], {}).get(day, {}).get(hour, 0) > 30:
-                                events_matrix[hour][day_idx] += 1.0
+                            # --- POCZĄTEK POPRAWKI ---
+                            total_hour_offset = start + h
+                            hour = total_hour_offset % 24
+                            day_offset = total_hour_offset // 24
+                            current_day_idx = day_idx + day_offset
+
+                            # Sprawdź, czy obliczony dzień jest nadal w bieżącym miesiącu
+                            if current_day_idx >= days:
+                                continue  # Pomiń godziny, które wypadają w następnym miesiącu
+
+                            schedule_matrix[hour][current_day_idx] += 1.0
+
+                            # Sprawdź zdarzenia dla poprawnego dnia (day + day_offset)
+                            if events_map.get(user_key[3], {}).get(day + day_offset, {}).get(hour, 0) > 30:
+                                events_matrix[hour][current_day_idx] += 1.0
+                            # --- KONIEC POPRAWKI ---
 
         user_ids_in_view = {k[3] for k in schedule_data.keys()}
         for event in all_events:
@@ -1847,11 +1862,26 @@ class StaffingDetailsWindow(QDialog):
                 final_hours = base_hours + korekta if base_hours is not None else 0
 
                 if start is not None and final_hours > 0:
-                    summary_schedule[wydzial][day - 1] += final_hours
-                    lost_hours = sum(1 for h in range(int(final_hours)) if
-                                     events_map.get(user_id, {}).get(day, {}).get((start + h) % 24, 0) > 30)
-                    if lost_hours > 0:
-                        summary_events[wydzial][day - 1] += lost_hours
+                    # --- POCZĄTEK POPRAWKI ---
+                    for h in range(int(final_hours)):
+                        total_hour_offset = start + h
+                        hour = total_hour_offset % 24
+                        day_offset = total_hour_offset // 24
+                        # day jest 1-based, więc day-1 to 0-based day_idx
+                        current_day_idx = (day - 1) + day_offset
+
+                        # Sprawdź, czy obliczony dzień jest nadal w bieżącym miesiącu
+                        if current_day_idx >= self._days_in_month:
+                            continue  # Pomiń godziny z następnego miesiąca
+
+                        # 1. Dodaj JEDNĄ godzinę do grafiku na poprawny dzień
+                        summary_schedule[wydzial][current_day_idx] += 1.0
+
+                        # 2. Sprawdź zdarzenia dla poprawnego dnia (day + day_offset) i godziny
+                        current_day_for_event = day + day_offset
+                        if events_map.get(user_id, {}).get(current_day_for_event, {}).get(hour, 0) > 30:
+                            summary_events[wydzial][current_day_idx] += 1.0
+                    # --- KONIEC POPRAWKI ---
 
         # 2. Oblicz sumy dzienne dla nadgodzin
         user_to_dept = {k[3]: k[0] or "Brak" for k in schedule_data.keys()}
