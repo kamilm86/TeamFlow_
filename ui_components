@@ -10,7 +10,7 @@ class LocationSelectionDialog(QDialog):
     def __init__(self, parent=None, current_theme="dark"):
         super().__init__(parent)
         self.current_theme = current_theme
-        self.setWindowTitle("Wybierz lokalizację")
+        self.setWindowTitle("Lokalizacja")
         self.setModal(True)
         self.selected_location = None
         self.setup_ui()
@@ -29,14 +29,8 @@ class LocationSelectionDialog(QDialog):
         main_layout.addWidget(self.przystanek_button)
         main_layout.addWidget(self.ho_button)
 
-        self.cancel_button = QPushButton("Anuluj")
-        self.cancel_button.clicked.connect(self.reject)
-        button_layout = QHBoxLayout()
-        button_layout.addStretch()
-        button_layout.addWidget(self.cancel_button)
-        main_layout.addLayout(button_layout)
-
         self.apply_dialog_theme()
+        self.adjustSize()
 
     def apply_dialog_theme(self):
         self.setStyleSheet(AppStyles.get_dialog_style(self.current_theme))
@@ -44,7 +38,6 @@ class LocationSelectionDialog(QDialog):
         self.sbc_button.setStyleSheet(button_style)
         self.przystanek_button.setStyleSheet(button_style)
         self.ho_button.setStyleSheet(button_style)
-        self.cancel_button.setStyleSheet(button_style)
 
     def on_value_selected(self, location_code):
         self.selected_location = location_code
