@@ -1,12 +1,14 @@
-# location_exception_dialog.py
+# -*- coding: utf-8 -*-
 
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                                QPushButton, QTableWidget, QTableWidgetItem,
                                QHeaderView, QAbstractItemView, QDateEdit,
                                QComboBox, QLineEdit, QMessageBox, QDialogButtonBox)
 from PySide6.QtCore import Qt, QDate, Signal
-from styles import AppStyles
+from PySide6.QtGui import QCursor
 from db_connector import get_modifier_id
+from styles import AppStyles
+from ui_utils import show_confirmation_dialog
 from debug_utils import debug_print, log_error
 
 
@@ -189,17 +191,16 @@ class LocationExceptionDialog(QDialog):
         selected_items = self.table.selectedItems()
         if not selected_items: return
         exception_data = selected_items[0].data(Qt.UserRole)
-        reply = QMessageBox.question(self, "Potwierdzenie podziału",
-                                     f"Czy na pewno chcesz usunąć wpis ID: {exception_data['Id']} i zastąpić go serią wpisów jednodniowych?",
-                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+        reply = show_confirmation_dialog(self, "Potwierdzenie usunięcia",
+                                         f"Czy na pewno chcesz usunąć wyjątek ID: {exception_data['Id']}?",
+                                         default_button=QMessageBox.No)
         if reply == QMessageBox.No: return
-        _, modyfikujacy_id, _, _, _ = get_modifier_id()
+        _, modyfikujacy_id, _, _, _, _ = get_modifier_id()
         delete_params = (None, modyfikujacy_id, None, None, None, None, 3, exception_data['Id'])
-        delete_result = self.parent_widget._manage_location_exception(delete_params)
-        if not delete_result.get("success"):
-            QMessageBox.critical(self, "Błąd",
-                                 f"Nie udało się usunąć oryginalnego wpisu:\n{delete_result.get('message')}")
-            return
+
+        # Usunięcie oryginalnego wpisu
+        self.parent_widget.location_exception_manager.start_operations([delete_params])
+
         errors = []
         current_date = QDate(exception_data['Dataod'])
         end_date = QDate(exception_data['Datado'])
@@ -209,20 +210,18 @@ class LocationExceptionDialog(QDialog):
         split_note = f"[Podzielono z ID: {exception_data['Id']}]"
         new_reason = f"{split_note} {original_reason}".strip()[:1000]
 
+        params_list = []
         while current_date <= end_date:
             date_str = current_date.toString("yyyy-MM-dd")
             add_params = (
-            self.user_id, modyfikujacy_id, date_str, date_str, exception_data['Lokalizacja'], new_reason, 1, None)
-            result = self.parent_widget._manage_location_exception(add_params)
-            if not result.get("success"):
-                errors.append(f"{date_str}: {result.get('message')}")
+                self.user_id, modyfikujacy_id, date_str, date_str, exception_data['Lokalizacja'], new_reason, 1, None)
+            params_list.append(add_params)
             current_date = current_date.addDays(1)
-        if errors:
-            QMessageBox.warning(self, "Wystąpiły błędy", "Nie wszystkie dni udało się dodać:\n\n" + "\n".join(errors))
-        else:
-            QMessageBox.information(self, "Sukces", "Wpis został pomyślnie podzielony na pojedyncze dni.")
-        self.load_exceptions()
-        self.data_changed.emit()
+
+        # Wywołanie operacji wsadowej
+        if params_list:
+            self.parent_widget.location_exception_manager.start_operations(params_list, self._on_operation_finished)
+
 
     def apply_styles(self):
         theme = "dark" if self.is_dark_theme else "light"
@@ -264,6 +263,7 @@ class LocationExceptionDialog(QDialog):
     def _add_exception(self):
         """Otwiera dialog dodawania i używa logiki wsadowej do zapisu."""
         dialog = AddEditExceptionDialog(self, user_name=self.user_name, default_dates=self.selection_range)
+        dialog.move(QCursor.pos())
         if dialog.exec() == QDialog.Accepted:
             data = dialog.get_data()
             if data:
@@ -279,28 +279,20 @@ class LocationExceptionDialog(QDialog):
                 params_list = []
                 current_date = data['date_from']
                 end_date = data['date_to']
-                _, modyfikujacy_id, _, _, _ = get_modifier_id()
+                _, modyfikujacy_id, _, _, _, _ = get_modifier_id()
 
                 while current_date <= end_date:
                     date_str = current_date.toString("yyyy-MM-dd")
                     params = (
-                    self.user_id, modyfikujacy_id, date_str, date_str, data['lokalizacja'], data['powod'], 1, None)
+                        self.user_id, modyfikujacy_id, date_str, date_str, data['lokalizacja'], data['powod'], 1, None)
                     params_list.append(params)
                     current_date = current_date.addDays(1)
 
-                # Krok 2: Wywołaj nową metodę wsadową tylko JEDEN RAZ
+                # Krok 2: Wywołaj operację asynchroniczną
                 if params_list:
-                    batch_result = self.parent_widget._add_location_exception_batch(params_list)
-
-                    # Krok 3: Przetwórz wynik operacji wsadowej
-                    if not batch_result.get("success"):
-                        QMessageBox.warning(self, "Wystąpiły błędy",
-                                            "Nie wszystkie dni udało się dodać:\n\n" + "\n".join(
-                                                batch_result.get('errors', [])))
-                # --- KONIEC NOWEJ LOGIKI ---
-
-                self.load_exceptions()
-                self.data_changed.emit()
+                    self.parent_widget.location_exception_manager.start_operations(
+                        params_list, self._on_operation_finished
+                    )
 
     def _edit_exception(self):
         selected_items = self.table.selectedItems()
@@ -310,11 +302,12 @@ class LocationExceptionDialog(QDialog):
 
         exception_data = selected_items[0].data(Qt.UserRole)
         dialog = AddEditExceptionDialog(self, exception_data=exception_data, user_name=self.user_name)
+        dialog.move(QCursor.pos())
 
         if dialog.exec() == QDialog.Accepted:
             data = dialog.get_data()
             if data:
-                _, modyfikujacy_id, _, _, _ = get_modifier_id()
+                _, modyfikujacy_id, _, _, _, _ = get_modifier_id()
                 # POPRAWKA: Użycie prawidłowych kluczy ('date_from', 'date_to') i formatowanie dat do stringów
                 params = (
                     self.user_id, modyfikujacy_id,
@@ -323,10 +316,7 @@ class LocationExceptionDialog(QDialog):
                     data['lokalizacja'], data['powod'], 2,
                     exception_data['Id']
                 )
-                result = self.parent_widget._manage_location_exception(params)
-                if result.get("success"):
-                    self.load_exceptions()
-                    self.data_changed.emit()
+                self.parent_widget.location_exception_manager.start_operations([params], self._on_operation_finished)
 
     def _delete_exception(self):
         selected_items = self.table.selectedItems()
@@ -340,7 +330,7 @@ class LocationExceptionDialog(QDialog):
                                      QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
 
         if reply == QMessageBox.Yes:
-            _, modyfikujacy_id, _, _, _ = get_modifier_id()
+            modyfikujacy_id, _, _, _, _, _ = get_modifier_id()
 
             # POPRAWKA: Bezpieczne pobieranie dat
             date_from_obj = exception_data.get('DataOd', exception_data.get('Dataod'))
@@ -357,10 +347,10 @@ class LocationExceptionDialog(QDialog):
             end_date_str = end_date.toString("yyyy-MM-dd")
 
             params = (self.user_id, modyfikujacy_id, start_date_str, end_date_str, None, None, 3, exception_data['Id'])
-            result = self.parent_widget._manage_location_exception(params)
+            self.parent_widget.location_exception_manager.start_operations([params], self._on_operation_finished)
 
-            if result.get("success"):
-                self.load_exceptions()
-                self.data_changed.emit()
-            else:
-                QMessageBox.critical(self, "Błąd", f"Nie udało się usunąć wpisu: {result.get('message')}")
+    def _on_operation_finished(self):
+        """Callback wywoływany po zakończeniu operacji w tle."""
+        debug_print("Operacje na wyjątkach lokalizacyjnych zakończone, odświeżam listę.")
+        self.load_exceptions()
+        self.data_changed.emit()
