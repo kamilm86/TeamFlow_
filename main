@@ -1114,7 +1114,8 @@ class WorkScheduleWindow(QMainWindow):
         for cell_data in schedule_cells:
             # Sprawdź, czy symbol specjalny to urlop ('U' lub 'UZ')
             parsed_current = parse_symbol(cell_data.get('symbol', ''))
-            special_symbol = parsed_current.get('special_symbol', '').upper()
+            # --- POPRAWKA: Bezpieczne wywołanie .upper() na potencjalnie pustym symbolu ---
+            special_symbol = (parsed_current.get('special_symbol') or '').upper()
             if special_symbol in ['U', 'UZ']:
                 skipped_vacation_employees.append(cell_data.get('uzytkownik_dane', 'Nieznany'))
                 continue # Pomiń usuwanie dla urlopów, aby nie usuwać z planu
@@ -1326,7 +1327,7 @@ class WorkScheduleWindow(QMainWindow):
         self._left_panel = QWidget()
         self._left_panel.setMinimumSize(0, 0)
         panel_main_layout = QVBoxLayout(self._left_panel)
-        panel_main_layout.setContentsMargins(0, 0, 0, 0) # Usunięto marginesy dla spójności
+        panel_main_layout.setContentsMargins(0, 0, 0, 5) # Usunięto marginesy dla spójności
 
         # --- ZMODYFIKOWANA SEKCJA: Zapisane Filtry ---
         saved_filters_group = QGroupBox("Zapisane Filtry")
@@ -2392,8 +2393,18 @@ class WorkScheduleWindow(QMainWindow):
         user_app_id, user_app_nr_kadrowy, user_app_role, visible_next_month, user_app_department, user_app_login_windows = get_modifier_id()
         self.current_user_app_id = user_app_id
         self.current_user_app_nr_kadrowy = user_app_nr_kadrowy
-        self.current_user_app_login_windows = user_app_login_windows  # <-- NOWY ATRYBUT
-        self.current_user_app_role = user_app_role
+        self.current_user_app_login_windows = user_app_login_windows
+
+        # --- POCZĄTEK POPRAWKI: Dynamiczna rekonfiguracja po zmianie roli ---
+        # Sprawdź, czy rola się zmieniła od ostatniego sprawdzenia
+        if self.current_user_app_role != user_app_role:
+            debug_print(f"Wykryto zmianę roli użytkownika z '{self.current_user_app_role}' na '{user_app_role}'.")
+            self.current_user_app_role = user_app_role
+            # Zrekonfiguruj dostęp do edycji z klawiatury
+            self.cleanup_keyboard_filter()
+            self.setup_keyboard_editing()
+        # --- KONIEC POPRAWKI ---
+
         self.can_see_next_month = visible_next_month
         self.current_user_app_department = user_app_department
 
