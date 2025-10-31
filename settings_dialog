@@ -204,11 +204,11 @@ class AppSettingsDialog(QDialog):
         should_save = new_settings.pop('save_to_db', False)
 
         # Zaktualizuj słownik w oknie głównym
-        self.parent_widget.user_settings.update(new_settings)
+        self.parent_widget.user_app_settings.update(new_settings)
 
         # Zapisz do bazy, jeśli zaznaczone
         if should_save:
-            self.parent_widget.settings_db.save_settings(self.parent_widget.user_settings)
+            self.parent_widget.settings_db.save_settings(self.parent_widget.user_app_settings)
             debug_print("Zapisano ustawienia przed importem.")
 
         # Krok 2: Wyemituj sygnał z prośbą o import
