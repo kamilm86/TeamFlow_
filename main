@@ -2129,7 +2129,6 @@ class WorkScheduleWindow(QMainWindow):
                 is_comment_column_checked=self.show_comment_column,
                 sort_preferences=self.user_sort_preferences
             )
-
             if dialog.exec() == QDialog.Accepted:
                 # Logika dla widoczności kolumn (bez zmian)
                 self.visible_columns = dialog.get_selected_columns()
@@ -3127,7 +3126,7 @@ class WorkScheduleWindow(QMainWindow):
 
     def _save_current_filter_settings(self):
         """Zapisuje aktualny stan filtrów do słownika ustawień i do bazy danych."""
-        if not hasattr(self, 'user_settings'):
+        if not hasattr(self, 'user_app_settings'):
             return
 
         # Zaktualizuj słownik o bieżący stan filtrów
@@ -6178,15 +6177,7 @@ class WorkScheduleWindow(QMainWindow):
                         parse_symbol(cell_data[0].get('symbol', '')).get('special_symbol') or '').upper() == 'S':
                     self._remove_s_symbol_directly(cell_data)
 
-            canceled_count = self._cancel_delegations_in_db([event_to_cancel])
-
-            if canceled_count > 0:
-                self.data_provider.invalidate_complete_cache_for_pairs([(user_id, date_str)])
-                self._restore_view_state(view_state)
-                self.on_selection_changed()
-                QMessageBox.information(self, "Sukces", f"Pomyślnie odwołano zdarzenie.", QMessageBox.Ok)
-            else:
-                QMessageBox.warning(self, "Brak zmian", "Nie udało się odwołać zdarzenia.", QMessageBox.Ok)
+            self.delegation_canceler.start_cancellation([event_to_cancel])
 
         except Exception as e:
             log_error(f"Błąd podczas usuwania zdarzenia: {e}", exception=e)
@@ -7097,7 +7088,7 @@ class WorkScheduleWindow(QMainWindow):
 
     def save_user_settings_on_exit(self):
         """Zbiera i zapisuje wszystkie ustawienia użytkownika przy zamykaniu."""
-        if not hasattr(self, 'user_settings'):
+        if not hasattr(self, 'user_app_settings'):
             return
 
         # Zbierz dynamiczne ustawienia z UI
