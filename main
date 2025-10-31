@@ -3078,6 +3078,10 @@ class WorkScheduleWindow(QMainWindow):
                 self.close()
                 return
 
+            # --- KLUCZOWA POPRAWKA: Sprawdź ponownie uprawnienia użytkownika po odświeżeniu ustawień ---
+            self.check_user_permissions()
+            # --- KONIEC POPRAWKI ---
+
             # Krok 4: Sprawdź daty modyfikacji, używając wciąż tego samego połączenia
             current_date_data = self.date_combo.currentData()
             if not current_date_data: return
