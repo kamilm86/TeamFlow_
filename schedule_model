@@ -127,8 +127,8 @@ class ScheduleTableModel(QAbstractTableModel):
 
         if role == ROLE_IS_SUGGESTED_OFF:
             is_off = day_data.get('is_suggested_off', False)
-            if is_off:
-                debug_print(f"ScheduleModel: ROLE_IS_SUGGESTED_OFF dla {key[2]} w dniu {day} -> ZWRACAM {is_off}")
+            # if is_off:
+            #     debug_print(f"ScheduleModel: ROLE_IS_SUGGESTED_OFF dla {key[2]} w dniu {day} -> ZWRACAM {is_off}")
             return is_off
 
         if role == Qt.DisplayRole:
@@ -190,7 +190,7 @@ class ScheduleTableModel(QAbstractTableModel):
 
                 # --- NOWA ZMIANA: Dodanie koloru dla sugerowanego wolnego ---
                 if day_data.get('is_suggested_off', False):
-                    debug_print(f"ScheduleModel: BackgroundRole dla {key[2]} w dniu {day} -> ZWRACAM ZIELONY")
+                    # debug_print(f"ScheduleModel: BackgroundRole dla {key[2]} w dniu {day} -> ZWRACAM ZIELONY")
                     return QBrush(QColor("#006400"))  # Ciemny zielony
 
                 if schedule_col == self._days_in_month + 1:
@@ -219,8 +219,8 @@ class ScheduleTableModel(QAbstractTableModel):
                         if parsed_symbol.get('start_hour') is not None:
                             return QBrush(self._get_color_by_start_hour(parsed_symbol['start_hour']))
                         return QBrush(QColor(65, 65, 65) if self._is_dark_theme else QColor(225, 225, 225))
-                    else:
-                        return QBrush(QColor(55, 55, 55) if self._is_dark_theme else QColor(240, 240, 240))
+                    # else:
+                    #     return QBrush(QColor(55, 55, 55) if self._is_dark_theme else QColor(240, 240, 240))
         return None
 
     def headerData(self, section, orientation, role=Qt.DisplayRole):
