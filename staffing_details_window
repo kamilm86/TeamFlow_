@@ -622,24 +622,83 @@ class StaffingDetailsWindow(QDialog):
 
     def apply_styles(self):
         theme = "dark" if self.is_dark_theme else "light"
-        self.setStyleSheet(AppStyles.get_dialog_style(theme))
-        table_style = AppStyles.get_table_style(theme)
 
+        # 1. Pobierz wszystkie potrzebne style z AppStyles
+        dialog_style = AppStyles.get_dialog_style(theme)
+        table_style = AppStyles.get_table_style(theme)
+        button_style = AppStyles.get_button_style(theme)
+        combo_style = AppStyles.get_combobox_style(theme)
+        list_style = AppStyles.get_list_style(theme)
+        tab_style = AppStyles.get_tab_widget_style(theme)
+
+        # 2. Zastosuj styl bazowy do samego okna
+        # To ustawia domyślne tło i kolor tekstu dla QDialog, QGroupBox, QLabel itp.
+        self.setStyleSheet(dialog_style)
+
+        # 3. Zastosuj style do KONKRETNYCH widgetów, nadpisując styl bazowy
+
+        # Zakładki
+        if hasattr(self, 'tabs'):
+            self.tabs.setStyleSheet(tab_style)
+
+        # Tabele (QTableView)
         all_views = [
             self.hourly_staffing_view, self.daily_staffing_view, self.symbols_count_view,
             self.symbols_rbh_view, self.overtime_summary_view, self.absence_summary_view,
             self.flexibility_table_view, self.forecast_table_view, self.absence_detail_view
         ]
         for view in all_views:
-            if hasattr(view, 'setStyleSheet'):
+            if view:  # Sprawdź czy widget nie jest None
                 view.setStyleSheet(table_style)
                 if hasattr(view, 'horizontalHeader'):
                     view.horizontalHeader().setFixedHeight(38)
 
-        button_style = AppStyles.get_button_style(theme)
-        self.refresh_button.setStyleSheet(button_style)
-        self.close_button.setStyleSheet(button_style)
-        self.tabs.setStyleSheet(AppStyles.get_tab_widget_style(theme))
+        # Przyciski (QPushButton)
+        all_buttons = [
+            self.refresh_button, self.close_button, self.absence_back_button
+        ]
+        for button in all_buttons:
+            if button:  # Sprawdź czy widget nie jest None
+                button.setStyleSheet(button_style)
+
+        # Pola wyboru (QComboBox)
+        all_combos = [
+            self.hourly_staffing_options_combo, self.hourly_location_combo,
+            self.daily_staffing_options_combo, self.daily_location_combo,
+            self.forecast_group_combo, self.forecast_view_mode_combo
+        ]
+        for combo in all_combos:
+            if combo:  # Sprawdź czy widget nie jest None
+                combo.setStyleSheet(combo_style)
+
+        # ListWidget
+        if hasattr(self, 'absence_symbols_list'):
+            self.absence_symbols_list.setStyleSheet(list_style)
+
+        # 4. Zastosuj styl do KPI Boxów (QFrame) i ich etykiet
+        if theme == "dark":
+            kpi_frame_style = f"QFrame {{ background-color: {AppStyles.DARK_BACKGROUND_CONTROLS}; border: 1px solid {AppStyles.DARK_BORDER_PRIMARY}; border-radius: {AppStyles.BORDER_RADIUS}; }}"
+            kpi_title_style = f"font-size: 10pt; color: {AppStyles.DARK_TEXT_SECONDARY}; background-color: transparent; border: none;"
+            kpi_value_style = f"font-size: 18pt; font-weight: bold; color: {AppStyles.DARK_TEXT_PRIMARY}; background-color: transparent; border: none;"
+        else:  # light
+            kpi_frame_style = f"QFrame {{ background-color: {AppStyles.LIGHT_BACKGROUND_CONTROLS}; border: 1px solid {AppStyles.LIGHT_BORDER_PRIMARY}; border-radius: {AppStyles.BORDER_RADIUS}; }}"
+            kpi_title_style = f"font-size: 10pt; color: {AppStyles.LIGHT_TEXT_SECONDARY}; background-color: transparent; border: none;"
+            kpi_value_style = f"font-size: 18pt; font-weight: bold; color: {AppStyles.LIGHT_TEXT_PRIMARY}; background-color: transparent; border: none;"
+
+        kpi_boxes = [
+            self.total_absence_hours_label, self.absence_rate_label,
+            self.top_absent_dept_label, self.top_absent_emp_label
+        ]
+        for frame in kpi_boxes:
+            if frame:
+                frame.setStyleSheet(kpi_frame_style)
+                if hasattr(frame, 'value_label'):
+                    frame.value_label.setStyleSheet(kpi_value_style)
+
+                # Poprawka znajdowania etykiety tytułowej
+                title_label = frame.findChild(QLabel)
+                if title_label and title_label != getattr(frame, 'value_label', None):
+                    title_label.setStyleSheet(kpi_title_style)
 
     def _get_theme_colors(self):
         if self.is_dark_theme:
@@ -885,10 +944,18 @@ class StaffingDetailsWindow(QDialog):
         layout = QVBoxLayout(frame)
         title_label = QLabel(title)
         title_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        title_label.setStyleSheet("font-size: 10pt; color: gray;")
+
+        # --- USUNIĘTA ZMIANA ---
+        # Usunięto: title_label.setStyleSheet("font-size: 10pt; color: gray;")
+        # --- KONIEC ZMIANY ---
+
         value_label = QLabel("0")
         value_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        value_label.setStyleSheet("font-size: 18pt; font-weight: bold;")
+
+        # --- USUNIĘTA ZMIANA ---
+        # Usunięto: value_label.setStyleSheet("font-size: 18pt; font-weight: bold;")
+        # --- KONIEC ZMIANY ---
+
         layout.addWidget(title_label)
         layout.addWidget(value_label)
         frame.value_label = value_label
@@ -1812,7 +1879,7 @@ class StaffingDetailsWindow(QDialog):
 
     def _calculate_flexibility_analysis(self, schedule_data):
         summary = defaultdict(float)
-        location_map = {'h': 'Home Office', 's': 'Stacjonarnie', 'p': 'mPrzystanek'}
+        location_map = {'h': 'Home Office', 's': 'Stacjonarnie', 'p': 'Przystanek'}
         for user_schedule in schedule_data.values():
             default_loc = user_schedule.get('lokalizacja_domyslna', 'h')
             for day_info in user_schedule.get('days', {}).values():
