@@ -15,7 +15,7 @@ from PySide6.QtWidgets import (QApplication, QMainWindow, QTableView,
                                QListWidgetItem, QLineEdit, QDialog, QCheckBox, QFrame, QDateEdit,
                                QMessageBox, QSplitter, QStyledItemDelegate, QFileDialog,
                                QGridLayout, QSizePolicy, QScrollArea, QGroupBox, QStyle, QProgressDialog,
-                               QStyleOptionViewItem)
+                               QStyleOptionViewItem, QInputDialog)
 
 from PySide6.QtCore import (Qt, Signal, QDate, QTimer, QEvent, QObject,
                             QItemSelection, QItemSelectionModel, QRect, QPoint, QSize)
@@ -1419,7 +1419,26 @@ class WorkScheduleWindow(QMainWindow):
         self.delete_filter_button.clicked.connect(self._delete_selected_filter_set)
         self.delete_filter_button.setEnabled(False)
         saved_filters_layout.addWidget(self.delete_filter_button, 0)
+        # --- POCZĄTEK NOWEGO KODU: Przycisk "Edytuj nazwę" ---
+        self.edit_filter_button = QPushButton()
+        try:
+            # Zakładamy, że masz ikonę 'edit.png' w folderze 'icons'
+            icon_path = resource_path("icons/edit.png")
+            edit_icon = QIcon(icon_path)
+            if edit_icon.isNull():
+                raise FileNotFoundError(f"Nie znaleziono pliku ikony: {icon_path}")
+        except Exception as e:
+            # Ikona awaryjna, jeśli 'edit.png' nie zostanie znaleziony
+            log_error(f"Błąd ładowania ikony 'edit.png': {e}. Używam ikony domyślnej.")
+            edit_icon = self.style().standardIcon(QStyle.StandardPixmap.SP_FileDialogContentsView)
 
+        self.edit_filter_button.setIcon(edit_icon)
+        self.edit_filter_button.setFixedSize(28, 28)
+        self.edit_filter_button.setToolTip("Zmień nazwę wybranego zestawu filtrów")
+        self.edit_filter_button.clicked.connect(self._rename_selected_filter_set)
+        self.edit_filter_button.setEnabled(False)  # Domyślnie wyłączony
+        saved_filters_layout.addWidget(self.edit_filter_button, 0)
+        # --- KONIEC NOWEGO KODU ---
         panel_main_layout.addWidget(saved_filters_group)
 
         # --- 2. SEKCJA ŚRODKOWA: Dynamiczne filtry (w ScrollArea) ---
@@ -1604,12 +1623,79 @@ class WorkScheduleWindow(QMainWindow):
                 log_error(f"Błąd podczas usuwania filtra: {e}", exception=e)
                 QMessageBox.critical(self, "Błąd", f"Wystąpił nieoczekiwany błąd: {e}")
 
-    def _update_delete_button_state(self):
-        """Włącza lub wyłącza przycisk usuwania w zależności od wyboru w ComboBox."""
+    def _rename_selected_filter_set(self):
+        """
+        Otwiera dialog do zmiany nazwy aktualnie wybranego zestawu filtrów.
+        """
+        current_name = self.saved_filters_combo.currentText()
+        current_index = self.saved_filters_combo.currentIndex()
+
+        # Zabezpieczenie, choć przycisk powinien być nieaktywny
+        if not current_name or current_index == 0:
+            return
+
+        new_name, ok = QInputDialog.getText(self, "Zmień nazwę zestawu filtrów",
+                                            "Wprowadź nową nazwę dla filtra:",
+                                            QLineEdit.Normal, current_name)
+
+        if not ok or not new_name:
+            return  # Użytkownik anulował
+
+        new_name = new_name.strip()
+
+        if not new_name:
+            QMessageBox.warning(self, "Błędna nazwa", "Nazwa filtra nie może być pusta.")
+            return
+
+        if new_name == current_name:
+            return  # Nazwa się nie zmieniła
+
+        saved_filters = self.user_app_settings.get('saved_filters', {})
+
+        if new_name in saved_filters:
+            QMessageBox.warning(self, "Nazwa istnieje",
+                                f"Filtr o nazwie '{new_name}' już istnieje. Wybierz inną nazwę.")
+            return
+
+        try:
+            # Zmień nazwę klucza w słowniku
+            content = saved_filters.pop(current_name)
+            saved_filters[new_name] = content
+
+            self.user_app_settings['saved_filters'] = saved_filters
+            self.settings_db.save_settings(self.user_app_settings)  # Zapisz w bazie
+
+            # Odśwież UI
+            self._update_saved_filters_combo()
+            self.saved_filters_combo.setCurrentText(new_name)  # Ustaw nową nazwę
+
+            QMessageBox.information(self, "Sukces",
+                                    f"Nazwa filtra została zmieniona z '{current_name}' na '{new_name}'.")
+
+        except KeyError:
+            log_error(f"Próba zmiany nazwy filtra '{current_name}', który nie istnieje w 'saved_filters'.")
+            QMessageBox.warning(self, "Błąd", "Nie można było zmienić nazwy. Filtr nie został znaleziony.")
+        except Exception as e:
+            log_error(f"Błąd podczas zmiany nazwy filtra: {e}", exception=e)
+            QMessageBox.critical(self, "Błąd", f"Wystąpił nieoczekiwany błąd: {e}")
+
+    # --- KONIEC NOWEJ METODY ---
+
+    def _update_delete_button_state(self, index=None):
+        """
+        Włącza lub wyłącza przyciski 'Usuń' i 'Edytuj' w zależności
+        od wyboru w ComboBox.
+        """
+        # (Domyślny argument 'index' jest potrzebny, gdy metoda jest podłączona do sygnału)
+        is_filter_selected = self.saved_filters_combo.currentIndex() > 0
+
         if hasattr(self, 'delete_filter_button'):
-            # Włącz przycisk tylko jeśli wybrany indeks jest > 0 (czyli nie jest to pusta pozycja)
-            is_filter_selected = self.saved_filters_combo.currentIndex() > 0
             self.delete_filter_button.setEnabled(is_filter_selected)
+
+        # --- POCZĄTEK POPRAWKI ---
+        if hasattr(self, 'edit_filter_button'):
+            self.edit_filter_button.setEnabled(is_filter_selected)
+        # --- KONIEC POPRAWKI ---
 
     def _load_selected_filter_set(self):
         """Wczytuje zestaw filtrów wybrany w QComboBox."""
@@ -7448,6 +7534,8 @@ class WorkScheduleWindow(QMainWindow):
             icon_buttons.append(self.save_filter_button)
         if hasattr(self, 'delete_filter_button'):
             icon_buttons.append(self.delete_filter_button)
+        if hasattr(self, 'edit_filter_button'):
+            icon_buttons.append(self.edit_filter_button)
 
         for button in icon_buttons:
             if button:
