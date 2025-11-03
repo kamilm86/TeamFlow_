@@ -210,14 +210,14 @@ class AppStyles:
         if theme == "dark":
             bg = AppStyles.DARK_BACKGROUND_CONTROLS
             alt_bg = AppStyles.DARK_BACKGROUND_MAIN
-            text = AppStyles.DARK_TEXT_PRIMARY  # Ten jest jasny
+            text = AppStyles.DARK_TEXT_PRIMARY  # Ten jest jasny (biały)
             grid = AppStyles.DARK_BORDER_SECONDARY
             selection_bg = AppStyles.SELECTION_BACKGROUND_DARK
             header_bg = AppStyles.DARK_BACKGROUND_PRESSED
         else:  # Jasny motyw
             bg = AppStyles.LIGHT_BACKGROUND_CONTROLS
             alt_bg = AppStyles.LIGHT_BACKGROUND_HOVER
-            text = AppStyles.LIGHT_TEXT_PRIMARY  # Ten jest ciemny
+            text = AppStyles.LIGHT_TEXT_PRIMARY  # Ten jest ciemny (czarny)
             grid = AppStyles.LIGHT_BORDER_PRIMARY
             selection_bg = AppStyles.SELECTION_BACKGROUND_LIGHT
             header_bg = "#e0e0e0"
@@ -235,13 +235,19 @@ class AppStyles:
                        QTableView::item:selected, QTableView#StaffingTable::item:selected {{
                            background-color: {selection_bg};
                        }}
+
+                       /* --- ZMIANA: Ogólny nagłówek (dla main.py) BEZ koloru czcionki --- */
                        QHeaderView::section {{
                            background-color: {header_bg};
-                           /* --- USUNIĘTA LINIA POWODUJĄCA PROBLEM --- */
-                           /* color: {text}; */ 
-                           /* --- KONIEC ZMIANY --- */
                            border: 1px solid {grid};
                            padding: 4px;
+                           /* Domyślnie brak koloru - pozwala na Qt.ForegroundRole */
+                       }}
+
+                       /* --- NOWA REGUŁA: Dodatkowy styl dla nagłówków tabel w "Obsada" --- */
+                       /* Ten selektor oznacza: "nagłówek, który jest potomkiem tabeli o nazwie StaffingTable" */
+                       QTableView#StaffingTable QHeaderView::section {{
+                           color: {text}; /* Stosuje poprawny kolor czcionki (biały w trybie dark) */
                        }}
                    """
 
