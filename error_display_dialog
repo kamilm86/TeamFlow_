@@ -1,0 +1,121 @@
+# error_display_dialog.py
+# -*- coding: utf-8 -*-
+
+from PySide6.QtWidgets import (QDialog, QVBoxLayout, QTableView, QPushButton, QHeaderView,
+                               QDialogButtonBox, QAbstractItemView, QTableWidget, QTableWidgetItem, QLabel, QHBoxLayout)
+from PySide6.QtCore import Qt
+from styles import AppStyles
+from debug_utils import log_error
+
+
+class ErrorDisplayDialog(QDialog):
+    """
+    Proste, nieblokujące okno do wyświetlania błędów importu w tabeli.
+    """
+
+    def __init__(self, error_data: list, headers: list, parent=None):
+        """
+        Inicjalizuje okno dialogowe błędów.
+
+        Args:
+            error_data (list): Lista krotek (wierszy) z błędami.
+            headers (list): Lista nazw kolumn.
+            parent (QWidget): Widget nadrzędny (dla stylu i kontekstu).
+        """
+        super().__init__(None)  # Tworzymy jako niezależne okno
+
+        self.parent_widget = parent
+        self.is_dark_theme = getattr(parent, 'is_dark_theme', False)
+
+        self.setWindowTitle("Błędy importu sugestii")
+        self.setWindowFlags(
+            Qt.Window | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint | Qt.WindowCloseButtonHint)
+        self.setMinimumSize(800, 400)
+
+        self.setup_ui(error_data, headers)
+        self.populate_table(error_data)
+        self.apply_styles()
+
+    def setup_ui(self, error_data: list, headers: list):
+        main_layout = QVBoxLayout(self)
+
+        info_text = f"Wystąpiło {len(error_data)} błędów podczas importu sugestii. " \
+                    "Poniższe rekordy nie zostały zaimportowane:" \
+            if error_data else "Import zakończony pomyślnie. Nie znaleziono błędów."
+
+        info_label = QLabel(info_text)
+        main_layout.addWidget(info_label)
+
+        self.table_widget = QTableWidget()
+        self.table_widget.setColumnCount(len(headers))
+        self.table_widget.setHorizontalHeaderLabels(headers)
+        self.table_widget.setEditTriggers(QAbstractItemView.NoEditTriggers)
+        self.table_widget.setSelectionBehavior(QAbstractItemView.SelectRows)
+
+        header = self.table_widget.horizontalHeader()
+
+        # --- POCZĄTEK POPRAWKI: Zmiana trybu rozmiaru kolumn ---
+
+        # 1. Ustaw domyślny tryb na interaktywny (pozwala na zmianę rozmiaru)
+        header.setSectionResizeMode(QHeaderView.Interactive)
+
+        # 2. Ustaw rozciąganie ostatniej kolumny (zazwyczaj 'Komentarz')
+        if len(headers) > 0:
+            header.setStretchLastSection(True)
+
+        # 3. Ustaw dopasowanie do zawartości dla pierwszych kolumn
+        if len(headers) > 1:
+            header.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # NrKadrowy
+        if len(headers) > 2:
+            header.setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Uzytkownik
+        # --- KONIEC POPRAWKI ---
+
+        main_layout.addWidget(self.table_widget)
+
+        self.close_button = QPushButton("Zamknij")
+        self.close_button.clicked.connect(self.accept)
+
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        button_layout.addWidget(self.close_button)
+        main_layout.addLayout(button_layout)
+
+    def populate_table(self, error_data: list):
+        """Wypełnia tabelę danymi błędów."""
+        self.table_widget.setRowCount(len(error_data))
+        try:
+            for row_idx, row_data in enumerate(error_data):
+                for col_idx, cell_data in enumerate(row_data):
+                    # Konwertujemy dane (np. daty) na string
+                    item = QTableWidgetItem(str(cell_data))
+                    self.table_widget.setItem(row_idx, col_idx, item)
+        except Exception as e:
+            log_error(f"Błąd wypełniania tabeli błędów: {e}")
+
+    def apply_styles(self):
+        """Stosuje motyw do okna i jego kontrolek."""
+        theme = "dark" if self.is_dark_theme else "light"
+
+        dialog_style = AppStyles.get_dialog_style(theme)
+        table_style = AppStyles.get_table_style(theme)
+        button_style = AppStyles.get_button_style(theme)
+
+        # Musimy połączyć style, aby QTableWidget też był objęty
+        self.setStyleSheet(dialog_style + table_style)
+
+        self.close_button.setStyleSheet(button_style)
+
+        # Styl dla etykiet wewnątrz okna dialogowego
+        if theme == "dark":
+            label_style = f"color: {AppStyles.DARK_TEXT_PRIMARY};"
+        else:
+            label_style = f"color: {AppStyles.LIGHT_TEXT_PRIMARY};"
+
+        for label in self.findChildren(QLabel):
+            label.setStyleSheet(label_style)
+
+    def set_current_theme(self, is_dark_theme: bool):
+        """Publiczna metoda do odświeżania motywu na żywo."""
+        if self.is_dark_theme != is_dark_theme:
+            self.is_dark_theme = is_dark_theme
+            self.apply_styles()
