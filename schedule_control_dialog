@@ -3,16 +3,20 @@
 import datetime
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                                QPushButton, QGroupBox, QFrame, QGridLayout, QMessageBox, QListWidget, QAbstractItemView,
-                               QDateEdit, QDateTimeEdit)
+                               QDateEdit, QDateTimeEdit, QProgressDialog)  # Dodano QProgressDialog
 from PySide6.QtCore import Qt, Signal, QDate, QDateTime
 from styles import AppStyles
 from db_connector import DatabaseConnector, get_modifier_id
 from ui_utils import show_confirmation_dialog
 from config import SQL_OBJECTS
-from debug_utils import log_error
+from debug_utils import log_error, debug_print
+
+# Nowe importy
+from async_operations import SuggestionImportThread
+from error_display_dialog import ErrorDisplayDialog
 
 
-# --- NOWA KLASA: Dialog do wyboru daty blokady ---
+# --- KLASA BlockingDateDialog (BEZ ZMIAN) ---
 class BlockingDateDialog(QDialog):
     def __init__(self, parent=None, current_date=None):
         super().__init__(parent)
@@ -56,18 +60,28 @@ class ScheduleControlDialog(QDialog):
     data_refresh_needed = Signal()
 
     def __init__(self, parent, year, month):
-        super().__init__(parent)
+        super().__init__(None)
         self.parent_widget = parent
         self.year = year
         self.month = month
         self.is_dark_theme = getattr(parent, 'is_dark_theme', False)
-        self.user_id, self.login_windows, _, _, _ = get_modifier_id()
+
+        self.setWindowFlags(
+            Qt.Window | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint | Qt.WindowCloseButtonHint)
+
+        user_app_id, _, _, _, _, login_windows = get_modifier_id()
+        self.user_app_id = user_app_id
+        self.login_windows = login_windows
+
         self.data_provider = parent.data_provider
-        self.blocking_date = None  # Przechowuje aktualną datę blokady
+        self.blocking_date = None
 
-        self.setWindowTitle("Sugestie i blokowanie grafiku")
-        self.setMinimumWidth(450)
+        self.import_thread = None
+        self.error_dialog = None
+        # ZMIANA: Usunięto self.last_import_errors - nie jest już potrzebne
+        self.progress_dialog = None
 
+        self.setWindowTitle("Zarządzaj Grafikiem")
         self.setup_ui()
         self.connect_signals()
         self.apply_styles()
@@ -114,10 +128,9 @@ class ScheduleControlDialog(QDialog):
 
         blocking_controls_layout = QHBoxLayout()
 
-        # ZMIANA: Użycie QDateTimeEdit zamiast QDateEdit
         self.blocking_date_edit = QDateTimeEdit(QDateTime.currentDateTime())
         self.blocking_date_edit.setCalendarPopup(True)
-        self.blocking_date_edit.setDisplayFormat("yyyy-MM-dd HH:mm")  # ZMIANA formatu
+        self.blocking_date_edit.setDisplayFormat("yyyy-MM-dd HH:mm")
 
         self.save_blocking_date_button = QPushButton("Ustaw datę blokady")
 
@@ -131,8 +144,15 @@ class ScheduleControlDialog(QDialog):
         data_box = QGroupBox("Pobieranie danych")
         data_layout = QVBoxLayout()
         self.get_suggestions_button = QPushButton("Pobierz sugestie Konsultantów")
+
+        # --- ZMIANA: Zmiana nazwy i włączenie przycisku ---
+        self.view_logs_button = QPushButton("Pokaż historię błędów importu")
+        self.view_logs_button.setEnabled(True)  # Jest włączony domyślnie
+        # --- KONIEC ZMIANY ---
+
         self.get_vacation_plans_button = QPushButton("Pobierz plany urlopowe")
         data_layout.addWidget(self.get_suggestions_button)
+        data_layout.addWidget(self.view_logs_button)  # Dodany do layoutu
         data_layout.addWidget(self.get_vacation_plans_button)
         data_box.setLayout(data_layout)
 
@@ -164,21 +184,62 @@ class ScheduleControlDialog(QDialog):
         self.lock_for_consultants_support_button.clicked.connect(self.lock_for_support)
         self.publish_button.clicked.connect(self.publish_schedule)
         self.unpublish_button.clicked.connect(self.unpublish_schedule)
-        self.get_suggestions_button.clicked.connect(self.get_suggestions)
+
+        self.get_suggestions_button.clicked.connect(self._start_suggestion_import)
+
+        # --- ZMIANA: Podłączenie do nowej metody ---
+        self.view_logs_button.clicked.connect(self._show_historical_logs)
+        # --- KONIEC ZMIANY ---
+
         self.get_vacation_plans_button.clicked.connect(self.get_vacation_plans)
-        # POPRAWKA: Użyto prawidłowej nazwy przycisku i metody
         self.save_blocking_date_button.clicked.connect(self._save_blocking_date)
 
+    def set_current_theme(self, is_dark_theme: bool):
+        """Publiczna metoda do odświeżania motywu na żywo."""
+        if self.is_dark_theme != is_dark_theme:
+            self.is_dark_theme = is_dark_theme
+            self.apply_styles()
+
+            if hasattr(self, 'blocking_date_edit'):
+                calendar = self.blocking_date_edit.calendarWidget()
+                if calendar:
+                    calendar.setStyleSheet(AppStyles.get_calendar_style("dark" if is_dark_theme else "light"))
+
+            if self.error_dialog:
+                self.error_dialog.set_current_theme(is_dark_theme)
 
     def apply_styles(self):
         theme = "dark" if self.is_dark_theme else "light"
-        self.setStyleSheet(AppStyles.get_dialog_style(theme))
+
+        calendar_style = AppStyles.get_calendar_style(theme)
+        dialog_style = AppStyles.get_dialog_style(theme)
+
+        self.setStyleSheet(dialog_style + calendar_style)
+
         for button in self.findChildren(QPushButton):
             button.setStyleSheet(AppStyles.get_button_style(theme))
-        self.suggestions_status_label.setStyleSheet("font-weight: bold; border: 1px solid gray; padding: 5px;")
-        self.publish_status_label.setStyleSheet("font-weight: bold; border: 1px solid gray; padding: 5px;")
-        # ZMIANA: Styl dla nowej kontrolki
+
+        base_label_style = "font-weight: bold; border: 1px solid {color}; padding: 5px; color: {text_color}; background-color: {bg_color};"
+        if theme == "dark":
+            status_style = base_label_style.format(color=AppStyles.DARK_BORDER_PRIMARY,
+                                                   text_color=AppStyles.DARK_TEXT_PRIMARY,
+                                                   bg_color=AppStyles.DARK_BACKGROUND_CONTROLS)
+            blocking_label_style = f"font-weight: bold; color: {AppStyles.DARK_TEXT_PRIMARY};"
+        else:
+            status_style = base_label_style.format(color=AppStyles.LIGHT_BORDER_PRIMARY,
+                                                   text_color=AppStyles.LIGHT_TEXT_PRIMARY,
+                                                   bg_color=AppStyles.LIGHT_BACKGROUND_CONTROLS)
+            blocking_label_style = f"font-weight: bold; color: {AppStyles.LIGHT_TEXT_PRIMARY};"
+
+        self.suggestions_status_label.setStyleSheet(status_style)
+        self.publish_status_label.setStyleSheet(status_style)
+        self.blocking_date_label.setStyleSheet(blocking_label_style)
+
         self.blocking_date_edit.setStyleSheet(AppStyles.get_date_edit_style(theme))
+
+        calendar = self.blocking_date_edit.calendarWidget()
+        if calendar:
+            calendar.setStyleSheet(calendar_style)
 
     def get_vacation_plans(self):
         """Obsługuje pobieranie planów urlopowych."""
@@ -190,7 +251,6 @@ class ScheduleControlDialog(QDialog):
             return
 
         try:
-            # Zakładamy, że procedura obsługuje parametr NULL dla grup (oznaczający 'wszystkie')
             sql = f"EXEC {SQL_OBJECTS['p_importujplanyurlopowe']} {self.year}, {self.month}, '{self.login_windows}', NULL"
             conn = DatabaseConnector.get_connection()
             conn.execute(sql)
@@ -199,7 +259,8 @@ class ScheduleControlDialog(QDialog):
             QMessageBox.information(self, "Sukces", "Plany urlopowe zostały pobrane.")
             self.data_refresh_needed.emit()
         except Exception as e:
-            QMessageBox.critical(self, "Błąd Bazy Danych", f"Wystąpił błąd podczas pobierania planów urlopowych:<br>{e}")
+            QMessageBox.critical(self, "Błąd Bazy Danych",
+                                 f"Wystąpił błąd podczas pobierania planów urlopowych:<br>{e}")
 
     def _execute_procedure(self, sql_query):
         """Pomocnicza metoda do wykonywania zapytań."""
@@ -247,7 +308,11 @@ class ScheduleControlDialog(QDialog):
             self.blocking_date_label.setText("Data blokady: Nie ustawiono")
             self.blocking_date = None
 
-            # Użycie datetime.date, aby upewnić się, że format jest poprawny dla bazy
+            # --- POCZĄTEK POPRAWKI ---
+            # Ustaw domyślny tekst przycisku
+            self.save_blocking_date_button.setText("Ustaw datę blokady")
+            # --- KONIEC POPRAWKI ---
+
             first_day_of_month = datetime.date(self.year, self.month, 1)
             query_block = f"SELECT DataBlokowania FROM {SQL_OBJECTS['datyblokowaniapu']} WHERE ZablokowanaData = ?"
             block_date_row = cursor.execute(query_block, (first_day_of_month,)).fetchone()
@@ -260,6 +325,11 @@ class ScheduleControlDialog(QDialog):
                     self.blocking_date_label.setText(f"Data blokady: {blocking_date.strftime('%Y-%m-%d %H:%M')}")
                     self.blocking_date_edit.setDateTime(QDateTime(blocking_date))
 
+                    # --- POCZĄTEK POPRAWKI ---
+                    # Zmień tekst przycisku, jeśli data istnieje
+                    self.save_blocking_date_button.setText("Zmień datę blokady")
+                    # --- KONIEC POPRAWKI ---
+
             # 3. Pobranie statusu publikacji (bez zmian)
             query_pub = f"SELECT TOP 1 Id FROM {SQL_OBJECTS['datypublikacjigrafiku']} WHERE Status=1 AND Rok=? AND Miesiac=?"
             pub_status = cursor.execute(query_pub, (self.year, self.month)).fetchone()
@@ -270,38 +340,16 @@ class ScheduleControlDialog(QDialog):
             self.suggestions_status_label.setText("Sugestie: Błąd odczytu")
             self.publish_status_label.setText("Grafik: Błąd odczytu")
             self.blocking_date_label.setText("Data blokady: Błąd odczytu")
+            # --- POCZĄTEK POPRAWKI ---
+            # Ustaw domyślny tekst nawet w przypadku błędu
+            if hasattr(self, 'save_blocking_date_button'):
+                self.save_blocking_date_button.setText("Ustaw datę blokady")
+            # --- KONIEC POPRAWKI ---
             log_error(f"Nie udało się wczytać statusów: {e}", exception=e)
             QMessageBox.warning(self, "Błąd", f"Nie udało się wczytać statusów: {e}")
 
     def _save_blocking_date(self):
-        """Zapisuje lub aktualizuje datę blokady PU, używając nowej, zunifikowanej procedury."""
-        selected_date = self.blocking_date_edit.date().toString("yyyy-MM-dd")
-        reply = QMessageBox.question(self, "Potwierdzenie",
-                                     f"Czy na pewno chcesz ustawić datę blokady planów urlopowych na {selected_date}?",
-                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
-        if reply == QMessageBox.No:
-            return
-
-        try:
-            conn = DatabaseConnector.get_connection()
-            cursor = conn.cursor()
-            sql = f"EXEC {SQL_OBJECTS['p_blokowaniesugestii']} ?, ?, ?, ?, ?, ?"
-            # Parametry: @Rok, @Miesiac, @Data, @Nr_Kadrowy, @Status, @parametr
-            # Dla @Status przekazujemy NULL, bo nie jest używany przy @parametr=2
-            cursor.execute(sql, (self.year, self.month, selected_date, self.user_app_id, None, 2))
-            conn.commit()
-            conn.close()
-
-            QMessageBox.information(self, "Sukces", "Data blokady planów urlopowych została zaktualizowana.")
-            self.load_initial_status()
-
-        except Exception as e:
-            log_error(f"Błąd zapisu daty blokady PU: {e}", exception=e)
-            QMessageBox.critical(self, "Błąd Bazy Danych", f"Wystąpił błąd podczas zapisu daty blokady:<br>{e}")
-
-    def _save_blocking_date(self):
         """Zapisuje lub aktualizuje datę i czas blokady PU w bazie danych."""
-        # ZMIANA: Usunięcie sekund z formatu zapisu
         selected_datetime = self.blocking_date_edit.dateTime().toString("yyyy-MM-dd HH:mm")
 
         reply = QMessageBox.question(self, "Potwierdzenie",
@@ -314,14 +362,12 @@ class ScheduleControlDialog(QDialog):
             conn = DatabaseConnector.get_connection()
             cursor = conn.cursor()
             sql = f"EXEC {SQL_OBJECTS['p_blokowaniesugestii']} ?, ?, ?, ?, ?, ?"
-            # Parametry: @Rok, @Miesiac, @Data, @Nr_Kadrowy, @Status, @parametr
-            # Dla @Status przekazujemy NULL, bo nie jest używany przy @parametr=2
             cursor.execute(sql, (self.year, self.month, selected_datetime, self.login_windows, None, 2))
             conn.commit()
             conn.close()
 
             QMessageBox.information(self, "Sukces", "Data blokady planów urlopowych została zaktualizowana.")
-            self.load_initial_status()
+            self.load_initial_status()  # Ta metoda odświeży etykietę
 
         except Exception as e:
             log_error(f"Błąd zapisu daty blokady PU: {e}", exception=e)
@@ -339,9 +385,6 @@ class ScheduleControlDialog(QDialog):
     def _set_suggestions_status(self, status_code: int):
         """
         Zmienia status blokady sugestii w bazie danych, wywołując procedurę składowaną.
-
-        Args:
-            status_code (int): Kod statusu do ustawienia (0, 1, lub 2).
         """
         status_map = {
             0: "Odblokowane",
@@ -363,17 +406,12 @@ class ScheduleControlDialog(QDialog):
             conn = DatabaseConnector.get_connection()
             cursor = conn.cursor()
             sql = f"EXEC {SQL_OBJECTS['p_blokowaniesugestii']} ?, ?, ?, ?, ?, ?"
-
-            # Parametry: @Rok, @Miesiac, @Data, @Nr_Kadrowy, @Status, @parametr
-            # Dla zmiany statusu sugestii @parametr = 1
-            # @Nr_Kadrowy przechowuje login Windows osoby modyfikującej
-            # @Data jest wypełniana bieżącą datą i godziną
             cursor.execute(sql, (self.year, self.month, datetime.datetime.now(), self.login_windows, status_code, 1))
             conn.commit()
             conn.close()
 
             QMessageBox.information(self, "Sukces", f"Status sugestii został pomyślnie zmieniony.")
-            self.load_initial_status()  # Odświeża etykiety statusu w oknie dialogowym
+            self.load_initial_status()
 
         except Exception as e:
             log_error(f"Błąd podczas zmiany statusu sugestii na {status_code}: {e}", exception=e)
@@ -384,9 +422,7 @@ class ScheduleControlDialog(QDialog):
         if self._execute_procedure(sql):
             QMessageBox.information(self, "Sukces", "Grafik został opublikowany.")
             self.load_initial_status()
-            # --- POCZĄTEK ZMIANY ---
             self.data_provider.clear_publish_status_cache(self.year, self.month)
-            # --- KONIEC ZMIANY ---
             self.data_refresh_needed.emit()
 
     def unpublish_schedule(self):
@@ -394,34 +430,160 @@ class ScheduleControlDialog(QDialog):
         if self._execute_procedure(sql):
             QMessageBox.information(self, "Sukces", "Publikacja grafiku została cofnięta.")
             self.load_initial_status()
-            # --- POCZĄTEK ZMIANY ---
             self.data_provider.clear_publish_status_cache(self.year, self.month)
-            # --- KONIEC ZMIANY ---
             self.data_refresh_needed.emit()
 
-    def get_suggestions(self):
-        # Wersja dla Pythona nie pobiera danych do Excela, tylko wywołuje procedurę
-        # i emituje sygnał do odświeżenia głównego okna.
-        sql = f"exec {SQL_OBJECTS['p_pobierzsugestieii']} {self.year}, {self.month}, {self.month}, {self.year}, 1, 0"
-        if self._execute_procedure(sql):
-             QMessageBox.information(self, "Sukces", "Procedura pobierania sugestii została uruchomiona.<br>Dane zostaną odświeżone.")
-             self.data_refresh_needed.emit()
+    # --- NOWE METODY OBSŁUGI IMPORTU SUGESTII ---
+
+    def _start_suggestion_import(self):
+        """Rozpoczyna asynchroniczny import sugestii."""
+        if self.import_thread:
+            QMessageBox.warning(self, "Import w toku", "Import sugestii jest już uruchomiony.")
+            return
+
+        reply = show_confirmation_dialog(self, "Potwierdzenie",
+                                         "Czy na pewno chcesz pobrać sugestie Konsultantów? Może to spowodować nadpisanie istniejących danych w grafiku.",
+                                         default_button=QMessageBox.No)
+        if reply == QMessageBox.No:
+            return
+
+        debug_print(f"Uruchamianie SuggestionImportThread dla {self.year}-{self.month}")
+
+        self.progress_dialog = QProgressDialog("Importowanie sugestii...", "Anuluj", 0, 0, self)
+        self.progress_dialog.setWindowModality(Qt.WindowModal)
+        self.progress_dialog.setWindowTitle("Przetwarzanie")
+
+        self.import_thread = SuggestionImportThread(self.year, self.month)
+        self.import_thread.finished.connect(self._on_suggestion_import_finished)
+        self.import_thread.error_occurred.connect(self._on_suggestion_import_error)
+        self.progress_dialog.canceled.connect(self.import_thread.cancel)
+
+        self.import_thread.start()
+        self.progress_dialog.show()
+
+    def _on_suggestion_import_finished(self, success: bool, errors: list, headers: list):
+        """Callback po zakończeniu wątku importu sugestii."""
+        debug_print(f"SuggestionImportThread zakończony. Sukces: {success}, Błędów: {len(errors)}")
+
+        if self.progress_dialog:
+            self.progress_dialog.close()
+            self.progress_dialog = None
+
+        if self.import_thread:
+            self.import_thread.deleteLater()
+            self.import_thread = None
+
+        if success:
+            # Zawsze emituj sygnał odświeżenia, aby zobaczyć zaimportowane dane
+            self.data_refresh_needed.emit()
+
+            if errors:
+                QMessageBox.warning(self, "Import zakończony z błędami",
+                                    f"Pomyślnie zakończono import, ale wystąpiło {len(errors)} błędów.\n"
+                                    "Szczegóły zostaną wyświetlone w nowym oknie.")
+                # Automatycznie pokaż okno błędów
+                self._show_error_dialog(errors, headers)
+            else:
+                QMessageBox.information(self, "Sukces", "Import sugestii zakończony pomyślnie. Nie znaleziono błędów.")
+
+    def _on_suggestion_import_error(self, error_message: str):
+        """Callback po krytycznym błędzie wątku."""
+        debug_print(f"SuggestionImportThread zgłosił błąd krytyczny: {error_message}")
+
+        if self.progress_dialog:
+            self.progress_dialog.close()
+            self.progress_dialog = None
+
+        if self.import_thread:
+            self.import_thread.deleteLater()
+            self.import_thread = None
+
+        QMessageBox.critical(self, "Błąd krytyczny importu",
+                             f"Wystąpił błąd krytyczny podczas importu sugestii:\n{error_message}")
+
+    def _show_historical_logs(self):
+        """NOWA METODA: Pobiera i wyświetla historyczne logi """
+        debug_print(f"Pobieranie historycznych logów błędów dla {self.year}-{self.month}")
+        conn = None
+        try:
+            conn = DatabaseConnector.get_connection()
+            cursor = conn.cursor()
+
+            # Zapytanie do trwałej tabeli logów
+            sql = f"""
+                SELECT NrKadrowy, Uzytkownik, DataSugestii, Symbol, KomentarzBledu, DataLogu
+                FROM {SQL_OBJECTS['logsugestieimportin']}
+                WHERE Rok = ? AND Miesiac = ?
+                ORDER BY DataLogu DESC
+            """
+            cursor.execute(sql, (self.year, self.month))
+
+            errors = cursor.fetchall()
+            headers = [col[0] for col in cursor.description] if cursor.description else []
+
+            if not errors:
+                QMessageBox.information(self, "Brak logów",
+                                        f"Nie znaleziono zapisanych błędów importu dla {self.year}-{self.month}.")
+                return
+
+            # Wyświetl błędy w tym samym oknie dialogowym
+            self._show_error_dialog(errors, headers)
+
+        except Exception as e:
+            log_error(f"Błąd podczas pobierania historycznych logów: {e}", exception=e)
+            QMessageBox.critical(self, "Błąd Bazy Danych", f"Nie udało się pobrać logów błędów:<br>{e}")
+        finally:
+            if conn:
+                conn.close()
+
+    def _show_error_dialog(self, errors: list, headers: list):
+        """Tworzy lub aktywuje okno dialogowe z błędami."""
+        try:
+            # Jeśli okno już jest, po prostu je pokaż i aktywuj
+            if self.error_dialog:
+                self.error_dialog.activateWindow()
+                self.error_dialog.raise_()
+                # Możesz dodać logikę aktualizacji danych, jeśli to konieczne
+                # self.error_dialog.populate_table(errors)
+            else:
+                # Stwórz nowe okno
+                self.error_dialog = ErrorDisplayDialog(errors, headers, self.parent_widget)
+                self.error_dialog.finished.connect(self._on_error_dialog_closed)
+                self.error_dialog.set_current_theme(self.is_dark_theme)
+                self.error_dialog.show()
+        except Exception as e:
+            log_error(f"Nie można wyświetlić okna błędów: {e}", exception=e)
+
+    def _on_error_dialog_closed(self):
+        """Callback czyszczący referencję do okna błędów."""
+        debug_print("Okno błędów zostało zamknięte.")
+        self.error_dialog = None
+
+    # --- Metoda get_suggestions została zastąpiona przez _start_suggestion_import ---
 
 
+#
+# --- Początek klasy SuggestionsOutDialog (BEZ ZMIAN) ---
+#
 class SuggestionsOutDialog(QDialog):
     """Dialog do pobierania sugestii i planów dla Lidera OUT."""
     data_refresh_needed = Signal()
 
     def __init__(self, parent, year, month):
-        super().__init__(parent)
+        super().__init__(None)
         self.parent_widget = parent
         self.year = year
         self.month = month
         self.is_dark_theme = getattr(parent, 'is_dark_theme', False)
-        _, self.user_app_id, _, _ = get_modifier_id()
+
+        self.setWindowFlags(
+            Qt.Window | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint | Qt.WindowCloseButtonHint)
+
+        user_app_id, _, _, _, _, login_windows = get_modifier_id()
+        self.user_app_id = user_app_id
+        self.login_windows = login_windows
 
         self.setWindowTitle("Sugestie konsultantów out")
-        self.setMinimumSize(350, 400)
 
         self.setup_ui()
         self.connect_signals()
@@ -460,6 +622,12 @@ class SuggestionsOutDialog(QDialog):
         self.get_suggestions_button.clicked.connect(self._get_consultant_suggestions)
         self.get_vacation_plans_button.clicked.connect(self._get_vacation_plans)
 
+    def set_current_theme(self, is_dark_theme: bool):
+        """Publiczna metoda do odświeżania motywu na żywo."""
+        if self.is_dark_theme != is_dark_theme:
+            self.is_dark_theme = is_dark_theme
+            self.apply_styles()
+
     def apply_styles(self):
         theme = "dark" if self.is_dark_theme else "light"
         self.setStyleSheet(AppStyles.get_dialog_style(theme))
@@ -473,7 +641,6 @@ class SuggestionsOutDialog(QDialog):
         if not selected_items:
             QMessageBox.warning(self, "Brak zaznaczenia", "Proszę wybrać co najmniej jedną grupę z listy.")
             return None
-        # Tworzy string w formacie "'Grupa1','Grupa2',..."
         return ",".join([f"'{item}'" for item in selected_items])
 
     def _load_groups(self):
@@ -483,14 +650,6 @@ class SuggestionsOutDialog(QDialog):
             SELECT distinct PrzelozonyDane 
             FROM {SQL_OBJECTS['konfiguracjazatrudnienie']}
             """
-
-            # FROM dbo.v_DO_KonfiguracjaZatrudnienie
-            # WHERE (Status = 'Aktywny' Or DataZwolnienia > '{self.year}-{self.month}-28') 
-            #   AND flag=1 AND NieobecnoscDlugoterminowa=0 AND rola in (1,2,3) 
-            #   AND Jednostka=4 AND flag=1 AND NieobecnoscDlugoterminowa=0 
-            #   AND rola in (select rola from v_DO_KonfiguracjaZatrudnienie where DataZatrudnienia<'{self.year}-{self.month}-01' and DataZwolnienia>'{self.year}-{self.month}-01' and Jednostka=4) 
-            # ORDER BY PrzelozonyDane
-
         try:
             conn = DatabaseConnector.get_connection()
             cursor = conn.cursor()
@@ -526,10 +685,6 @@ class SuggestionsOutDialog(QDialog):
 
     def _get_vacation_plans(self):
         """Adaptacja logiki VBA dla przycisku 'Pobierz plany urlopowe'."""
-        # UWAGA: Poniższa logika jest bardzo złożona i silnie uzależniona od struktury Excela.
-        # W aplikacji Python najlepszą praktyką byłoby przeniesienie tej logiki
-        # do DEDYKOWANEJ PROCEDURY SKŁADOWANEJ w SQL Server.
-        # Poniższy kod jest uproszczoną adaptacją, która tylko wywołuje taką procedurę.
         selected_groups_str = self._get_selected_groups_str()
         if not selected_groups_str:
             return
@@ -542,7 +697,6 @@ class SuggestionsOutDialog(QDialog):
             return
 
         try:
-            # Zakładamy, że istnieje procedura, która hermetyzuje logikę z pętli VBA
             sql = f"EXEC {SQL_OBJECTS['p_importujplanyurlopowe']} {self.year}, {self.month}, '{self.user_app_id}', {selected_groups_str}"
             conn = DatabaseConnector.get_connection()
             conn.execute(sql)
@@ -551,4 +705,5 @@ class SuggestionsOutDialog(QDialog):
             QMessageBox.information(self, "Sukces", "Plany urlopowe zostały pobrane.")
             self.data_refresh_needed.emit()
         except Exception as e:
-            QMessageBox.critical(self, "Błąd Bazy Danych", f"Wystąpił błąd podczas pobierania planów urlopowych:<br>{e}")
+            QMessageBox.critical(self, "Błąd Bazy Danych",
+                                 f"Wystąpił błąd podczas pobierania planów urlopowych:<br>{e}")
