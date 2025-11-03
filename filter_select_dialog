@@ -1,0 +1,180 @@
+# filter_select_dialog.py
+# -*- coding: utf-8 -*-
+
+from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
+                               QListWidget, QListWidgetItem, QAbstractItemView, QSpacerItem,
+                               QSizePolicy, QGroupBox)
+from PySide6.QtCore import Qt
+from styles import AppStyles
+
+
+class FilterSelectDialog(QDialog):
+    """
+    Dialog do wyboru widocznych filtrów i ich kolejności.
+    Bazowany na ColumnSelectDialog, ale uproszczony do zarządzania filtrami.
+    """
+
+    def __init__(self, parent=None, available_filters=None, visible_filters=None):
+        """
+        Inicjalizuje dialog.
+
+        Args:
+            parent: Widget nadrzędny.
+            available_filters (list): Lista tupli (filter_id, display_name, is_locked)
+                                      dla wszystkich możliwych filtrów.
+            visible_filters (list): Lista stringów (filter_id) dla aktualnie
+                                    widocznych filtrów, we właściwej kolejności.
+        """
+        super().__init__(parent)
+        self.parent_widget = parent
+        self.setWindowTitle("Dostosowywanie widoku filtrów")
+        self.setMinimumWidth(300)
+        self.setMinimumHeight(500)
+
+        # Dane
+        self.available_filters = available_filters or []
+        self.visible_filters = visible_filters or []
+        self.filter_map = {f_id: (name, locked) for f_id, name, locked in self.available_filters}
+
+        # UI
+        self.setup_ui()
+        self.populate_list()
+        self.apply_dialog_theme()
+        self.connect_signals()
+        self.update_button_states()
+
+    def setup_ui(self):
+        main_layout = QVBoxLayout(self)
+
+        # --- Sekcja widocznoścí filtrów ---
+        filters_group = QGroupBox("Widoczność i kolejność filtrów")
+        filters_group_layout = QVBoxLayout(filters_group)
+
+        filters_group_layout.addWidget(
+            QLabel("Przeciągnij filtry, aby zmienić ich kolejność.\nOdznacz, aby ukryć."))
+
+        columns_layout = QHBoxLayout()
+        self.filters_list = QListWidget()
+        self.filters_list.setSelectionMode(QAbstractItemView.SingleSelection)
+        self.filters_list.setDragDropMode(QAbstractItemView.InternalMove)
+
+        order_buttons_layout = QVBoxLayout()
+        self.move_up_button = QPushButton("▲ Wyżej")
+        self.move_down_button = QPushButton("▼ Niżej")
+        order_buttons_layout.addWidget(self.move_up_button)
+        order_buttons_layout.addWidget(self.move_down_button)
+        order_buttons_layout.addStretch()
+
+        columns_layout.addWidget(self.filters_list)
+        columns_layout.addLayout(order_buttons_layout)
+        filters_group_layout.addLayout(columns_layout)
+
+        main_layout.addWidget(filters_group)
+
+        # --- Przyciski OK / Anuluj ---
+        buttons_layout = QHBoxLayout()
+        buttons_layout.addSpacerItem(QSpacerItem(40, 20, QSizePolicy.Expanding, QSizePolicy.Minimum))
+        self.ok_button = QPushButton("OK")
+        self.cancel_button = QPushButton("Anuluj")
+        buttons_layout.addWidget(self.ok_button)
+        buttons_layout.addWidget(self.cancel_button)
+
+        main_layout.addLayout(buttons_layout)
+
+    def connect_signals(self):
+        self.ok_button.clicked.connect(self.accept)
+        self.cancel_button.clicked.connect(self.reject)
+        self.move_up_button.clicked.connect(self.move_item_up)
+        self.move_down_button.clicked.connect(self.move_item_down)
+        self.filters_list.itemSelectionChanged.connect(self.update_button_states)
+
+    def populate_list(self):
+        """Wypełnia listę filtrów na podstawie visible_filters i available_filters."""
+        self.filters_list.clear()
+
+        # Słownik do śledzenia, które filtry zostały już dodane
+        added_filters = set()
+
+        # 1. Dodaj widoczne filtry w zapisanej kolejności
+        for filter_id in self.visible_filters:
+            if filter_id in self.filter_map:
+                name, is_locked = self.filter_map[filter_id]
+                self._add_list_item(filter_id, name, is_locked, is_checked=True)
+                added_filters.add(filter_id)
+
+        # 2. Dodaj pozostałe dostępne filtry, które nie są widoczne
+        for f_id, name, is_locked in self.available_filters:
+            if f_id not in added_filters:
+                self._add_list_item(f_id, name, is_locked, is_checked=False)
+
+    def _add_list_item(self, filter_id, name, is_locked, is_checked):
+        """Dodaje pojedynczy element do listy, ustawiając jego flagi."""
+        item = QListWidgetItem(name)
+        item.setData(Qt.UserRole, filter_id)
+
+        base_flags = Qt.ItemIsEnabled | Qt.ItemIsSelectable | Qt.ItemIsDragEnabled
+
+        if is_locked:
+            item.setCheckState(Qt.Checked)
+            # Zablokowany element nie jest ani odznaczalny, ani przesuwany
+            item.setFlags(base_flags & ~Qt.ItemIsUserCheckable & ~Qt.ItemIsDragEnabled)
+            # Można też dodać ikonę kłódki lub zmienić tło dla lepszej informacji wizualnej
+            # item.setIcon(self.style().standardIcon(QStyle.SP_ToolBarHorizontalExtensionButton))
+        else:
+            item.setCheckState(Qt.Checked if is_checked else Qt.Unchecked)
+            item.setFlags(base_flags | Qt.ItemIsUserCheckable)
+
+        self.filters_list.addItem(item)
+
+    def update_button_states(self):
+        """Aktualizuje stan przycisków 'Wyżej'/'Niżej'."""
+        current_item = self.filters_list.currentItem()
+        if not current_item:
+            self.move_up_button.setEnabled(False)
+            self.move_down_button.setEnabled(False)
+            return
+
+        current_row = self.filters_list.currentRow()
+        item_count = self.filters_list.count()
+
+        # Sprawdź, czy element nie jest zablokowany
+        is_locked = not (current_item.flags() & Qt.ItemIsDragEnabled)
+
+        self.move_up_button.setEnabled(current_row > 0 and not is_locked)
+        self.move_down_button.setEnabled(current_row >= 0 and current_row < item_count - 1 and not is_locked)
+
+    def move_item_up(self):
+        row = self.filters_list.currentRow()
+        if row > 0:
+            item = self.filters_list.takeItem(row)
+            self.filters_list.insertItem(row - 1, item)
+            self.filters_list.setCurrentRow(row - 1)
+
+    def move_item_down(self):
+        row = self.filters_list.currentRow()
+        if row < self.filters_list.count() - 1:
+            item = self.filters_list.takeItem(row)
+            self.filters_list.insertItem(row + 1, item)
+            self.filters_list.setCurrentRow(row + 1)
+
+    def get_visible_filters_ordered(self):
+        """Zwraca listę ID filtrów, które są zaznaczone, w kolejności z listy."""
+        return [self.filters_list.item(i).data(Qt.UserRole) for i in range(self.filters_list.count()) if
+                self.filters_list.item(i).checkState() == Qt.Checked]
+
+    def apply_dialog_theme(self):
+        """Stosuje motyw do okna dialogowego."""
+        actual_theme = "dark"
+        if self.parent_widget and hasattr(self.parent_widget, 'is_dark_theme'):
+            actual_theme = "dark" if self.parent_widget.is_dark_theme else "light"
+
+        combined_style = (
+                AppStyles.get_dialog_style(actual_theme) +
+                AppStyles.get_list_style(actual_theme)
+        )
+        self.setStyleSheet(combined_style)
+
+        button_style = AppStyles.get_button_style(actual_theme)
+        for btn in [self.move_up_button, self.move_down_button,
+                    self.ok_button, self.cancel_button]:
+            btn.setStyleSheet(button_style)
