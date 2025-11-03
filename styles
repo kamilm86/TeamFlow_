@@ -210,37 +210,39 @@ class AppStyles:
         if theme == "dark":
             bg = AppStyles.DARK_BACKGROUND_CONTROLS
             alt_bg = AppStyles.DARK_BACKGROUND_MAIN
-            text = AppStyles.DARK_TEXT_PRIMARY
+            text = AppStyles.DARK_TEXT_PRIMARY  # Ten jest jasny
             grid = AppStyles.DARK_BORDER_SECONDARY
             selection_bg = AppStyles.SELECTION_BACKGROUND_DARK
             header_bg = AppStyles.DARK_BACKGROUND_PRESSED
         else:  # Jasny motyw
             bg = AppStyles.LIGHT_BACKGROUND_CONTROLS
             alt_bg = AppStyles.LIGHT_BACKGROUND_HOVER
-            text = AppStyles.LIGHT_TEXT_PRIMARY
+            text = AppStyles.LIGHT_TEXT_PRIMARY  # Ten jest ciemny
             grid = AppStyles.LIGHT_BORDER_PRIMARY
             selection_bg = AppStyles.SELECTION_BACKGROUND_LIGHT
-            header_bg = "#e0e0e0"
+            header_bg = "#e0e0e0"  # Jasnoszary nagłówek
 
+        # --- ZMIANA W SEKCJI 'QHeaderView::section' ---
         return f"""
-                   QTableView {{
-                       background-color: {bg};
-                       color: {text};
-                       gridline-color: {grid};
-                       selection-background-color: {selection_bg};
-                       selection-color: white;
-                       alternate-background-color: {alt_bg};
-                       border: 1px solid {grid};
-                   }}
-                   QTableView::item:selected {{
-                       background-color: {selection_bg};
-                   }}
-                   QHeaderView::section {{
-                       background-color: {header_bg};
-                       border: 1px solid {grid};
-                       padding: 4px;
-                   }}
-               """
+                       QTableView, QTableView#StaffingTable {{
+                           background-color: {bg};
+                           color: {text};
+                           gridline-color: {grid};
+                           selection-background-color: {selection_bg};
+                           selection-color: white;
+                           alternate-background-color: {alt_bg};
+                           border: 1px solid {grid};
+                       }}
+                       QTableView::item:selected, QTableView#StaffingTable::item:selected {{
+                           background-color: {selection_bg};
+                       }}
+                       QHeaderView::section {{
+                           background-color: {header_bg};
+                           color: {text}; /* <--- TUTAJ JEST DODANA LINIA --- */
+                           border: 1px solid {grid};
+                           padding: 4px;
+                       }}
+                   """
 
     @staticmethod
     def get_tablewidget_style(theme="dark"):
