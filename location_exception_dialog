@@ -298,9 +298,10 @@ class LocationExceptionDialog(QDialog):
 
                 # Krok 2: Wywołaj operację asynchroniczną
                 if params_list:
-                    self.parent_widget.location_exception_manager.start_operations(
-                        params_list, self._on_operation_finished
-                    )
+                    self.parent_widget.location_exception_manager.start_operations(params_list, self._on_operation_finished)
+                # --- KONIEC NOWEJ LOGIKI ---
+                else:
+                    QMessageBox.information(self, "Informacja", "Brak dni do dodania w wybranym zakresie.")
 
     def _edit_exception(self):
         selected_items = self.table.selectedItems()
