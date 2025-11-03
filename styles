@@ -220,9 +220,8 @@ class AppStyles:
             text = AppStyles.LIGHT_TEXT_PRIMARY  # Ten jest ciemny
             grid = AppStyles.LIGHT_BORDER_PRIMARY
             selection_bg = AppStyles.SELECTION_BACKGROUND_LIGHT
-            header_bg = "#e0e0e0"  # Jasnoszary nagłówek
+            header_bg = "#e0e0e0"
 
-        # --- ZMIANA W SEKCJI 'QHeaderView::section' ---
         return f"""
                        QTableView, QTableView#StaffingTable {{
                            background-color: {bg};
@@ -238,7 +237,9 @@ class AppStyles:
                        }}
                        QHeaderView::section {{
                            background-color: {header_bg};
-                           color: {text}; /* <--- TUTAJ JEST DODANA LINIA --- */
+                           /* --- USUNIĘTA LINIA POWODUJĄCA PROBLEM --- */
+                           /* color: {text}; */ 
+                           /* --- KONIEC ZMIANY --- */
                            border: 1px solid {grid};
                            padding: 4px;
                        }}
