@@ -21,7 +21,7 @@ class ColumnSelectDialog(QDialog):
         super().__init__(parent)
         self.parent_widget = parent
         self.setWindowTitle("Dostosowywanie widoku tabeli")
-        self.setMinimumWidth(600)
+        self.setMinimumWidth(400)
         self.setMinimumHeight(550)
 
         # Dane
