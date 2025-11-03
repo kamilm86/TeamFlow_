@@ -29,28 +29,23 @@ def create_outlook_email(recipients: list, subject: str = "", body: str = "", se
     try:
         mail = outlook.CreateItem(0)
 
-        # Pobierz domyślną stopkę (Outlook wstawia ją automatycznie do pustej wiadomości)
-        original_body = mail.HTMLBody
-
         # Ustaw odbiorców
         if send_individually:
             mail.BCC = "; ".join(recipients)
         else:
             mail.To = "; ".join(recipients)
-
         mail.Subject = subject
 
-        # Wstaw nową treść PRZED istniejącą stopką.
-        # Jeśli `body` jest puste, w wiadomości zostanie tylko stopka.
+        # --- POCZĄTEK POPRAWKI: Niezawodne wstawianie stopki i przenoszenie okna na wierzch ---
+
+        # Krok 1: Wyświetl okno. To powoduje, że Outlook wstawia domyślną stopkę.
+        mail.Display()
+
+        # Krok 2: Pobierz treść (która teraz zawiera stopkę) i dodaj nową treść na początku.
+        original_body = mail.HTMLBody
         mail.HTMLBody = body + original_body
 
-        # --- POCZĄTEK POPRAWKI: Niezawodne przenoszenie okna na wierzch ---
-        # Krok 1: Najpierw wyświetl okno wiadomości. To sprawia, że Outlook wie,
-        #         że to okno istnieje i jest gotowe do interakcji.
-        mail.Display()
-        # Krok 2: Następnie aktywuj jego "inspektora" (czyli samo okno).
-        #         To polecenie jest znacznie skuteczniejsze, gdy okno jest już widoczne
-        #         i niezawodnie przenosi je na wierzch innych aplikacji.
+        # Krok 3: Aktywuj okno, aby przenieść je na wierzch.
         mail.GetInspector.Activate()
 
         return True, "OK"
