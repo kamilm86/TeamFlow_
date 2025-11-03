@@ -44,9 +44,13 @@ def create_outlook_email(recipients: list, subject: str = "", body: str = "", se
         # Jeśli `body` jest puste, w wiadomości zostanie tylko stopka.
         mail.HTMLBody = body + original_body
 
-        # --- NOWA, BARDZIEJ NIEZAWODNA METODA ---
-        # Zamiast Display(True), aktywujemy "inspektora" (okno) wiadomości.
-        # To w bardziej zdecydowany sposób przenosi okno na wierzch.
+        # --- POCZĄTEK POPRAWKI: Niezawodne przenoszenie okna na wierzch ---
+        # Krok 1: Najpierw wyświetl okno wiadomości. To sprawia, że Outlook wie,
+        #         że to okno istnieje i jest gotowe do interakcji.
+        mail.Display()
+        # Krok 2: Następnie aktywuj jego "inspektora" (czyli samo okno).
+        #         To polecenie jest znacznie skuteczniejsze, gdy okno jest już widoczne
+        #         i niezawodnie przenosi je na wierzch innych aplikacji.
         mail.GetInspector.Activate()
 
         return True, "OK"
