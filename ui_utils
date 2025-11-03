@@ -2,14 +2,17 @@
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QPushButton
 from PySide6.QtWidgets import QMessageBox
+from styles import AppStyles  # <-- 1. DODANO IMPORT
 
 
-def show_confirmation_dialog(parent, title: str, message: str, default_button=QMessageBox.Yes) -> QMessageBox.StandardButton:
+def show_confirmation_dialog(parent, title: str, message: str,
+                             default_button=QMessageBox.Yes) -> QMessageBox.StandardButton:
     """
     Wyświetla standardowe okno dialogowe z potwierdzeniem, ale z polskimi przyciskami "Tak" i "Nie".
+    WERSJA ZMODYFIKOWANA: Stosuje motyw (jasny/ciemny) na podstawie rodzica.
 
     Args:
-        parent: Widget nadrzędny.
+        parent: Widget nadrzędny (musi posiadać atrybut 'is_dark_theme').
         title (str): Tytuł okna.
         message (str): Treść wiadomości.
         default_button (QMessageBox.StandardButton): Domyślnie zaznaczony przycisk.
@@ -18,13 +21,39 @@ def show_confirmation_dialog(parent, title: str, message: str, default_button=QM
         QMessageBox.StandardButton: Zwraca QMessageBox.Yes lub QMessageBox.No w zależności od wyboru.
     """
     msg_box = QMessageBox(parent)
+
+    # --- POCZĄTEK NOWEJ LOGIKI STYLOWANIA ---
+
+    # 1. Ustal motyw na podstawie rodzica
+    # Domyślnie ciemny, jeśli rodzic nie ma atrybutu (chociaż powinien)
+    is_dark = getattr(parent, 'is_dark_theme', True)
+    theme = "dark" if is_dark else "light"
+
+    # 2. Pobierz odpowiednie style
+    # Pobieramy czcionkę z rodzica, aby zapewnić spójny rozmiar
+    font_family = parent.font().family()
+    font_size = parent.font().pointSize()
+
+    dialog_style = AppStyles.get_dialog_style(theme)
+    button_style = AppStyles.get_button_style(theme, font_family, font_size)
+
+    # 3. Zastosuj styl do okna dialogowego
+    # Musimy użyć 'QMessageBox' jako selektora, aby nadpisać domyślne style Qt
+    msg_box.setStyleSheet(dialog_style.replace("QDialog {", "QMessageBox {"))
+
+    # --- KONIEC NOWEJ LOGIKI STYLOWANIA ---
+
     msg_box.setWindowTitle(title)
-    msg_box.setTextFormat(Qt.RichText)  # <-- KLUCZOWA ZMIANA
+    msg_box.setTextFormat(Qt.RichText)  # <-- KLUCZOWA ZMIANA (była już obecna)
     msg_box.setText(message)
     msg_box.setIcon(QMessageBox.Question)
 
     yes_button = msg_box.addButton("Tak", QMessageBox.YesRole)
     no_button = msg_box.addButton("Nie", QMessageBox.NoRole)
+
+    # 4. Zastosuj styl do przycisków
+    yes_button.setStyleSheet(button_style)
+    no_button.setStyleSheet(button_style)
 
     if default_button == QMessageBox.Yes:
         msg_box.setDefaultButton(yes_button)
@@ -33,8 +62,8 @@ def show_confirmation_dialog(parent, title: str, message: str, default_button=QM
 
     msg_box.exec()
 
-    # --- POPRAWIONA LOGIKA ---
-    # Sprawdzamy, kt\u00f3ry przycisk zosta\u0142 klikni\u0119ty i zwracamy odpowiedni\u0105 warto\u015b\u0107 enum.
+    # --- POPRAWIONA LOGIKA (była już obecna) ---
+    # Sprawdzamy, który przycisk został kliknięty i zwracamy odpowiednią wartość enum.
     clicked_btn = msg_box.clickedButton()
     if clicked_btn == yes_button:
         return QMessageBox.Yes
