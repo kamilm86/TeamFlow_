@@ -1,1 +1,144 @@
 https://mailmeteor.com/logos/microsoft-excel
+1.Włączenie Service Broker dla bazy danych (jeśli nie jest jeszcze włączony): Zastąp [TwojaBazaDanych] nazwą swojej bazy danych.SQLALTER DATABASE [TwojaBazaDanych] SET ENABLE_BROKER;
+GO2.Utworzenie obiektów Service Broker: Stworzymy typ wiadomości, kontrakt, kolejkę do nasłuchiwania oraz usługę. Te obiekty są wspólne dla wszystkich tabel, które będą wysyłać powiadomienia.SQL-- 1. Utworzenie typu wiadomości dla powiadomień o zmianach
+-- Używamy unikalnej nazwy, aby uniknąć konfliktów
+CREATE MESSAGE TYPE [//TeamFlowApp/Grafik/PowiadomienieZmiany]
+    VALIDATION = NONE;
+GO
+
+-- 2. Utworzenie kontraktu, który określa, kto może wysyłać jaki typ wiadomości
+CREATE CONTRACT [//TeamFlowApp/Grafik/KontraktPowiadomien]
+    ([//TeamFlowApp/Grafik/PowiadomienieZmiany] SENT BY INITIATOR);
+GO
+
+-- 3. Utworzenie kolejki, w której będą gromadzone powiadomienia
+CREATE QUEUE dbo.KolejkaPowiadomienGrafiku;
+GO
+
+-- 4. Utworzenie usługi, która jest punktem końcowym dla wiadomości i jest powiązana z kolejką
+CREATE SERVICE [//TeamFlowApp/Grafik/SerwisPowiadomien]
+    ON QUEUE dbo.KolejkaPowiadomienGrafiku
+    ([//TeamFlowApp/Grafik/KontraktPowiadomien]);
+GO
+
+3.Utworzenie dedykowanych triggerów dla każdej monitorowanej tabeli: Każda tabela, której zmiany chcesz monitorować, będzie miała swój własny trigger. Trigger ten, po każdej operacji INSERT, UPDATE lub DELETE, wyśle wiadomość w formacie XML do kolejki Service Broker. Wiadomość XML będzie zawierać nazwę zmienionej tabeli, co pozwoli aplikacji Python na inteligentne reagowanie.◦Trigger dla GrafikiPracy:SQLCREATE OR ALTER TRIGGER trg_GrafikiPracy_PowiadomienieServiceBroker
+ON dbo.GrafikiPracy
+AFTER INSERT, UPDATE, DELETE
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    IF NOT EXISTS (SELECT * FROM inserted) AND NOT EXISTS (SELECT * FROM deleted)
+    BEGIN
+        RETURN;
+    END
+
+    DECLARE @dialog_handle UNIQUEIDENTIFIER;
+    DECLARE @message_body XML = N'<TeamFlowNotification><TableName>GrafikiPracy</TableName></TeamFlowNotification>';
+
+    BEGIN DIALOG CONVERSATION @dialog_handle
+        FROM SERVICE [//TeamFlowApp/Grafik/SerwisPowiadomien]
+        TO SERVICE '//TeamFlowApp/Grafik/SerwisPowiadomien'
+        ON CONTRACT [//TeamFlowApp/Grafik/KontraktPowiadomien]
+        WITH ENCRYPTION = OFF;
+
+    SEND ON CONVERSATION @dialog_handle
+        MESSAGE TYPE [//TeamFlowApp/Grafik/PowiadomienieZmiany]
+        (@message_body);
+
+    END CONVERSATION @dialog_handle;
+END;
+GO
+
+Triggery dla Spotkania, Szkolenia, Nadgodziny, AppSettings: Powtórz ten wzorzec dla każdej z tych tabel, zmieniając nazwę tabeli w ON dbo.NazwaTabeli oraz w treści XML (<TableName>NazwaTabeli</TableName>).SQL-- Trigger dla tabeli Spotkania
+CREATE OR ALTER TRIGGER trg_Spotkania_PowiadomienieServiceBroker
+ON dbo.Spotkania
+AFTER INSERT, UPDATE, DELETE
+AS
+BEGIN
+    SET NOCOUNT ON;
+    IF NOT EXISTS (SELECT * FROM inserted) AND NOT EXISTS (SELECT * FROM deleted) RETURN;
+
+    DECLARE @dialog_handle UNIQUEIDENTIFIER;
+    DECLARE @message_body XML = N'<TeamFlowNotification><TableName>Spotkania</TableName></TeamFlowNotification>';
+
+    BEGIN DIALOG CONVERSATION @dialog_handle
+        FROM SERVICE [//TeamFlowApp/Grafik/SerwisPowiadomien]
+        TO SERVICE '//TeamFlowApp/Grafik/SerwisPowiadomien'
+        ON CONTRACT [//TeamFlowApp/Grafik/KontraktPowiadomien]
+        WITH ENCRYPTION = OFF;
+
+    SEND ON CONVERSATION @dialog_handle MESSAGE TYPE [//TeamFlowApp/Grafik/PowiadomienieZmiany] (@message_body);
+    END CONVERSATION @dialog_handle;
+END;
+GO
+
+-- Trigger dla tabeli Szkolenia
+CREATE OR ALTER TRIGGER trg_Szkolenia_PowiadomienieServiceBroker
+ON dbo.Szkolenia
+AFTER INSERT, UPDATE, DELETE
+AS
+BEGIN
+    SET NOCOUNT ON;
+    IF NOT EXISTS (SELECT * FROM inserted) AND NOT EXISTS (SELECT * FROM deleted) RETURN;
+
+    DECLARE @dialog_handle UNIQUEIDENTIFIER;
+    DECLARE @message_body XML = N'<TeamFlowNotification><TableName>Szkolenia</TableName></TeamFlowNotification>';
+
+    BEGIN DIALOG CONVERSATION @dialog_handle
+        FROM SERVICE [//TeamFlowApp/Grafik/SerwisPowiadomien]
+        TO SERVICE '//TeamFlowApp/Grafik/SerwisPowiadomien'
+        ON CONTRACT [//TeamFlowApp/Grafik/KontraktPowiadomien]
+        WITH ENCRYPTION = OFF;
+
+    SEND ON CONVERSATION @dialog_handle MESSAGE TYPE [//TeamFlowApp/Grafik/PowiadomienieZmiany] (@message_body);
+    END CONVERSATION @dialog_handle;
+END;
+GO
+-- Trigger dla tabeli Nadgodziny
+CREATE OR ALTER TRIGGER trg_Nadgodziny_PowiadomienieServiceBroker
+ON dbo.Nadgodziny
+AFTER INSERT, UPDATE, DELETE
+AS
+BEGIN
+    SET NOCOUNT ON;
+    IF NOT EXISTS (SELECT * FROM inserted) AND NOT EXISTS (SELECT * FROM deleted) RETURN;
+
+    DECLARE @dialog_handle UNIQUEIDENTIFIER;
+    DECLARE @message_body XML = N'<TeamFlowNotification><TableName>Nadgodziny</TableName></TeamFlowNotification>';
+
+    BEGIN DIALOG CONVERSATION @dialog_handle
+        FROM SERVICE [//TeamFlowApp/Grafik/SerwisPowiadomien]
+        TO SERVICE '//TeamFlowApp/Grafik/SerwisPowiadomien'
+        ON CONTRACT [//TeamFlowApp/Grafik/KontraktPowiadomien]
+        WITH ENCRYPTION = OFF;
+
+    SEND ON CONVERSATION @dialog_handle MESSAGE TYPE [//TeamFlowApp/Grafik/PowiadomienieZmiany] (@message_body);
+    END CONVERSATION @dialog_handle;
+END;
+GO
+
+-- Trigger dla tabeli AppSettings
+CREATE OR ALTER TRIGGER trg_AppSettings_PowiadomienieServiceBroker
+ON dbo.AppSettings
+AFTER INSERT, UPDATE, DELETE
+AS
+BEGIN
+    SET NOCOUNT ON;
+    IF NOT EXISTS (SELECT * FROM inserted) AND NOT EXISTS (SELECT * FROM deleted) RETURN;
+
+    DECLARE @dialog_handle UNIQUEIDENTIFIER;
+    DECLARE @message_body XML = N'<TeamFlowNotification><TableName>AppSettings</TableName></TeamFlowNotification>';
+
+    BEGIN DIALOG CONVERSATION @dialog_handle
+        FROM SERVICE [//TeamFlowApp/Grafik/SerwisPowiadomien]
+        TO SERVICE '//TeamFlowApp/Grafik/SerwisPowiadomien'
+        ON CONTRACT [//TeamFlowApp/Grafik/KontraktPowiadomien]
+        WITH ENCRYPTION = OFF;
+
+    SEND ON CONVERSATION @dialog_handle MESSAGE TYPE [//TeamFlowApp/Grafik/PowiadomienieZmiany] (@message_body);
+    END CONVERSATION @dialog_handle;
+END;
+GO
+Nadanie uprawnień: Użytkownik, w kontekście którego działa Twoja aplikacja Python (lub grupa S_Reader, jeśli ten użytkownik do niej należy), musi mieć uprawnienia do odbierania wiadomości z kolejki.SQLGRANT RECEIVE ON dbo.KolejkaPowiadomienGrafiku TO [S_Reader]; 
+GO
