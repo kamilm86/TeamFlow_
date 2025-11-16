@@ -1,0 +1,9 @@
+Filtr "Obecni w pracy":
+
+Poprawiono logikę w main.py (filter_processed_data), aby poprawnie uwzględniała wybrane godziny i lokalizacje.
+
+Filtry "Użytkownik" i "Przełożony":
+
+Wprowadzono wyszukiwanie po przecinku (np. login1,login2).
+
+Naprawiono błąd resetowania się wyszukiwania po kliknięciu na element listy.
