@@ -1,0 +1,202 @@
+# db_listener.py
+
+from PySide6.QtCore import QThread, Signal
+import xml.etree.ElementTree as ET
+import pyodbc
+import time
+from db_connector import DatabaseConnector
+from debug_utils import log_error, debug_print, log_warning
+
+
+class ServiceBrokerListener(QThread):
+    """
+    Wątek nasłuchujący na powiadomienia z kolejki SQL Server Service Broker.
+    Wersja z obsługą identyfikatora modyfikującego i rozszerzoną obsługą błędów.
+    """
+    # Sygnał przesyła teraz: tabela, rok, miesiąc, MODYFIKUJĄCY
+    notification_received = Signal(str, int, int, str)
+
+    # NOWY SYGNAŁ dla komend: (typ_komendy, cel_użytkownik, dane_dodatkowe)
+    admin_command_received = Signal(str, str, str)
+
+    def __init__(self, queue_name: str, parent=None):
+        super().__init__(parent)
+        self.queue_name = queue_name
+        self._is_cancelled = False
+        self._consecutive_errors = 0
+        self._max_consecutive_errors = 5
+
+    def run(self):
+        """
+        Główna pętla wątku, która łączy się z bazą i czeka na wiadomości.
+        Obsługuje zarówno zmiany danych (Grafik), jak i komendy administracyjne (AppCommands).
+        """
+        debug_print(f"ServiceBrokerListener: Uruchamianie nasłuchu na kolejce '{self.queue_name}'...")
+        conn = None
+
+        # Wyodrębnij nazwę kolejki bez schematu dla zapytań systemowych
+        queue_name_only = self.queue_name.replace('dbo.', '').replace('[', '').replace(']', '')
+
+        while not self._is_cancelled:
+            try:
+                # Nowe połączenie dla każdej iteracji
+                conn = DatabaseConnector.get_connection()
+                cursor = conn.cursor()
+
+                # KROK 1: Sprawdź i włącz kolejkę jeśli jest wyłączona (Fail-safe)
+                try:
+                    cursor.execute(f"""
+                        IF EXISTS (
+                            SELECT 1 
+                            FROM sys.service_queues 
+                            WHERE name = '{queue_name_only}' 
+                            AND is_receive_enabled = 0
+                        )
+                        BEGIN
+                            ALTER QUEUE {self.queue_name} WITH STATUS = ON;
+                            SELECT 1 as WasDisabled;
+                        END
+                        ELSE
+                        BEGIN
+                            SELECT 0 as WasDisabled;
+                        END
+                    """)
+                    result = cursor.fetchone()
+                    if result and result[0] == 1:
+                        debug_print(f"ServiceBrokerListener: Włączono wyłączoną kolejkę {self.queue_name}")
+                    conn.commit()
+                except Exception as enable_error:
+                    log_warning(f"ServiceBrokerListener: Nie udało się sprawdzić/włączyć kolejki: {enable_error}")
+
+                # KROK 2: Czekaj na wiadomość (RECEIVE z TIMEOUT)
+                waitfor_query = f"""
+                    WAITFOR (
+                        RECEIVE TOP(1)
+                            conversation_handle, 
+                            message_type_name, 
+                            CAST(message_body AS VARBINARY(MAX)) AS message_body
+                        FROM {self.queue_name}
+                    ), TIMEOUT 5000;
+                """
+
+                cursor.execute(waitfor_query)
+                result = cursor.fetchone()
+
+                # KROK 3: COMMIT - Bardzo ważne, aby usunąć wiadomość z kolejki
+                conn.commit()
+
+                # KROK 4: Przetwórz wiadomość jeśli nadeszła
+                if result:
+                    self._consecutive_errors = 0  # Reset licznika błędów po sukcesie
+
+                    message_body_bytes = result[2]
+
+                    if message_body_bytes:
+                        try:
+                            # Dekodowanie z UTF-16 (standard SQL Server XML)
+                            message_body_str = message_body_bytes.decode('utf-16')
+                            root = ET.fromstring(message_body_str)
+
+                            # Obsługa różnych struktur XML (z rootem lub bez)
+                            node = root.find('TeamFlowNotification')
+                            if node is None:
+                                node = root.find('.//TeamFlowNotification')
+
+                            if node is not None:
+                                table_name_node = node.find('TableName')
+                                table_name = table_name_node.text if table_name_node is not None else "unknown"
+
+                                # --- SCIEŻKA A: KOMENDY ADMINISTRACYJNE ---
+                                if table_name == 'AppCommands':
+                                    cmd_type_node = node.find('CmdType')
+                                    target_node = node.find('Target')
+                                    data_node = node.find('Data')
+
+                                    cmd_type = cmd_type_node.text if cmd_type_node is not None else "UNKNOWN"
+                                    target = target_node.text if target_node is not None else "ALL"
+                                    data = data_node.text if data_node is not None else ""
+
+                                    debug_print(f"SB Listener: Otrzymano ROZKAZ: {cmd_type} dla {target}")
+                                    # Emitujemy dedykowany sygnał dla komend
+                                    self.admin_command_received.emit(cmd_type, target, data)
+
+                                # --- SCIEŻKA B: STANDARDOWE POWIADOMIENIA O DANYCH ---
+                                else:
+                                    year_node = node.find('Year')
+                                    month_node = node.find('Month')
+                                    modifier_node = node.find('Modifier')
+
+                                    year = int(year_node.text) if year_node is not None else -1
+                                    month = int(month_node.text) if month_node is not None else -1
+                                    modifier = modifier_node.text if modifier_node is not None else "unknown"
+
+                                    # Walidacja danych
+                                    is_valid_specific = year > 0 and month > 0
+                                    is_valid_global = table_name == 'appsettings'
+
+                                    if is_valid_specific or is_valid_global:
+                                        debug_print(
+                                            f"SB Listener: Dane: Tabela={table_name}, Data={year}-{month}, Kto={modifier}")
+                                        # Emitujemy standardowy sygnał
+                                        self.notification_received.emit(table_name, year, month, modifier)
+                                    else:
+                                        debug_print(f"SB Listener: Zignorowano niepoprawne dane: {table_name}")
+
+                        except (ET.ParseError, UnicodeDecodeError, ValueError) as xml_e:
+                            log_error(f"Błąd parsowania XML z Service Broker: {xml_e}", exception=xml_e)
+
+            # --- OBSŁUGA BŁĘDÓW (Twoja wersja) ---
+            except pyodbc.Error as db_error:
+                error_msg = str(db_error)
+
+                # Ignoruj błędy związane z anulowaniem lub DTC
+                if "Operation canceled" in error_msg or "Distributed Transaction Coordinator" in error_msg:
+                    # debug_print(f"ServiceBrokerListener: Zakończenie pętli z powodu anulowania lub błędu DTC")
+                    break
+
+                # Specjalna obsługa błędu wyłączonej kolejki
+                if "is currently disabled" in error_msg:
+                    log_warning(f"ServiceBrokerListener: Kolejka jest wyłączona, czekam przed ponowną próbą...")
+                    time.sleep(5)
+                    continue
+
+                # Inne błędy bazy danych - zliczaj kolejne błędy
+                self._consecutive_errors += 1
+                log_error(f"ServiceBrokerListener: Błąd bazy danych "
+                          f"({self._consecutive_errors}/{self._max_consecutive_errors}): {db_error}",
+                          exception=db_error)
+
+                # Jeśli za dużo błędów pod rząd, zakończ listener
+                if self._consecutive_errors >= self._max_consecutive_errors:
+                    log_error(f"ServiceBrokerListener: Zbyt wiele kolejnych błędów ({self._consecutive_errors}), "
+                              f"zatrzymuję listener.")
+                    break
+
+                time.sleep(5)  # Odczekaj przed ponowną próbą
+
+            except Exception as e:
+                self._consecutive_errors += 1
+                log_error(f"ServiceBrokerListener: Nieoczekiwany błąd "
+                          f"({self._consecutive_errors}/{self._max_consecutive_errors}): {e}",
+                          exception=e)
+
+                if self._consecutive_errors >= self._max_consecutive_errors:
+                    log_error(f"ServiceBrokerListener: Zbyt wiele błędów, zatrzymuję listener.")
+                    break
+
+                time.sleep(5)
+
+            finally:
+                # Zamknij połączenie po każdej iteracji
+                if conn:
+                    try:
+                        conn.close()
+                    except:
+                        pass
+                    conn = None
+
+        debug_print("ServiceBrokerListener: Zakończono nasłuch.")
+
+    def cancel(self):
+        debug_print("ServiceBrokerListener: Otrzymano żądanie zatrzymania.")
+        self._is_cancelled = True
