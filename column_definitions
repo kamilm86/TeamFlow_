@@ -57,7 +57,8 @@ class ColumnDefinitions:
         ),
         'login_windows': ColumnDefinition(
             id='login_windows', name='LoginWindows', data_type=DataType.STRING,
-            default_value='', description='LoginWindows', selectable_in_ui=False, required=False
+            default_value='', description='LoginWindows', width=100,
+            selectable_in_ui=True,  required=False
         ),
         'nr_kadrowy': ColumnDefinition(
             id='nr_kadrowy', name='NumerKadrowy', data_type=DataType.STRING,
@@ -132,6 +133,10 @@ class ColumnDefinitions:
         'user_id': ColumnDefinition(
             id='user_id', name='ID użytkownika', data_type=DataType.INTEGER,
             default_value=0, description='ID użytkownika', required=True
+        ),
+        'user_name': ColumnDefinition(
+            id='user_name', name='UzytkownikDane', data_type=DataType.STRING,
+            default_value='', description='UzytkownikDane', required=True
         ),
         'date': ColumnDefinition(
             id='date', name='Data zdarzenia', data_type=DataType.STRING,
