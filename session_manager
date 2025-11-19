@@ -1,0 +1,118 @@
+# session_manager.py
+# -*- coding: utf-8 -*-
+
+from db_connector import DatabaseConnector
+from debug_utils import log_error, debug_print
+from config import SQL_OBJECTS  # Dodano import obiektów SQL z pliku konfiguracyjnego
+from _version import __version__ as APP_VERSION
+from typing import Optional
+
+
+class SessionManager:
+    """
+    Menedżer sesji użytkownika aplikacji.
+
+    Odpowiada za rejestrowanie rozpoczęcia sesji, wysyłanie sygnałów życia (heartbeat)
+    oraz bezpieczne zamykanie sesji w bazie danych.
+    """
+
+    def __init__(self, user_login: str):
+        """
+        Inicjalizuje menedżera sesji.
+
+        Args:
+            user_login (str): Login użytkownika systemu Windows/Aplikacji.
+        """
+        self.user_login = user_login
+        self.session_id: Optional[int] = None
+
+        # Pobieramy nazwę tabeli z konfigu, z fallbackiem na 'AppSessions' w razie błędu konfiguracji
+        self.table_name = SQL_OBJECTS.get('appsessions', 'AppSessions')
+
+    def start_session(self) -> None:
+        """
+        Rejestruje nową sesję w bazie danych przy starcie aplikacji.
+        Ustawia self.session_id na podstawie zwróconego ID z bazy.
+        """
+        conn = None
+        try:
+            conn = DatabaseConnector.get_connection()
+            cursor = conn.cursor()
+
+            # Używamy dynamicznej nazwy tabeli z self.table_name
+            sql = f"""
+                INSERT INTO {self.table_name} (LoginWindows, AppVersion, SessionStart, LastHeartbeat)
+                OUTPUT INSERTED.SessionId
+                VALUES (?, ?, GETDATE(), GETDATE())
+            """
+
+            cursor.execute(sql, (self.user_login, APP_VERSION))
+            row = cursor.fetchone()
+
+            if row:
+                self.session_id = row[0]
+                debug_print(f"SessionManager: Rozpoczęto sesję ID: {self.session_id} dla {self.user_login}")
+            else:
+                debug_print("SessionManager: Nie udało się pobrać ID nowej sesji.")
+
+            conn.commit()
+
+        except Exception as e:
+            log_error(f"Błąd startu sesji (SessionManager): {e}", exception=e)
+        finally:
+            if conn:
+                conn.close()
+
+    def send_heartbeat(self) -> None:
+        """
+        Aktualizuje czas ostatniej aktywności (LastHeartbeat) dla bieżącej sesji.
+        Powinno być uruchamiane cyklicznie (np. co 5 minut) przez QTimer w głównym wątku.
+        """
+        if not self.session_id:
+            return
+
+        conn = None
+        try:
+            conn = DatabaseConnector.get_connection()
+            cursor = conn.cursor()
+
+            sql = f"UPDATE {self.table_name} SET LastHeartbeat = GETDATE() WHERE SessionId = ?"
+            cursor.execute(sql, (self.session_id,))
+
+            conn.commit()
+            # debug_print(f"SessionManager: Heartbeat wysłany dla sesji {self.session_id}")
+
+        except Exception as e:
+            # Cichy błąd heartbeat'u nie jest krytyczny, ale warto go odnotować w debugu
+            # Używamy debug_print zamiast log_error, aby nie zaśmiecać logów produkcyjnych przy chwilowych problemach z siecią
+            debug_print(f"SessionManager: Błąd wysyłania heartbeat: {e}")
+        finally:
+            if conn:
+                conn.close()
+
+    def end_session(self, exit_type: str = "Normal") -> None:
+        """
+        Zamyka sesję w bazie danych, ustawiając czas zakończenia i typ wyjścia.
+
+        Args:
+            exit_type (str): Typ zamknięcia ('Normal', 'UserExit', 'RemoteKill', 'Error').
+        """
+        if not self.session_id:
+            return
+
+        conn = None
+        try:
+            conn = DatabaseConnector.get_connection()
+            cursor = conn.cursor()
+
+            sql = f"UPDATE {self.table_name} SET SessionEnd = GETDATE(), ExitType = ? WHERE SessionId = ?"
+            cursor.execute(sql, (exit_type, self.session_id))
+
+            conn.commit()
+            debug_print(f"SessionManager: Sesja {self.session_id} zakończona (Typ: {exit_type}).")
+
+        except Exception as e:
+            log_error(f"Błąd zamykania sesji (SessionManager): {e}", exception=e)
+        finally:
+            if conn:
+                conn.close()
