@@ -1,118 +1,695 @@
-# session_manager.py
-# -*- coding: utf-8 -*-
+# schedule_model.py
+from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QDate
+from PySide6.QtGui import QColor, QBrush, QFont
+from debug_utils import debug_print, log_warning, log_error
+from styles import AppStyles
+from symbol_parser import parse_symbol, get_symbol_description
+from app_settings import app_settings
+from config import SQL_OBJECTS
 
-from db_connector import DatabaseConnector
-from debug_utils import log_error, debug_print
-from config import SQL_OBJECTS  # Dodano import obiektów SQL z pliku konfiguracyjnego
-from _version import __version__ as APP_VERSION
-from typing import Optional
+# Definicje ról danych
+ROLE_DATA = Qt.UserRole
+ROLE_ID = Qt.UserRole + 1
+ROLE_TYPE = Qt.UserRole + 2
+ROLE_HAS_MEETING = Qt.UserRole + 3
+ROLE_HAS_OVERTIME = Qt.UserRole + 4
+ROLE_SPECIAL_SYMBOL = Qt.UserRole + 5
+ROLE_LOCATION_SYMBOL = Qt.UserRole + 6
+ROLE_ICON_COLOR = Qt.UserRole + 7
+ROLE_IS_SUGGESTED_OFF = Qt.UserRole + 8
+ROLE_RAW_TEXT = Qt.UserRole + 9
+ROLE_HEADER_TYPE = Qt.UserRole + 10
+
+# --- Palety kolorów ---
+ROW_COLORS_LIGHT_THEME = {
+    "#e57373": "#ffebee", "#f06292": "#fce4ec", "#ba68c8": "#f3e5f5",
+    "#64b5f6": "#e3f2fd", "#4dd0e1": "#e0f7fa", "#81c784": "#e8f5e9",
+    "#ffb74d": "#fff8e1", "#ff8a65": "#fbe9e7",
+}
+
+ROW_COLORS_DARK_THEME = {
+    "#e57373": "#4e2c2c", "#f06292": "#5c2b3a", "#ba68c8": "#4a2a51",
+    "#64b5f6": "#2a4a65", "#4dd0e1": "#235359", "#81c784": "#335034",
+    "#ffb74d": "#66491d", "#ff8a65": "#663728",
+}
 
 
-class SessionManager:
-    """
-    Menedżer sesji użytkownika aplikacji.
+class ScheduleTableModel(QAbstractTableModel):
+    ROLE_DATA = ROLE_DATA
+    ROLE_ID = ROLE_ID
+    ROLE_TYPE = ROLE_TYPE
+    ROLE_HAS_MEETING = ROLE_HAS_MEETING
+    ROLE_HAS_OVERTIME = ROLE_HAS_OVERTIME
+    ROLE_SPECIAL_SYMBOL = ROLE_SPECIAL_SYMBOL
+    ROLE_LOCATION_SYMBOL = ROLE_LOCATION_SYMBOL
+    ROLE_ICON_COLOR = ROLE_ICON_COLOR
+    ROLE_IS_SUGGESTED_OFF = ROLE_IS_SUGGESTED_OFF
+    RawTextRole = ROLE_RAW_TEXT
+    ROLE_HEADER_TYPE = ROLE_HEADER_TYPE
 
-    Odpowiada za rejestrowanie rozpoczęcia sesji, wysyłanie sygnałów życia (heartbeat)
-    oraz bezpieczne zamykanie sesji w bazie danych.
-    """
+    def __init__(self, parent=None, user_role=None, column_map=None):
+        super().__init__(parent)
+        self._data = []
+        self._processed_data = {}
+        self._keys = []
+        self._column_headers = []
+        self._row_count = 0
+        self._column_count = 0
+        self._weekend_columns = []
 
-    def __init__(self, user_login: str):
-        """
-        Inicjalizuje menedżera sesji.
+        # INICJALIZACJA FLAG PRZED BUDOWANIEM KOLUMN
+        self._show_comment_column = False
+        self._show_percent_morning_column = False
 
-        Args:
-            user_login (str): Login użytkownika systemu Windows/Aplikacji.
-        """
-        self.user_login = user_login
-        self.session_id: Optional[int] = None
+        self._visible_columns = []
+        self._year = None
+        self._month = None
+        self._days_in_month = 0
+        self._working_days = 0
+        self._is_dark_theme = False
+        self._data_provider = None
+        self._row_colors = {}
+        self.column_map = column_map if column_map is not None else {}
+        self._custom_columns = {}
 
-        # Pobieramy nazwę tabeli z konfigu, z fallbackiem na 'AppSessions' w razie błędu konfiguracji
-        self.table_name = SQL_OBJECTS.get('appsessions', 'AppSessions')
+        self.user_role = user_role
+        self.keyboard_edit_roles = ["Pracownik WPR", "Lider OUT"]
 
-    def start_session(self) -> None:
-        """
-        Rejestruje nową sesję w bazie danych przy starcie aplikacji.
-        Ustawia self.session_id na podstawie zwróconego ID z bazy.
-        """
-        conn = None
-        try:
-            conn = DatabaseConnector.get_connection()
-            cursor = conn.cursor()
+        from column_definitions import ColumnDefinitions
+        self.column_definitions = ColumnDefinitions()
+        self._employee_columns = self.column_definitions.get_ui_display_columns()
+        self._visible_columns = self.column_definitions.DEFAULT_VISIBLE_COLUMNS.copy()
 
-            # Używamy dynamicznej nazwy tabeli z self.table_name
-            sql = f"""
-                INSERT INTO {self.table_name} (LoginWindows, AppVersion, SessionStart, LastHeartbeat)
-                OUTPUT INSERTED.SessionId
-                VALUES (?, ?, GETDATE(), GETDATE())
-            """
+        # BUDOWANIE STRUKTURY NA KOŃCU __INIT__
+        self._update_column_structure()
+        self._icons_cache = {}
 
-            cursor.execute(sql, (self.user_login, APP_VERSION))
-            row = cursor.fetchone()
+    def set_column_map(self, column_map: dict):
+        self.column_map = column_map
+        self._update_column_structure()
 
-            if row:
-                self.session_id = row[0]
-                debug_print(f"SessionManager: Rozpoczęto sesję ID: {self.session_id} dla {self.user_login}")
+    def set_row_colors(self, colors: dict) -> None:
+        self._row_colors = colors if colors is not None else {}
+        self.dataChanged.emit(self.index(0, 0), self.index(self.rowCount() - 1, self.columnCount() - 1))
+
+    def set_custom_columns(self, custom_columns: dict):
+        self._custom_columns = custom_columns if custom_columns is not None else {}
+        self.column_map.update({col_id: data['name'] for col_id, data in self._custom_columns.items()})
+        self._update_column_structure()
+
+    def set_show_percent_morning_column(self, visible: bool):
+        """Włącza/wyłącza widoczność kolumny 'Procent rano'."""
+        debug_print(
+            f"[DEBUG] ScheduleModel: set_show_percent_morning_column START. Nowa wartość: {visible}, Stara: {self._show_percent_morning_column}")
+
+        if self._show_percent_morning_column != visible:
+            self.beginResetModel()
+
+            # KLUCZOWE: Ustawienie wartości MUSI nastąpić przed przebudową struktury
+            self._show_percent_morning_column = visible
+            debug_print(
+                f"[DEBUG] ScheduleModel: Ustawiłem self._show_percent_morning_column na: {self._show_percent_morning_column}")
+
+            # Teraz wywołaj metodę budującą nagłówki
+            self._update_column_structure()
+
+            self.endResetModel()
+            debug_print(f"[DEBUG] ScheduleModel: Zakończono reset modelu. Liczba kolumn: {self._column_count}")
+        else:
+            debug_print("[DEBUG] ScheduleModel: Wartość bez zmian, pomijam reset.")
+
+    def _update_column_structure(self):
+        """Buduje nagłówki kolumn w zależności od widoczności opcji."""
+        # Debug przed budowaniem
+        debug_print(
+            f"[DEBUG] ScheduleModel._update_column_structure START. Flagi: Comment={self._show_comment_column}, Percent={self._show_percent_morning_column}")
+
+        self._column_headers = [self.column_map.get(cid, cid) for cid in self._visible_columns]
+
+        # Dni miesiąca
+        for day in range(1, 32):
+            label = "---"
+            if self._year and self._month and QDate.isValid(self._year, self._month, day):
+                label = ["Pn", "Wt", "Śr", "Cz", "Pt", "So", "Nd"][QDate(self._year, self._month, day).dayOfWeek() - 1]
+            self._column_headers.append(f"{day}\n{label}")
+
+        # Kolumny stałe
+        self._column_headers.extend(["Suma\nRBH", "Bilans\nRBH"])
+
+        # Kolumny opcjonalne
+        if self._show_percent_morning_column:
+            self._column_headers.append("Procent\nrano")
+            debug_print("[DEBUG] Dodano nagłówek 'Procent rano'")
+        else:
+            debug_print("[DEBUG] POMINIĘTO nagłówek 'Procent rano' (flaga False)")
+
+        if self._show_comment_column:
+            self._column_headers.append("Komentarz")
+            debug_print("[DEBUG] Dodano nagłówek 'Komentarz'")
+
+        self._column_count = len(self._column_headers)
+        debug_print(f"[DEBUG] ScheduleModel._update_column_structure KONIEC. Liczba kolumn: {self._column_count}")
+
+    def data(self, index, role=Qt.DisplayRole):
+        if not index.isValid(): return None
+        row, col = index.row(), index.column()
+        if not (0 <= row < self._row_count and 0 <= col < self._column_count and row < len(self._keys)): return None
+
+        key = self._keys[row]
+        row_data = self._processed_data.get(key, {})
+        is_employee_column = col < len(self._visible_columns)
+
+        day_data = {}
+        if not is_employee_column:
+            schedule_col_check = col - len(self._visible_columns)
+            if schedule_col_check < 31:
+                day = schedule_col_check + 1
+                day_data = row_data.get('days', {}).get(day, {})
+
+        # --- ForegroundRole (Czcionka) ---
+        if role == Qt.ForegroundRole:
+            if not is_employee_column:
+                bg_color_hex = day_data.get('_bg_color_hex')
+                if bg_color_hex:
+                    color = QColor(bg_color_hex)
+                    luminance = 0.299 * color.red() + 0.587 * color.green() + 0.114 * color.blue()
+                    return QBrush(QColor(Qt.GlobalColor.white if luminance < 128 else Qt.GlobalColor.black))
+                elif day_data.get('symbol'):
+                    return QBrush(QColor(Qt.GlobalColor.white if self._is_dark_theme else Qt.GlobalColor.black))
+
+            if is_employee_column:
+                user_id = str(key[3])
+                if user_id in self._row_colors:
+                    return QBrush(QColor(Qt.GlobalColor.black if not self._is_dark_theme else Qt.GlobalColor.white))
+            return None
+
+        # --- Pozostałe role ---
+        if role == ROLE_SPECIAL_SYMBOL: return parse_symbol(day_data.get('symbol', '')).get(
+            'special_symbol') if day_data.get('symbol') else None
+        if role == ROLE_LOCATION_SYMBOL: return parse_symbol(day_data.get('symbol', '')).get(
+            'location') if day_data.get('symbol') else None
+        if role == ROLE_IS_SUGGESTED_OFF: return day_data.get('is_suggested_off', False)
+
+        # --- DisplayRole (Tekst) ---
+        if role == Qt.DisplayRole:
+            if is_employee_column:
+                col_id = self._visible_columns[col]
+                if col_id.startswith("custom_"):
+                    user_id = str(key[3])
+                    storage_key = f"{user_id}|{self._year}|{self._month}"
+                    return self._custom_columns.get(col_id, {}).get('values', {}).get(storage_key, "")
+                else:
+                    if col_id == 'wydzial':
+                        return key[0] or ""
+                    elif col_id == 'przelozony_nazwisko_imie':
+                        return row_data.get('przelozony_nazwisko_imie', '')
+                    elif col_id == 'uzytkownik_dane':
+                        return key[2] or ""
+                    else:
+                        return str(row_data.get(col_id, ''))
             else:
-                debug_print("SessionManager: Nie udało się pobrać ID nowej sesji.")
+                schedule_col = col - len(self._visible_columns)
 
-            conn.commit()
+                # 1. Dni (0..30)
+                if schedule_col < 31:
+                    return day_data.get('_display_value', "")
 
+                # 2. Suma (31)
+                elif schedule_col == 31:
+                    return str(row_data.get('total_hours', 0))
+
+                # 3. Bilans (32)
+                elif schedule_col == 32:
+                    try:
+                        etat = float(row_data.get('etat', 0) or 0)
+                        total = float(row_data.get('total_hours', 0) or 0)
+                        wd = self._working_days if hasattr(self, '_working_days') and self._working_days > 0 else 21
+                        return str(int(round((etat * wd) - total)))
+                    except:
+                        return "0.0"
+
+                # 4. Dynamiczne kolumny za bilansem (indeksy od 33)
+                current_check_idx = 33
+
+                # Procent rano
+                if self._show_percent_morning_column:
+                    if schedule_col == current_check_idx:
+                        return self._calculate_morning_percentage_display(row_data)
+                    current_check_idx += 1
+
+                # Komentarz
+                if self._show_comment_column:
+                    if schedule_col == current_check_idx:
+                        return row_data.get('komentarz_grafik', '')
+
+            return ""
+
+        # --- BackgroundRole (Tło) ---
+        if role == Qt.BackgroundRole:
+            if is_employee_column:
+                user_id = str(key[3])
+                if user_id in self._row_colors:
+                    base_hex = self._row_colors[user_id]
+                    pal = ROW_COLORS_DARK_THEME if self._is_dark_theme else ROW_COLORS_LIGHT_THEME
+                    final = pal.get(base_hex)
+                    if final: return QBrush(QColor(final))
+
+            if not is_employee_column:
+                schedule_col = col - len(self._visible_columns)
+                if day_data.get('is_suggested_off', False): return QBrush(QColor("#006400"))
+
+                if schedule_col < self._days_in_month:
+                    bg_hex = day_data.get('_bg_color_hex')
+                    if bg_hex:
+                        return QBrush(QColor(bg_hex))
+                    if day_data.get('symbol'):
+                        return QBrush(QColor(65, 65, 65) if self._is_dark_theme else QColor(225, 225, 225))
+
+        if role == Qt.ToolTipRole: return get_symbol_description(day_data.get('symbol', '')) if day_data.get(
+            'symbol') else None
+        if role == ROLE_DATA: return self._get_user_data(row_data, key, col, is_employee_column)
+        if role == ROLE_HAS_MEETING: return self._get_dynamic_meeting_icon(key, col, is_employee_column)
+        if role == ROLE_HAS_OVERTIME: return self._get_dynamic_overtime_icon(key, col, is_employee_column)
+        if role == Qt.TextAlignmentRole:
+            if is_employee_column: return Qt.AlignLeft | Qt.AlignVCenter
+            schedule_col = col - len(self._visible_columns)
+            if schedule_col >= 31:
+                base_idx = 33
+                if self._show_percent_morning_column: base_idx += 1
+                if self._show_comment_column and schedule_col == base_idx:
+                    return Qt.AlignLeft | Qt.AlignVCenter
+                return Qt.AlignCenter
+            return Qt.AlignBottom | Qt.AlignHCenter
+
+        return None
+
+    def _calculate_morning_percentage_display(self, row_data):
+        """Oblicza procent zmian porannych (start 0-13) względem wszystkich zmian roboczych."""
+        morning_shifts = 0
+        total_working_shifts = 0
+
+        for day in range(1, 32):
+            day_data = row_data.get('days', {}).get(day, {})
+            symbol = day_data.get('symbol', '')
+            if not symbol: continue
+
+            parsed = parse_symbol(symbol)
+            if parsed.get('special_symbol'): continue
+
+            start_hour = parsed.get('start_hour')
+            if start_hour is not None:
+                total_working_shifts += 1
+                if 0 <= start_hour <= 13:
+                    morning_shifts += 1
+
+        if total_working_shifts == 0: return "0%"
+        val = int((morning_shifts / total_working_shifts) * 100)
+        return f"{val}%"
+
+    def _calculate_morning_percentage_value(self, row_data):
+        """Wersja zwracająca float do sortowania."""
+        morning_shifts = 0
+        total_working_shifts = 0
+        for day in range(1, 32):
+            day_data = row_data.get('days', {}).get(day, {})
+            symbol = day_data.get('symbol', '')
+            if not symbol: continue
+            parsed = parse_symbol(symbol)
+            if parsed.get('special_symbol'): continue
+            start_hour = parsed.get('start_hour')
+            if start_hour is not None:
+                total_working_shifts += 1
+                if 0 <= start_hour <= 13:
+                    morning_shifts += 1
+
+        if total_working_shifts == 0: return 0.0
+        return (morning_shifts / total_working_shifts) * 100.0
+
+    def _get_sort_key(self, key, col_id):
+        row_data = self._processed_data.get(key, {})
+
+        if col_id == 'percent_morning':
+            return self._calculate_morning_percentage_value(row_data)
+
+        if col_id.startswith("custom_"):
+            user_id = str(key[3])
+            if hasattr(self, '_custom_columns') and self._custom_columns:
+                storage_key = f"{user_id}|{self._year}|{self._month}"
+                value = self._custom_columns.get(col_id, {}).get('values', {}).get(storage_key, "")
+                try:
+                    return float(value)
+                except (ValueError, TypeError):
+                    return str(value).lower()
+            else:
+                return ""
+
+        if col_id == 'wydzial': return key[0] or ""
+        if col_id == 'przelozony': return key[1] or ""
+        if col_id == 'uzytkownik_dane': return key[2] or ""
+        if col_id == 'uzytkownik_id': return int(key[3] or 0)
+
+        value = row_data.get(col_id, '')
+
+        if col_id in ['etat', 'dtn', 'korekta']:
+            return float(value or 0)
+
+        if col_id == 'total_hours':
+            return float(row_data.get('total_hours', 0) or 0)
+
+        if col_id == 'balance_hours':
+            try:
+                etat = float(row_data.get('etat', 0) or 0)
+                total_hours = float(row_data.get('total_hours', 0) or 0)
+                working_days = self._working_days if hasattr(self, '_working_days') and self._working_days > 0 else 21
+                balance = (etat * working_days) - total_hours
+                return balance
+            except (ValueError, TypeError):
+                return 0.0
+
+        if col_id == 'komentarz_grafik':
+            return str(row_data.get('komentarz_grafik', ''))
+
+        return str(value)
+
+    def sort(self, column, order):
+        if column >= len(self._visible_columns): return
+        col_id = self._visible_columns[column]
+        self.layoutAboutToBeChanged.emit()
+        self._keys.sort(key=lambda k: self._get_sort_key(k, col_id), reverse=(order == Qt.DescendingOrder))
+        self.layoutChanged.emit()
+
+    def sort_by_column_id(self, col_id: str, order: Qt.SortOrder):
+        if not self._keys: return
+        self.layoutAboutToBeChanged.emit()
+        try:
+            self._keys.sort(key=lambda k: self._get_sort_key(k, col_id), reverse=(order == Qt.DescendingOrder))
         except Exception as e:
-            log_error(f"Błąd startu sesji (SessionManager): {e}", exception=e)
-        finally:
-            if conn:
-                conn.close()
+            log_error(f"Błąd sortowania po col_id '{col_id}': {e}", exception=e)
+        self.layoutChanged.emit()
 
-    def send_heartbeat(self) -> None:
-        """
-        Aktualizuje czas ostatniej aktywności (LastHeartbeat) dla bieżącej sesji.
-        Powinno być uruchamiane cyklicznie (np. co 5 minut) przez QTimer w głównym wątku.
-        """
-        if not self.session_id:
-            return
+    def rowCount(self, parent=QModelIndex()):
+        return self._row_count if not parent.isValid() else 0
 
-        conn = None
+    def columnCount(self, parent=QModelIndex()):
+        return self._column_count
+
+    def set_show_comment_column(self, visible: bool):
+        if self._show_comment_column != visible:
+            self.beginResetModel()
+            self._show_comment_column = visible
+            self._update_column_structure()
+            self.endResetModel()
+
+    def set_visible_columns(self, column_ids):
+        """
+        PRZYWRÓCONA METODA: Ustawia widoczne kolumny pracownika i przebudowuje nagłówki.
+        """
+        if self._visible_columns != column_ids:
+            self.beginResetModel()  # Ważne: resetuj model, bo zmienia się liczba kolumn
+            self._visible_columns = column_ids
+            self._update_column_structure()
+            self.endResetModel()
+
+    def setData(self, index, value, role=Qt.EditRole):
+        if not index.isValid() or role != Qt.EditRole:
+            return False
+        row, col = index.row(), index.column()
+        if not (0 <= row < len(self._keys)): return False
+        key = self._keys[row]
+        if col >= len(self._visible_columns):
+            schedule_col = col - len(self._visible_columns)
+            if schedule_col < self._days_in_month:
+                day = schedule_col + 1
+                user_data = self._processed_data[key]
+                day_data = user_data.setdefault('days', {}).setdefault(day, {})
+                old_symbol = day_data.get('symbol', '')
+                new_symbol = str(value)
+                day_data['symbol'] = new_symbol
+                parsed = parse_symbol(new_symbol)
+                old_hours = parse_symbol(old_symbol).get('work_hours', 0) or 0
+                new_hours = parsed.get('work_hours', 0) or 0
+                day_data['hours'] = new_hours
+                day_data['start_hour'] = parsed.get('start_hour')
+                user_data['total_hours'] = (user_data.get('total_hours', 0) or 0) - old_hours + new_hours
+
+                start_h = parsed.get('start_hour')
+                work_h = parsed.get('work_hours')
+                spec = parsed.get('special_symbol')
+                spec_upper = spec.upper() if spec else ""
+                day_data['_display_value'] = ""
+                if start_h is not None:
+                    if work_h is not None:
+                        val_float = float(work_h)
+                        val_str = str(int(val_float)) if val_float.is_integer() else str(val_float)
+                        day_data['_display_value'] = f"{start_h};{val_str}"
+                    else:
+                        day_data['_display_value'] = str(start_h)
+                bg_color = None
+                absence_set = app_settings.get_absence_symbols()
+                is_absence = spec_upper in absence_set or spec_upper in ["OS", "U", "UZ"]
+                if is_absence:
+                    if spec_upper in ["OS", "U", "UZ"]:
+                        bg_color = "#FFFF00"
+                    else:
+                        bg_color = "#9370DB"
+                elif start_h is not None:
+                    try:
+                        bg_color = app_settings.SHIFT_COLOR_MAP.get(int(start_h), "#FFFFFF")
+                    except (ValueError, TypeError):
+                        bg_color = "#FFFFFF"
+                day_data['_bg_color_hex'] = bg_color
+
+                self.dataChanged.emit(index, index, [Qt.DisplayRole, Qt.BackgroundRole])
+
+                right_edge = self.columnCount() - 1
+                start_calc_col = len(self._visible_columns) + self._days_in_month
+                self.dataChanged.emit(self.index(row, start_calc_col), self.index(row, right_edge),
+                                      [Qt.DisplayRole, Qt.BackgroundRole])
+                return True
+        return False
+
+    def flags(self, index):
+        if not index.isValid(): return Qt.NoItemFlags
+        flags = Qt.ItemIsEnabled | Qt.ItemIsSelectable
+        if self.user_role in self.keyboard_edit_roles:
+            col = index.column()
+            if col >= len(self._visible_columns) and (col - len(self._visible_columns)) < self._days_in_month:
+                flags |= Qt.ItemIsEditable
+        return flags
+
+    def headerData(self, section, orientation, role=Qt.DisplayRole):
+        if orientation == Qt.Horizontal:
+            if role == Qt.DisplayRole:
+                if section < len(self._column_headers):
+                    return self._column_headers[section]
+            elif role == self.RawTextRole:
+                if section < len(self._column_headers):
+                    return self._column_headers[section].replace('<br>', '\\n')
+            elif role == ROLE_HEADER_TYPE:
+                visible_columns_count = len(self._visible_columns)
+                if section >= visible_columns_count:
+                    schedule_column = section - len(self._visible_columns)
+                    day = schedule_column + 1
+                    if self._year and self._month and QDate.isValid(self._year, self._month, day):
+                        current_date = QDate(self._year, self._month, day)
+                        if current_date == QDate.currentDate(): return "today"
+                        if schedule_column in self._weekend_columns: return "weekend"
+                return "normal"
+            elif role == Qt.ForegroundRole:
+                visible_columns_count = len(self._visible_columns)
+                if section >= visible_columns_count:
+                    schedule_column = section - len(self._visible_columns)
+                    day = schedule_column + 1
+                    if self._year and self._month and QDate.isValid(self._year, self._month, day):
+                        current_date = QDate(self._year, self._month, day)
+                        if current_date == QDate.currentDate(): return QBrush(QColor(AppStyles.ACCENT_COLOR_DARK))
+                        if schedule_column in self._weekend_columns: return QBrush(QColor("#E74C3C"))
+            elif role == Qt.TextAlignmentRole:
+                return Qt.AlignCenter
+        elif orientation == Qt.Vertical:
+            if role == Qt.DisplayRole: return str(section + 1)
+        return None
+
+    def set_theme(self, is_dark_theme):
+        if self._is_dark_theme != is_dark_theme:
+            self._is_dark_theme = is_dark_theme
+            self.layoutChanged.emit()
+            if self._column_count > 0:
+                self.headerDataChanged.emit(Qt.Horizontal, 0, self._column_count - 1)
+
+    def _get_user_data(self, row_data, key, col, is_employee_column):
+        base_data = {
+            'wydzial': key[0] or '', 'przelozony': key[1] or '',
+            'przelozony_nazwisko_imie': row_data.get('przelozony_nazwisko_imie', ''),
+            'nazwisko_imie': row_data.get('nazwisko_imie', ''), 'uzytkownik_dane': key[2] or '',
+            'uzytkownik_id': key[3] or 0, 'nr_kadrowy': row_data.get('nr_kadrowy', ''),
+            'rola_nazwa': row_data.get('rola_nazwa', ''), 'pod_rola_nazwa': row_data.get('pod_rola_nazwa', ''),
+            'etat': row_data.get('etat', ''), 'jezyk': row_data.get('jezyk', ''),
+            'korekta': row_data.get('korekta', ''), 'dtn': row_data.get('dtn', ''),
+            'lokalizacja_domyslna': row_data.get('lokalizacja_domyslna', ''),
+            'komentarz_grafik': row_data.get('komentarz_grafik', ''),
+            'system_czasu_pracy': row_data.get('system_czasu_pracy', ''), 'column_type': 'employee'
+        }
+        if is_employee_column:
+            return base_data
+        else:
+            schedule_col = col - len(self._visible_columns)
+            if schedule_col < self._days_in_month:
+                day = schedule_col + 1
+                days_data = row_data.get('days', {})
+                day_data = days_data.get(day, {})
+                date_str = f"{self._year}-{self._month:02d}-{day:02d}" if self._year and self._month else ''
+                day_specific_data = {
+                    'date_str': date_str, 'day': day, 'symbol': day_data.get('symbol', ''),
+                    'hours': day_data.get('hours', 0), 'start_hour': day_data.get('start_hour'),
+                    'has_meeting': day_data.get('spotkania', 0) > 0,
+                    'has_training': day_data.get('szkolenia', 0) > 0,
+                    'has_overtime': day_data.get('nadgodziny', 0) > 0,
+                    'is_suggested_off': day_data.get('is_suggested_off', False),
+                    'events': day_data.get('events', []), 'column_type': 'schedule'
+                }
+                base_data.update(day_specific_data)
+                return base_data
+            return base_data
+
+    def _get_dynamic_meeting_icon(self, key, col, is_employee_column):
+        if is_employee_column: return False
+        schedule_col = col - len(self._visible_columns)
+        if schedule_col >= self._days_in_month: return False
+        day = schedule_col + 1
+        if not self._year or not self._month: return False
+        row_data = self._processed_data.get(key, {})
+        days_data = row_data.get('days', {})
+        day_data = days_data.get(day, {})
+        has_meetings = day_data.get('spotkania', 0) > 0
+        has_trainings = day_data.get('szkolenia', 0) > 0
+        return has_meetings or has_trainings
+
+    def _get_dynamic_overtime_icon(self, key, col, is_employee_column):
+        if is_employee_column: return False
+        schedule_col = col - len(self._visible_columns)
+        if schedule_col >= self._days_in_month: return False
+        day = schedule_col + 1
+        if not self._year or not self._month: return False
+        row_data = self._processed_data.get(key, {})
+        days_data = row_data.get('days', {})
+        day_data = days_data.get(day, {})
+        has_overtime = day_data.get('nadgodziny', 0) > 0
+        return has_overtime
+
+    def refresh_specific_icons(self, user_date_pairs):
+        if not user_date_pairs or not self._data_provider: return
+        affected_cells = []
+        for user_id, date_str in user_date_pairs:
+            cache_key = (user_id, date_str)
+            if hasattr(self, '_icons_cache') and cache_key in self._icons_cache: del self._icons_cache[cache_key]
+            try:
+                year, month, day_str_part = date_str.split('-')
+                day = int(day_str_part)
+                if int(year) != self._year or int(month) != self._month: continue
+                for idx, key in enumerate(self._keys):
+                    if str(key[3]) == str(user_id):
+                        col = len(self._visible_columns) + day - 1
+                        if 0 <= col < self._column_count: affected_cells.append((idx, col))
+                        break
+            except:
+                continue
+        for row, col in affected_cells:
+            model_index = self.index(row, col)
+            self.dataChanged.emit(model_index, model_index, [self.ROLE_HAS_MEETING, self.ROLE_HAS_OVERTIME])
+
+    def update_data(self, processed_data, year, month):
+        self.beginResetModel()
+        self._year, self._month = year, month
+        self._days_in_month = self._get_days_in_month(year, month)
+        self._weekend_columns = self._find_weekend_columns(year, month)
+        self._working_days = self._fetch_working_days(year, month)
+        self._processed_data = processed_data if processed_data else {}
+        self._keys = list(self._processed_data.keys())
+        self._row_count = len(self._keys)
+        self._update_column_structure()
+        self.endResetModel()
+
+    def get_visible_columns(self):
+        return self._visible_columns
+
+    def update_filtered_data(self, filtered_data):
+        new_keys, new_row_count = list(filtered_data.keys()), len(filtered_data)
+        if self._row_count != new_row_count or self._keys != new_keys:
+            self.beginResetModel()
+            self._processed_data, self._keys, self._row_count = filtered_data, new_keys, new_row_count
+            self.endResetModel()
+        else:
+            self._processed_data = filtered_data
+            self.dataChanged.emit(self.index(0, 0), self.index(self._row_count - 1, self._column_count - 1))
+
+    def get_processed_data(self):
+        return self._processed_data
+
+    def _fetch_working_days(self, year, month):
+        from db_connector import DatabaseConnector
         try:
             conn = DatabaseConnector.get_connection()
             cursor = conn.cursor()
-
-            sql = f"UPDATE {self.table_name} SET LastHeartbeat = GETDATE() WHERE SessionId = ?"
-            cursor.execute(sql, (self.session_id,))
-
-            conn.commit()
-            # debug_print(f"SessionManager: Heartbeat wysłany dla sesji {self.session_id}")
-
+            query = f"SELECT iloscDniPracujacych FROM {SQL_OBJECTS['dnipracujace']} WHERE ROK = ? AND Miesiac = ?"
+            result = cursor.execute(query, (year, month)).fetchone()
+            conn.close()
+            return result[0]
         except Exception as e:
-            # Cichy błąd heartbeat'u nie jest krytyczny, ale warto go odnotować w debugu
-            # Używamy debug_print zamiast log_error, aby nie zaśmiecać logów produkcyjnych przy chwilowych problemach z siecią
-            debug_print(f"SessionManager: Błąd wysyłania heartbeat: {e}")
-        finally:
-            if conn:
-                conn.close()
+            log_error(f"Błąd pobierania dni pracujących: {e}", exception=e)
+            return 21
 
-    def end_session(self, exit_type: str = "Normal") -> None:
-        """
-        Zamyka sesję w bazie danych, ustawiając czas zakończenia i typ wyjścia.
+    def _get_days_in_month(self, year, month):
+        return QDate(year, month, 1).daysInMonth() if year and month else 30
 
-        Args:
-            exit_type (str): Typ zamknięcia ('Normal', 'UserExit', 'RemoteKill', 'Error').
-        """
-        if not self.session_id:
-            return
+    def _find_weekend_columns(self, year, month):
+        if not year or not month: return []
+        return [d - 1 for d in range(1, self._get_days_in_month(year, month) + 1) if
+                QDate.isValid(year, month, d) and QDate(year, month, d).dayOfWeek() >= 6]
 
-        conn = None
+    def update_cell_icons_directly(self, user_id, date_str, has_meetings=False, has_trainings=False,
+                                   has_overtime=False):
+        if not all([self._year, self._month, date_str]): return False
         try:
-            conn = DatabaseConnector.get_connection()
-            cursor = conn.cursor()
+            year, month, day_part = date_str.split('-')
+            day, year, month = int(day_part), int(year), int(month)
+            if year != self._year or month != self._month: return False
+            target_key = next((k for k in self._keys if str(k[3]) == str(user_id)), None)
+            if not target_key: return False
+            if target_key in self._processed_data:
+                day_data = self._processed_data[target_key].setdefault('days', {}).setdefault(day, {})
+                day_data.update({'spotkania': 1 if has_meetings else 0, 'szkolenia': 1 if has_trainings else 0,
+                                 'nadgodziny': 1 if has_overtime else 0})
+                row_index = self._keys.index(target_key)
+                col = len(self._visible_columns) + day - 1
+                model_index = self.index(row_index, col)
+                self.dataChanged.emit(model_index, model_index, [self.ROLE_HAS_MEETING, self.ROLE_HAS_OVERTIME])
+                return True
+        except Exception:
+            return False
+        return False
 
-            sql = f"UPDATE {self.table_name} SET SessionEnd = GETDATE(), ExitType = ? WHERE SessionId = ?"
-            cursor.execute(sql, (exit_type, self.session_id))
+    def sort_by_day(self, day: int, order: Qt.SortOrder):
+        if not self._keys: return
+        self.layoutAboutToBeChanged.emit()
 
-            conn.commit()
-            debug_print(f"SessionManager: Sesja {self.session_id} zakończona (Typ: {exit_type}).")
+        def get_day_sort_key(key):
+            day_data = self._processed_data.get(key, {}).get('days', {}).get(day, {})
+            symbol = day_data.get('symbol', '')
+            if not symbol: return (1, 99, 99, "")
+            parsed = parse_symbol(symbol)
+            start = parsed.get('start_hour')
+            hours = parsed.get('work_hours')
+            special = parsed.get('special_symbol') or ''
+            if start is None and hours is None and special: return (1, 99, 99, special)
+            return (0, start if start is not None else 99, hours if hours is not None else 99, special)
 
-        except Exception as e:
-            log_error(f"Błąd zamykania sesji (SessionManager): {e}", exception=e)
-        finally:
-            if conn:
-                conn.close()
+        self._keys.sort(key=get_day_sort_key, reverse=(order == Qt.DescendingOrder))
+        self.layoutChanged.emit()
+
+    def set_employee_columns(self, columns, visible_columns=None):
+        self._employee_columns = [c for c in columns if isinstance(c, tuple) and len(c) == 3] if isinstance(columns,
+                                                                                                            list) else []
+        self._visible_columns = visible_columns if visible_columns is not None else [c[0] for c in
+                                                                                     self._employee_columns[:3]]
+        if self._year is not None: self._update_column_structure()
