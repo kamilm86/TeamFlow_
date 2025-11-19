@@ -160,7 +160,10 @@ BEGIN
     -- Rok i Miesiąc nie są potrzebne, ponieważ zmiany są globalne
     SET @message_body = (
         SELECT 
-            'appsettings' AS TableName
+            'appsettings' AS TableName,
+            0 AS Year,
+            0 AS Month,
+            USER_NAME() AS Modifier
         FOR XML PATH('TeamFlowNotification'), ROOT('NotificationData')
     );
 
