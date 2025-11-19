@@ -15,6 +15,7 @@ class SplitTableView(QWidget):
     """
     selection_changed = Signal()
     day_sort_requested = Signal(int, Qt.SortOrder)
+    generic_sort_requested = Signal(str, Qt.SortOrder)
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -27,7 +28,9 @@ class SplitTableView(QWidget):
         self.schedule_view = QTableView()
 
         # Konfiguracja tabeli pracowników (employees_view)
-        self.employees_view.setSelectionBehavior(QAbstractItemView.SelectRows)
+        # --- ZMIANA: Zezwól na zaznaczanie pojedynczych komórek, a nie całych wierszy ---
+        self.employees_view.setSelectionBehavior(QAbstractItemView.SelectItems)
+        # --- KONIEC ZMIANY ---
         self.employees_view.setSelectionMode(QAbstractItemView.ExtendedSelection)
         self.employees_view.verticalHeader().setVisible(True)
         self.employees_view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
@@ -77,16 +80,12 @@ class SplitTableView(QWidget):
         # ZMIANA: Jedno centralne połączenie dla wszystkich kliknięć w nagłówek grafiku
         self.schedule_view.horizontalHeader().sectionClicked.connect(self._on_schedule_header_section_clicked)
 
-    # NOWA METODA: Centralny punkt obsługi kliknięć w nagłówek grafiku
     def _on_schedule_header_section_clicked(self, logical_index: int):
-        """
-        Obsługuje kliknięcia w nagłówek. Decyduje, czy zaznaczyć kolumnę (z Ctrl),
-        czy posortować (zwykłe kliknięcie).
-        """
+        """Obsługuje kliknięcia w nagłówek grafiku."""
         header = self.schedule_view.horizontalHeader()
 
-        # Scenariusz 1: Zaznaczanie kolumny (wciśnięty Ctrl)
         if QApplication.keyboardModifiers() & Qt.ControlModifier:
+            # ... (Obsługa Ctrl+Click bez zmian) ...
             if logical_index != -1:
                 self._is_updating = True
                 schedule_sm = self.schedule_view.selectionModel()
@@ -106,33 +105,70 @@ class SplitTableView(QWidget):
                     self._is_updating = False
 
                 self.selection_changed.emit()
-                # Zresetuj wskaźnik sortowania, jeśli był ustawiony
                 header.setSortIndicator(-1, Qt.AscendingOrder)
                 self._last_sorted_day_index = -1
-
-        # Scenariusz 2: Sortowanie (zwykłe kliknięcie)
         else:
             if not self._model: return
 
             # Ustalenie kierunku sortowania
             if self._last_sorted_day_index == logical_index:
-                # Jeśli kliknięto tę samą kolumnę, odwróć kierunek
                 self._current_day_sort_order = Qt.DescendingOrder if self._current_day_sort_order == Qt.AscendingOrder else Qt.AscendingOrder
             else:
-                # Jeśli kliknięto nową kolumnę, ustaw domyślne sortowanie rosnące
                 self._current_day_sort_order = Qt.AscendingOrder
 
             self._last_sorted_day_index = logical_index
-
-            # Ręczne ustawienie wskaźnika sortowania (strzałki)
             header.setSortIndicator(logical_index, self._current_day_sort_order)
 
-            # Emisja sygnału do okna głównego z prośbą o posortowanie danych
+            # --- DYNAMICZNE OBLICZANIE INDEKSÓW KOLUMN ---
             employee_cols_count = len(self._model.get_visible_columns())
-            if logical_index >= employee_cols_count:
+            days_in_month_fixed = 31  # Model rezerwuje 31 slotów
+
+            day_col_start = employee_cols_count
+            day_col_end = employee_cols_count + days_in_month_fixed - 1
+
+            # Indeksy bazowe (Suma jest zaraz po dniach)
+            base_idx = employee_cols_count + days_in_month_fixed
+            total_hours_col = base_idx
+            balance_hours_col = base_idx + 1
+
+            # Dynamiczne indeksy dla opcjonalnych kolumn
+            current_idx = base_idx + 2
+            percent_morning_col = -1
+            comment_col = -1
+
+            # WAŻNE: Kolejność musi być identyczna jak w schedule_model._update_column_structure
+            if self._model._show_percent_morning_column:
+                percent_morning_col = current_idx
+                current_idx += 1
+
+            if self._model._show_comment_column:
+                comment_col = current_idx
+
+            col_id_to_sort = None
+
+            if day_col_start <= logical_index <= day_col_end:
                 day = logical_index - employee_cols_count + 1
                 if 1 <= day <= self._model._days_in_month:
                     self.day_sort_requested.emit(day, self._current_day_sort_order)
+                else:
+                    header.setSortIndicator(-1, Qt.AscendingOrder)
+                    self._last_sorted_day_index = -1
+                return
+
+            elif logical_index == total_hours_col:
+                col_id_to_sort = "total_hours"
+
+            elif logical_index == balance_hours_col:
+                col_id_to_sort = "balance_hours"
+
+            elif logical_index == percent_morning_col:
+                col_id_to_sort = "percent_morning"
+
+            elif logical_index == comment_col:
+                col_id_to_sort = "komentarz_grafik"
+
+            if col_id_to_sort:
+                self.generic_sort_requested.emit(col_id_to_sort, self._current_day_sort_order)
 
     def _on_column_ctrl_clicked(self, logical_index: int):
         """Obsługuje zaznaczenie całej kolumny po Ctrl+Click."""
@@ -197,7 +233,7 @@ class SplitTableView(QWidget):
         if h_scrollbar:
             h_scrollbar.setStyleSheet("""
                 QScrollBar:horizontal {
-                    height: 17px;
+                    height: 12px;
                     background: transparent;
                     border: none;
                 }
@@ -318,6 +354,36 @@ class SplitTableView(QWidget):
             self._force_sync_heights()
             self._connect_signals()
 
+    def setup_columns(self):
+        """
+        Konfiguruje widoczność kolumn w obu tabelach na podstawie danych z modelu.
+        Ta metoda jest bezpieczna do wywołania po zmianie konfiguracji kolumn w modelu.
+        """
+        if not self._model:
+            return
+
+        debug_print("[DEBUG] SplitTableView: setup_columns - START")
+        visible_employee_cols = self._model.get_visible_columns()
+        employee_columns_count = len(visible_employee_cols)
+        total_model_cols = self._model.columnCount()
+
+        debug_print(
+            f"[DEBUG] SplitTableView: employee_columns_count={employee_columns_count}, total_model_cols={total_model_cols}")
+
+        for col in range(self._model.columnCount()):
+            is_employee_col = col < employee_columns_count
+            self.employees_view.setColumnHidden(col, not is_employee_col)
+            self.schedule_view.setColumnHidden(col, is_employee_col)
+            # Loguj tylko te 'dziwne' przypadki na końcu tabeli
+            if col >= total_model_cols - 5:
+                hidden_in_schedule = self.schedule_view.isColumnHidden(col)
+                header_text = self._model.headerData(col, Qt.Horizontal, Qt.DisplayRole)
+                debug_print(
+                    f"[DEBUG] Col {col} ('{header_text.replace(chr(10), ' ')}'): Hidden in ScheduleView? {hidden_in_schedule}")
+
+        self._set_column_widths()
+        debug_print("[DEBUG] SplitTableView: setup_columns - END")
+
     def adjust_employees_table_width(self):
         if not self._model: return
         target_width = 0
@@ -432,3 +498,15 @@ class SplitTableView(QWidget):
             widths[col_id] = self.employees_view.columnWidth(i)
 
         return widths
+
+    def apply_column_widths(self, widths: dict):
+        """Ustawia szerokości kolumn na podstawie słownika {col_id: width}."""
+        if not self._model or not widths:
+            return
+
+        visible_columns_ids = self._model.get_visible_columns()
+        for i, col_id in enumerate(visible_columns_ids):
+            if col_id in widths:
+                # Ustaw szerokość dla kolumny o danym indeksie w lewej tabeli
+                self.employees_view.setColumnWidth(i, widths[col_id])
+        debug_print(f"Zastosowano {len(widths)} zapisanych szerokości kolumn.")
