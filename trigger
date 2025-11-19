@@ -132,3 +132,48 @@ BEGIN
     
     --END CONVERSATION @dialog_handle;
 END;
+
+USE [ZarzadzaniePraca]
+GO
+/****** Object:  Trigger [dbo].[trg_AppSettings_PowiadomienieServiceBroker]    Script Date: 19.11.2025 09:34:05 ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+ALTER   TRIGGER [dbo].[trg_AppSettings_PowiadomienieServiceBroker]
+ON [dbo].[AppSettings]
+AFTER INSERT, UPDATE, DELETE
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Sprawdź, czy faktycznie nastąpiła jakaś zmiana
+    IF NOT EXISTS (SELECT * FROM inserted) AND NOT EXISTS (SELECT * FROM deleted)
+    BEGIN
+        RETURN;
+    END
+
+    DECLARE @dialog_handle UNIQUEIDENTIFIER;
+    DECLARE @message_body XML;
+
+    -- Stwórz wiadomość XML z aliasem 'appsettings'
+    -- Rok i Miesiąc nie są potrzebne, ponieważ zmiany są globalne
+    SET @message_body = (
+        SELECT 
+            'appsettings' AS TableName
+        FOR XML PATH('TeamFlowNotification'), ROOT('NotificationData')
+    );
+
+    -- Rozpocznij konwersację i wyślij wiadomość
+    BEGIN DIALOG CONVERSATION @dialog_handle
+        FROM SERVICE [//TeamFlowApp/Grafik/SerwisPowiadomien]
+        TO SERVICE '//TeamFlowApp/Grafik/SerwisPowiadomien'
+        ON CONTRACT [//TeamFlowApp/Grafik/KontraktPowiadomien]
+        WITH ENCRYPTION = OFF;
+
+    SEND ON CONVERSATION @dialog_handle
+        MESSAGE TYPE [//TeamFlowApp/Grafik/PowiadomienieZmiany]
+        (@message_body);
+
+    END CONVERSATION @dialog_handle;
+END
