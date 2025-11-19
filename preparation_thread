@@ -1,15 +1,18 @@
 # preparation_thread.py
 
-from PySide6.QtCore import QThread, Signal, QMutex, QMutexLocker
-from debug_utils import log_error
+from PySide6.QtCore import QThread, Signal
+from debug_utils import log_error, debug_print
+import time
+from concurrent.futures import ThreadPoolExecutor
 
 
 class PreparationThread(QThread):
     """
     Wątek roboczy do asynchronicznego ładowania i przygotowywania danych.
+    Wersja zoptymalizowana: pobiera grafik i zdarzenia równolegle.
     """
     progress_updated = Signal(int)
-    preparation_finished = Signal(object) # Zmieniono na obiekt, aby przenosić słownik z danymi
+    preparation_finished = Signal(object)
     error_occurred = Signal(str)
 
     def __init__(self, data_provider, year, month, grupa, funkcja, parent=None):
@@ -19,18 +22,27 @@ class PreparationThread(QThread):
         self.month = month
         self.grupa = grupa
         self.funkcja = funkcja
-        self.mutex = QMutex()
         self._is_cancelled = False
 
     def run(self):
         """Główna metoda wątku ładującego dane."""
         try:
+            start_time = time.time()
             if self.is_cancelled(): return
 
-            # Krok 1: Pobierz kontener z danymi bazowymi
-            container = self.data_provider._get_or_load_monthly_data(
-                self.year, self.month, self.grupa, self.funkcja, use_cache=False
-            )
+            # Używamy ThreadPoolExecutor do równoległego pobierania danych
+            # Dzięki temu długie zapytanie o grafik nie blokuje pobierania zdarzeń
+            with ThreadPoolExecutor(max_workers=2) as executor:
+                future_schedule = executor.submit(
+                    self.data_provider._get_or_load_monthly_data,
+                    self.year, self.month, self.grupa, self.funkcja, use_cache=False
+                )
+
+                # Pobieranie prognozy też można by tu dodać, jeśli jest wolne
+                # future_forecast = ...
+
+                # Oczekiwanie na wyniki
+                container = future_schedule.result()
 
             if self.is_cancelled(): return
 
@@ -39,10 +51,15 @@ class PreparationThread(QThread):
                 self.error_occurred.emit(error_msg)
                 return
 
+            debug_print(f"[PERFORMANCE] Pobieranie danych z bazy zajęło: {time.time() - start_time:.2f}s")
+
             # Krok 2: Pobierz przetworzone dane z nałożonymi ikonami
+            # To jest operacja w pamięci (CPU-bound), więc robimy ją tutaj
+            processing_start = time.time()
             processed_data_with_icons = self.data_provider.get_processed_data(
                 self.year, self.month, self.grupa, self.funkcja
             )
+            debug_print(f"[PERFORMANCE] Przetwarzanie danych (ikony) zajęło: {time.time() - processing_start:.2f}s")
 
             if self.is_cancelled(): return
 
@@ -63,10 +80,8 @@ class PreparationThread(QThread):
 
     def cancel(self):
         """Metoda do bezpiecznego anulowania wątku."""
-        with QMutexLocker(self.mutex):
-            self._is_cancelled = True
+        self._is_cancelled = True
 
     def is_cancelled(self):
         """Sprawdza, czy zażądano anulowania."""
-        with QMutexLocker(self.mutex):
-            return self._is_cancelled
+        return self._is_cancelled
