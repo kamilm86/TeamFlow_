@@ -1,0 +1,39 @@
+USE [ZarzadzaniePraca]
+GO
+/****** Object:  StoredProcedure [dbo].[p_CleanupOldBrokerConversations]    Script Date: 14.11.2025 10:02:21 ******/
+SET ANSI_NULLS ON
+GO
+SET QUOTED_IDENTIFIER ON
+GO
+-- Czyści konwersacje starsze niż 7 dni (na wypadek gdyby ktoś nie uruchamiał aplikacji)
+ALTER PROCEDURE [dbo].[p_CleanupOldBrokerConversations]
+AS
+BEGIN
+    DECLARE @handle UNIQUEIDENTIFIER;
+    DECLARE @count INT = 0;
+    
+    DECLARE conv_cursor CURSOR FOR
+        SELECT conversation_handle 
+        FROM sys.conversation_endpoints
+        WHERE far_service = '//TeamFlowApp/Grafik/SerwisPowiadomien'
+          AND DATEDIFF(DAY, GETDATE(), lifetime) < -7;
+    
+    OPEN conv_cursor;
+    FETCH NEXT FROM conv_cursor INTO @handle;
+    
+    WHILE @@FETCH_STATUS = 0
+    BEGIN
+        BEGIN TRY
+            END CONVERSATION @handle WITH CLEANUP;
+            SET @count = @count + 1;
+        END TRY
+        BEGIN CATCH
+            -- Ignoruj błędy
+        END CATCH
+        
+        FETCH NEXT FROM conv_cursor INTO @handle;
+    END
+    
+    CLOSE conv_cursor;
+    DEALLOCATE conv_cursor;
+END;
