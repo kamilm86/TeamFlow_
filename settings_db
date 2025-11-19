@@ -48,12 +48,14 @@ class SettingsDatabase:
         defaults = {
             'theme': 'dark', 'font_family': 'Segoe UI', 'font_size': 9,
             'visible_columns': ['wydzial', 'przelozony_nazwisko_imie', 'uzytkownik_dane'],
-            'show_schedule_comment': False, 'import_grupa': 3, 'import_funkcja': 1,
+            'show_schedule_comment': False,
+            'show_schedule_percent_morning': False,
+            'import_grupa': 3, 'import_funkcja': 1,
             'is_maximized': True, 'window_size': (1600, 800),
             'column_widths': {}, 'last_filters': {},  'sort_preferences': [],
             'outlook_template_path': '', 'saved_filters': {},
-            'visible_filters': None,
-            'schedule_splitter_sizes': None
+            'visible_filters': None, 'row_colors': {},
+            'schedule_splitter_sizes': None, 'custom_columns': {}
         }
 
         try:
