@@ -61,6 +61,7 @@ class ScheduleChangeModel(QAbstractTableModel):
             self.COL_WORK_HOURS: 'current_work_hours'
         }
         if col in field_map:
+            self._data[row]['is_dirty'] = True
             self._data[row][field_map[col]] = value
             self.dataChanged.emit(index, index, [role, Qt.DisplayRole])
             return True
