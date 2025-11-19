@@ -1,620 +1,118 @@
-# schedule_model.py
-from PySide6.QtCore import Qt, QAbstractTableModel, QModelIndex, QDate
-from PySide6.QtGui import QColor, QBrush, QFont
-from debug_utils import debug_print, log_warning, log_error
-from styles import AppStyles
-from symbol_parser import parse_symbol, get_symbol_description
-from app_settings import app_settings  # ZMIANA: Poprawiono import
-from config import SQL_OBJECTS
+# session_manager.py
+# -*- coding: utf-8 -*-
 
-# Definicje ról danych
-ROLE_DATA = Qt.UserRole
-ROLE_ID = Qt.UserRole + 1
-ROLE_TYPE = Qt.UserRole + 2
-ROLE_HAS_MEETING = Qt.UserRole + 3
-ROLE_HAS_OVERTIME = Qt.UserRole + 4
-ROLE_SPECIAL_SYMBOL = Qt.UserRole + 5
-ROLE_LOCATION_SYMBOL = Qt.UserRole + 6
-ROLE_ICON_COLOR = Qt.UserRole + 7
-ROLE_IS_SUGGESTED_OFF = Qt.UserRole + 8  # <-- NOWA ROLA
-ROLE_RAW_TEXT = Qt.UserRole + 9
-ROLE_HEADER_TYPE = Qt.UserRole + 10
+from db_connector import DatabaseConnector
+from debug_utils import log_error, debug_print
+from config import SQL_OBJECTS  # Dodano import obiektów SQL z pliku konfiguracyjnego
+from _version import __version__ as APP_VERSION
+from typing import Optional
 
 
-class ScheduleTableModel(QAbstractTableModel):
+class SessionManager:
     """
-    Model danych z dynamicznymi ikonami i opcjonalną kolumną komentarza.
+    Menedżer sesji użytkownika aplikacji.
+
+    Odpowiada za rejestrowanie rozpoczęcia sesji, wysyłanie sygnałów życia (heartbeat)
+    oraz bezpieczne zamykanie sesji w bazie danych.
     """
-    ROLE_DATA = Qt.UserRole
-    ROLE_ID = Qt.UserRole + 1
-    ROLE_TYPE = Qt.UserRole + 2
-    ROLE_HAS_MEETING = Qt.UserRole + 3
-    ROLE_HAS_OVERTIME = Qt.UserRole + 4
-    ROLE_SPECIAL_SYMBOL = Qt.UserRole + 5
-    ROLE_LOCATION_SYMBOL = Qt.UserRole + 6
-    ROLE_ICON_COLOR = Qt.UserRole + 7
-    ROLE_IS_SUGGESTED_OFF = Qt.UserRole + 8  # <-- NOWA ROLA
-    RawTextRole = ROLE_RAW_TEXT
-    ROLE_HEADER_TYPE = Qt.UserRole + 10
 
-    def __init__(self, parent=None, user_role=None):
-        super().__init__(parent)
-        self._data = []
-        self._processed_data = {}
-        self._keys = []
-        self._column_headers = []
-        self._row_count = 0
-        self._column_count = 0
-        self._weekend_columns = []
-        self._show_comment_column = False
-        self._employee_columns = []
-        self._visible_columns = []
-        self._year = None
-        self._month = None
-        self._days_in_month = 0
-        self._working_days = 0
-        self._is_dark_theme = False
-        self._data_provider = None
-
-        self.user_role = user_role
-        self.keyboard_edit_roles = ["Pracownik WPR", "Lider OUT"]
-
-        from column_definitions import ColumnDefinitions
-        self.column_definitions = ColumnDefinitions()
-        self._visible_columns = self.column_definitions.DEFAULT_VISIBLE_COLUMNS.copy()
-        self._employee_columns = self.column_definitions.get_ui_display_columns()
-        self._update_column_structure()
-        self._icons_cache = {}
-        self._icons_cache_valid = False
-
-    def data(self, index, role=Qt.DisplayRole):
-        if not index.isValid():
-            return None
-
-        row, col = index.row(), index.column()
-
-        if not (0 <= row < self._row_count and 0 <= col < self._column_count and row < len(self._keys)):
-            return None
-
-        key = self._keys[row]
-        row_data = self._processed_data.get(key, {})
-        is_employee_column = col < len(self._visible_columns)
-
-        full_symbol_text = ""
-        day_data = {}
-        if not is_employee_column:
-            schedule_col_check = col - len(self._visible_columns)
-            if schedule_col_check < 31:
-                day = schedule_col_check + 1
-                day_data = row_data.get('days', {}).get(day, {})
-                full_symbol_text = day_data.get('symbol', '')
-
-        if role == Qt.ForegroundRole:
-            if not is_employee_column:
-                schedule_col = col - len(self._visible_columns)
-                if schedule_col < self._days_in_month and full_symbol_text:
-                    parsed_symbol = parse_symbol(full_symbol_text)
-                    special_symbol = parsed_symbol.get('special_symbol')
-
-                    if special_symbol:
-                        if special_symbol in ["OS", "U", "UZ"]:
-                            return QBrush(QColor(Qt.GlobalColor.black))
-                        # ZMIANA: Odwołanie do app_settings zamiast BusinessRules
-                        elif special_symbol in app_settings.get_absence_symbols():
-                            return QBrush(QColor(Qt.GlobalColor.white))
-
-                    start_hour = parsed_symbol.get('start_hour')
-                    if start_hour is not None:
-                        if 5 <= start_hour <= 14:
-                            return QBrush(QColor(Qt.GlobalColor.black))
-                        else:
-                            return QBrush(QColor(Qt.GlobalColor.white))
-
-        if role == ROLE_SPECIAL_SYMBOL:
-            if full_symbol_text:
-                return parse_symbol(full_symbol_text).get('special_symbol')
-            return None
-
-        if role == ROLE_LOCATION_SYMBOL:
-            if full_symbol_text:
-                return parse_symbol(full_symbol_text).get('location')
-            return None
-
-        if role == ROLE_ICON_COLOR:
-            if not is_employee_column:
-                return self._get_foreground_color(row_data, key, col, is_employee_column)
-            return None
-
-        if role == ROLE_IS_SUGGESTED_OFF:
-            is_off = day_data.get('is_suggested_off', False)
-            # if is_off:
-            #     debug_print(f"ScheduleModel: ROLE_IS_SUGGESTED_OFF dla {key[2]} w dniu {day} -> ZWRACAM {is_off}")
-            return is_off
-
-        if role == Qt.DisplayRole:
-            if is_employee_column:
-                col_id = self._visible_columns[col]
-                if col_id == 'wydzial':
-                    return key[0] or ""
-                elif col_id == 'przelozony_nazwisko_imie':
-                    return row_data.get('przelozony_nazwisko_imie', '')
-                elif col_id == 'uzytkownik_dane':
-                    return key[2] or ""
-                else:
-                    return str(row_data.get(col_id, ''))
-            else:
-                schedule_col = col - len(self._visible_columns)
-                if schedule_col < 31:
-                    if not full_symbol_text: return ""
-                    parsed = parse_symbol(full_symbol_text)
-                    start_hour, work_hours = parsed.get('start_hour'), parsed.get('work_hours')
-                    if start_hour is not None and work_hours is not None:
-                        return f"{start_hour};{work_hours}"
-                    elif start_hour is not None:
-                        return str(start_hour)
-                    return ""
-                elif schedule_col == 31:
-                    return str(row_data.get('total_hours', 0))
-                elif schedule_col == 31 + 1:
-                    try:
-                        etat = float(row_data.get('etat'));
-                        total_hours = float(row_data.get('total_hours', 0));
-                        working_days = self._working_days if hasattr(self,
-                                                                     '_working_days') and self._working_days > 0 else 21
-                        balance = (etat * working_days) - total_hours
-                        return str(int(round(balance)))
-                    except (ValueError, TypeError):
-                        return "0.0"
-                elif self._show_comment_column and schedule_col == 31 + 2:
-                    return row_data.get('komentarz_grafik', '')
-            return ""
-
-        if role == Qt.ToolTipRole:
-            if full_symbol_text: return get_symbol_description(full_symbol_text)
-            return None
-
-        if role == ROLE_DATA: return self._get_user_data(row_data, key, col, is_employee_column)
-        if role == ROLE_HAS_MEETING: return self._get_dynamic_meeting_icon(key, col, is_employee_column)
-        if role == ROLE_HAS_OVERTIME: return self._get_dynamic_overtime_icon(key, col, is_employee_column)
-        if role == Qt.TextAlignmentRole:
-            if is_employee_column:
-                return Qt.AlignLeft | Qt.AlignVCenter
-            else:
-                schedule_col = col - len(self._visible_columns)
-                if self._show_comment_column and schedule_col == 31 + 2: return Qt.AlignLeft | Qt.AlignVCenter
-                return Qt.AlignBottom | Qt.AlignHCenter
-
-        if role == Qt.BackgroundRole:
-            if not is_employee_column:
-                schedule_col = col - len(self._visible_columns)
-
-                # --- NOWA ZMIANA: Dodanie koloru dla sugerowanego wolnego ---
-                if day_data.get('is_suggested_off', False):
-                    # debug_print(f"ScheduleModel: BackgroundRole dla {key[2]} w dniu {day} -> ZWRACAM ZIELONY")
-                    return QBrush(QColor("#006400"))  # Ciemny zielony
-
-                if schedule_col == self._days_in_month + 1:
-                    try:
-                        etat = float(row_data.get('etat'));
-                        total_hours = float(row_data.get('total_hours', 0));
-                        working_days = self._working_days if hasattr(self,
-                                                                     '_working_days') and self._working_days > 0 else 21
-                        balance = (etat * working_days) - total_hours
-                    except (ValueError, TypeError):
-                        balance = 0
-                    if balance != 0:
-                        return QBrush(QColor(120, 40, 40) if self._is_dark_theme else QColor(255, 200, 200))
-                    elif total_hours > 0:
-                        return QBrush(QColor(40, 120, 40) if self._is_dark_theme else QColor(200, 255, 200))
-                elif schedule_col < self._days_in_month:
-                    if full_symbol_text:
-                        parsed_symbol = parse_symbol(full_symbol_text)
-                        special_symbol = parsed_symbol.get('special_symbol')
-                        if special_symbol:
-                            if special_symbol in ["OS", "U", "UZ"]:
-                                return QBrush(QColor(255, 255, 0))
-                            # ZMIANA: Odwołanie do app_settings zamiast BusinessRules
-                            elif special_symbol in app_settings.get_absence_symbols():
-                                return QBrush(QColor("#9370DB") if not self._is_dark_theme else QColor("#9370DB"))
-                        if parsed_symbol.get('start_hour') is not None:
-                            return QBrush(self._get_color_by_start_hour(parsed_symbol['start_hour']))
-                        return QBrush(QColor(65, 65, 65) if self._is_dark_theme else QColor(225, 225, 225))
-                    # else:
-                    #     return QBrush(QColor(55, 55, 55) if self._is_dark_theme else QColor(240, 240, 240))
-        return None
-
-    def headerData(self, section, orientation, role=Qt.DisplayRole):
-        if orientation == Qt.Horizontal:
-            if role == Qt.DisplayRole:
-                if section < len(self._column_headers):
-                    return self._column_headers[section]
-            # --- NOWA LOGIKA: Zwracanie surowego tekstu bez formatowania HTML ---
-            elif role == self.RawTextRole:
-                if section < len(self._column_headers):
-                    return self._column_headers[section].replace('<br>', '\n')
-
-            elif role == ROLE_HEADER_TYPE:
-                visible_columns_count = len(self._visible_columns)
-                if section >= visible_columns_count:
-                    schedule_column = section - len(self._visible_columns)
-                    day = schedule_column + 1
-
-                    if self._year and self._month and QDate.isValid(self._year, self._month, day):
-                        current_date = QDate(self._year, self._month, day)
-                        if current_date == QDate.currentDate():
-                            return "today"
-                        if schedule_column in self._weekend_columns:
-                            return "weekend"
-                return "normal"
-
-            elif role == Qt.ForegroundRole:
-                visible_columns_count = len(self._visible_columns)
-                if section >= visible_columns_count:
-                    schedule_column = section - len(self._visible_columns)
-                    day = schedule_column + 1
-                    if self._year and self._month and QDate.isValid(self._year, self._month, day):
-                        current_date = QDate(self._year, self._month, day)
-                        if current_date == QDate.currentDate():
-                            return QBrush(QColor(AppStyles.ACCENT_COLOR_DARK))
-                        if schedule_column in self._weekend_columns:
-                            return QBrush(QColor("#E74C3C"))
-
-            elif role == Qt.TextAlignmentRole:
-                return Qt.AlignCenter
-
-        elif orientation == Qt.Vertical:
-            if role == Qt.DisplayRole:
-                return str(section + 1)
-        return None
-
-    def set_theme(self, is_dark_theme):
-        if self._is_dark_theme != is_dark_theme:
-            self._is_dark_theme = is_dark_theme
-            self.layoutChanged.emit()
-            if self._column_count > 0:
-                self.headerDataChanged.emit(Qt.Horizontal, 0, self._column_count - 1)
-
-    def _get_user_data(self, row_data, key, col, is_employee_column):
+    def __init__(self, user_login: str):
         """
-        Zwraca dane użytkownika dla danej komórki. Zapewnia, że wszystkie potrzebne
-        pola (wydzial, rola_nazwa) są zawsze obecne.
+        Inicjalizuje menedżera sesji.
+
+        Args:
+            user_login (str): Login użytkownika systemu Windows/Aplikacji.
         """
-        # Tworzymy słownik bazowy, który zawsze zawiera kluczowe dane o pracowniku
-        base_data = {
-            'wydzial': key[0] or '',
-                'przelozony': key[1] or '',
-                'przelozony_nazwisko_imie': row_data.get('przelozony_nazwisko_imie', ''),
-                'nazwisko_imie': row_data.get('nazwisko_imie', ''),
-                'uzytkownik_dane': key[2] or '',
-                'uzytkownik_id': key[3] or 0,
-                'nr_kadrowy': row_data.get('nr_kadrowy', ''),
-                'rola_nazwa': row_data.get('rola_nazwa', ''),
-                'pod_rola_nazwa': row_data.get('pod_rola_nazwa', ''),
-                'etat': row_data.get('etat', ''),
-                'jezyk': row_data.get('jezyk', ''),
-                'korekta': row_data.get('korekta', ''),
-                'dtn': row_data.get('dtn', ''),
-                'lokalizacja_domyslna': row_data.get('lokalizacja_domyslna', ''),
-                'komentarz_grafik': row_data.get('komentarz_grafik', ''),
-                'system_czasu_pracy': row_data.get('system_czasu_pracy', ''),
-                'column_type': 'employee'
-            }
-        if is_employee_column:
-            base_data['column_type'] = 'employee'
-            return base_data
-        else:
-            schedule_col = col - len(self._visible_columns)
-            if schedule_col < self._days_in_month:
-                day = schedule_col + 1
-                days_data = row_data.get('days', {})
-                day_data = days_data.get(day, {})
-                date_str = f"{self._year}-{self._month:02d}-{day:02d}" if self._year and self._month else ''
+        self.user_login = user_login
+        self.session_id: Optional[int] = None
 
-                # Do danych bazowych dołączamy informacje specyficzne dla komórki dnia
-                day_specific_data = {
-                    'date_str': date_str,
-                    'day': day,
-                    'symbol': day_data.get('symbol', ''),
-                    'hours': day_data.get('hours', 0),
-                    'start_hour': day_data.get('start_hour'),
-                    'has_meeting': day_data.get('spotkania', 0) > 0,
-                    'has_training': day_data.get('szkolenia', 0) > 0,
-                    'has_overtime': day_data.get('nadgodziny', 0) > 0,
-                    'is_suggested_off': day_data.get('is_suggested_off', False),
-                    'events': day_data.get('events', []),
-                    'column_type': 'schedule'
-                }
-                base_data.update(day_specific_data)
-                return base_data
+        # Pobieramy nazwę tabeli z konfigu, z fallbackiem na 'AppSessions' w razie błędu konfiguracji
+        self.table_name = SQL_OBJECTS.get('appsessions', 'AppSessions')
 
-            # Logika dla kolumn sumujących (bez zmian)
-            elif schedule_col == self._days_in_month:
-                base_data.update({'total_hours': row_data.get('total_hours', 0), 'column_type': 'suma_rbh'})
-            elif schedule_col == self._days_in_month + 1:
-                etat = float(row_data.get('etat', 0) or 0)
-                total_hours = row_data.get('total_hours', 0) or 0
-                expected_hours = etat * self._working_days if hasattr(self, '_working_days') else 0
-                balance = expected_hours - total_hours
-                base_data.update({'total_hours': total_hours, 'expected_hours': expected_hours, 'balance': balance,
-                                  'column_type': 'bilans_rbh'})
-
-            return base_data
-
-    def _get_dynamic_meeting_icon(self, key, col, is_employee_column):
-        if is_employee_column:
-            return False
-        schedule_col = col - len(self._visible_columns)
-        if schedule_col >= self._days_in_month:
-            return False
-        day = schedule_col + 1
-        if not self._year or not self._month:
-            return False
-        row_data = self._processed_data.get(key, {})
-        days_data = row_data.get('days', {})
-        day_data = days_data.get(day, {})
-        has_meetings = day_data.get('spotkania', 0) > 0
-        has_trainings = day_data.get('szkolenia', 0) > 0
-        return has_meetings or has_trainings
-
-    def _get_dynamic_overtime_icon(self, key, col, is_employee_column):
-        if is_employee_column:
-            return False
-        schedule_col = col - len(self._visible_columns)
-        if schedule_col >= self._days_in_month:
-            return False
-        day = schedule_col + 1
-        if not self._year or not self._month:
-            return False
-        row_data = self._processed_data.get(key, {})
-        days_data = row_data.get('days', {})
-        day_data = days_data.get(day, {})
-        has_overtime = day_data.get('nadgodziny', 0) > 0
-        return has_overtime
-
-    def refresh_specific_icons(self, user_date_pairs):
-        if not user_date_pairs or not self._data_provider:
-            return
-        affected_cells = []
-        for user_id, date_str in user_date_pairs:
-            cache_key = (user_id, date_str)
-            if hasattr(self, '_icons_cache') and cache_key in self._icons_cache:
-                del self._icons_cache[cache_key]
-            try:
-                year, month, day_str_part = date_str.split('-')
-                day = int(day_str_part)
-                if int(year) != self._year or int(month) != self._month:
-                    continue
-                for idx, key in enumerate(self._keys):
-                    if str(key[3]) == str(user_id):
-                        col = len(self._visible_columns) + day - 1
-                        if 0 <= col < self._column_count:
-                            affected_cells.append((idx, col))
-                        break
-            except:
-                continue
-        for row, col in affected_cells:
-            model_index = self.index(row, col)
-            self.dataChanged.emit(model_index, model_index, [self.ROLE_HAS_MEETING, self.ROLE_HAS_OVERTIME])
-
-    def update_data(self, processed_data, year, month):
-        self.beginResetModel()
-        self._year, self._month = year, month
-        self._days_in_month = self._get_days_in_month(year, month)
-        self._weekend_columns = self._find_weekend_columns(year, month)
-        self._working_days = self._fetch_working_days(year, month)
-        self._processed_data = processed_data if processed_data else {}
-        self._keys = list(self._processed_data.keys())
-        self._row_count = len(self._keys)
-        self._update_column_structure()
-        self.endResetModel()
-
-    def sort(self, column, order):
-        if column >= len(self._visible_columns): return
-        col_id = self._visible_columns[column]
-        self.layoutAboutToBeChanged.emit()
-        self._keys.sort(key=lambda k: self._get_sort_key(k, col_id), reverse=(order == Qt.DescendingOrder))
-        self.layoutChanged.emit()
-
-    def _get_sort_key(self, key, col_id):
-        row_data = self._processed_data.get(key, {})
-        if col_id == 'wydzial': return key[0] or ""
-        if col_id == 'przelozony': return key[1] or ""
-        if col_id == 'uzytkownik_dane': return key[2] or ""
-        if col_id == 'uzytkownik_id': return int(key[3] or 0)
-        value = row_data.get(col_id, '')
-        if col_id in ['etat', 'dtn', 'korekta']: return float(value or 0)
-        return str(value)
-
-    def rowCount(self, parent=QModelIndex()):
-        return self._row_count if not parent.isValid() else 0
-
-    def columnCount(self, parent=QModelIndex()):
-        return self._column_count
-
-    def set_show_comment_column(self, visible: bool):
-        if self._show_comment_column != visible:
-            self.beginResetModel()
-            self._show_comment_column = visible
-            self._update_column_structure()
-            self.endResetModel()
-
-    def setData(self, index, value, role=Qt.EditRole):
-        if not index.isValid() or role != Qt.EditRole:
-            return False
-        row, col = index.row(), index.column()
-        if row >= len(self._keys):
-            return False
-        key = self._keys[row]
-        if col >= len(self._visible_columns):
-            schedule_col = col - len(self._visible_columns)
-            if schedule_col < self._days_in_month:
-                day = schedule_col + 1
-                user_data = self._processed_data[key]
-                day_data = user_data.setdefault('days', {}).setdefault(day, {})
-                old_symbol = day_data.get('symbol', '')
-                new_symbol = str(value)
-                day_data['symbol'] = new_symbol
-                parsed = parse_symbol(new_symbol)
-                old_hours = day_data.get('hours', 0) or 0
-                new_hours = parsed.get('work_hours', 0) or 0
-                day_data['hours'] = new_hours
-                day_data['start_hour'] = parsed.get('start_hour')
-                old_hours = parse_symbol(old_symbol).get('work_hours', 0) or 0
-                user_data['total_hours'] = (user_data.get('total_hours', 0) or 0) - old_hours + new_hours
-                self.dataChanged.emit(index, index, [Qt.DisplayRole, Qt.BackgroundRole])
-                sum_index = self.index(row, len(self._visible_columns) + self._days_in_month)
-                bilans_index = self.index(row, len(self._visible_columns) + self._days_in_month + 1)
-                if sum_index.isValid(): self.dataChanged.emit(sum_index, sum_index, [Qt.DisplayRole])
-                if bilans_index.isValid(): self.dataChanged.emit(bilans_index, bilans_index,
-                                                                 [Qt.DisplayRole, Qt.BackgroundRole])
-                return True
-        return False
-
-    def flags(self, index):
-        if not index.isValid():
-            return Qt.NoItemFlags
-        flags = Qt.ItemIsEnabled | Qt.ItemIsSelectable
-        if self.user_role in self.keyboard_edit_roles:
-            col = index.column()
-            if col >= len(self._visible_columns) and (col - len(self._visible_columns)) < self._days_in_month:
-                flags |= Qt.ItemIsEditable
-        return flags
-
-    def _get_color_by_start_hour(self, hour):
-        """Zwraca kolor dla danej godziny rozpoczęcia z centralnych ustawień."""
-        if hour is None or not (0 <= hour <= 23):
-            return QColor(255, 255, 255, 0)
-        color_hex = app_settings.SHIFT_COLOR_MAP.get(hour, "#FFFFFF")
-        return QColor(color_hex)
-
-    def set_employee_columns(self, columns, visible_columns=None):
-        self._employee_columns = [c for c in columns if isinstance(c, tuple) and len(c) == 3] if isinstance(columns,
-                                                                                                            list) else []
-        self._visible_columns = visible_columns if visible_columns is not None else [c[0] for c in
-                                                                                     self._employee_columns[:3]]
-        if self._year is not None: self._update_column_structure()
-
-    def set_visible_columns(self, column_ids):
-        if self._visible_columns != column_ids:
-            self.beginResetModel()
-            self._visible_columns = column_ids
-            self._update_column_structure()
-            self.endResetModel()
-
-    def get_visible_columns(self):
-        return self._visible_columns
-
-    def update_filtered_data(self, filtered_data):
-        new_keys, new_row_count = list(filtered_data.keys()), len(filtered_data)
-        if self._row_count != new_row_count or self._keys != new_keys:
-            self.beginResetModel()
-            self._processed_data, self._keys, self._row_count = filtered_data, new_keys, new_row_count
-            self.endResetModel()
-        else:
-            changed_rows = [i for i, k in enumerate(self._keys) if
-                             k in filtered_data and filtered_data[k] != self._processed_data.get(k, {})]
-            self._processed_data = filtered_data
-            for row in changed_rows:
-                self.dataChanged.emit(self.index(row, 0), self.index(row, self._column_count - 1))
-
-    def get_processed_data(self):
-        return self._processed_data
-
-    def _fetch_working_days(self, year, month):
-        from db_connector import DatabaseConnector
+    def start_session(self) -> None:
+        """
+        Rejestruje nową sesję w bazie danych przy starcie aplikacji.
+        Ustawia self.session_id na podstawie zwróconego ID z bazy.
+        """
+        conn = None
         try:
             conn = DatabaseConnector.get_connection()
             cursor = conn.cursor()
-            query = f"SELECT iloscDniPracujacych FROM {SQL_OBJECTS['dnipracujace']} WHERE ROK = ? AND Miesiac = ?"
-            result = cursor.execute(query, (year, month)).fetchone()
-            conn.close()
-            return result[0]
+
+            # Używamy dynamicznej nazwy tabeli z self.table_name
+            sql = f"""
+                INSERT INTO {self.table_name} (LoginWindows, AppVersion, SessionStart, LastHeartbeat)
+                OUTPUT INSERTED.SessionId
+                VALUES (?, ?, GETDATE(), GETDATE())
+            """
+
+            cursor.execute(sql, (self.user_login, APP_VERSION))
+            row = cursor.fetchone()
+
+            if row:
+                self.session_id = row[0]
+                debug_print(f"SessionManager: Rozpoczęto sesję ID: {self.session_id} dla {self.user_login}")
+            else:
+                debug_print("SessionManager: Nie udało się pobrać ID nowej sesji.")
+
+            conn.commit()
+
         except Exception as e:
-            log_error(f"Błąd pobierania dni pracujących: {e}", exception=e)
+            log_error(f"Błąd startu sesji (SessionManager): {e}", exception=e)
+        finally:
+            if conn:
+                conn.close()
 
-
-    def _update_column_structure(self):
-        visible_map = {cid: name for cid, name, _ in self._employee_columns}
-        self._column_headers = [visible_map.get(cid, cid) for cid in self._visible_columns]
-        for day in range(1, 32):
-            label = "???"
-            if self._year and self._month and QDate.isValid(self._year, self._month, day):
-                label = ["Pn", "Wt", "Śr", "Cz", "Pt", "So", "Nd"][QDate(self._year, self._month, day).dayOfWeek() - 1]
-            self._column_headers.append(f"{day}\n{label}")
-        self._column_headers.extend(["Suma\nRBH", "Bilans\nRBH"])
-        if self._show_comment_column: self._column_headers.append("Komentarz")
-        self._column_count = len(self._column_headers)
-
-    def _get_days_in_month(self, year, month):
-        return QDate(year, month, 1).daysInMonth() if year and month else 30
-
-    def _find_weekend_columns(self, year, month):
-        if not year or not month: return []
-        return [d - 1 for d in range(1, self._get_days_in_month(year, month) + 1) if
-                QDate.isValid(year, month, d) and QDate(year, month, d).dayOfWeek() >= 6]
-
-    def update_cell_icons_directly(self, user_id, date_str, has_meetings=False, has_trainings=False,
-                                   has_overtime=False):
-        if not all([self._year, self._month, date_str]): return False
-        try:
-            year, month, day_part = date_str.split('-')
-            day, year, month = int(day_part), int(year), int(month)
-            if year != self._year or month != self._month: return False
-            target_key = next((k for k in self._keys if str(k[3]) == str(user_id)), None)
-            if not target_key: return False
-            if target_key in self._processed_data:
-                day_data = self._processed_data[target_key].setdefault('days', {}).setdefault(day, {})
-                day_data.update({'spotkania': 1 if has_meetings else 0, 'szkolenia': 1 if has_trainings else 0,
-                                 'nadgodziny': 1 if has_overtime else 0})
-                row_index = self._keys.index(target_key)
-                col = len(self._visible_columns) + day - 1
-                model_index = self.index(row_index, col)
-                self.dataChanged.emit(model_index, model_index, [self.ROLE_HAS_MEETING, self.ROLE_HAS_OVERTIME])
-                return True
-        except Exception as e:
-            log_error(f"Błąd aktualizacji ikon: {e}")
-        return False
-
-    def sort_by_day(self, day: int, order: Qt.SortOrder):
+    def send_heartbeat(self) -> None:
         """
-        Sortuje dane wielopoziomowo na podstawie zawartości komórek
-        dla podanego dnia.
+        Aktualizuje czas ostatniej aktywności (LastHeartbeat) dla bieżącej sesji.
+        Powinno być uruchamiane cyklicznie (np. co 5 minut) przez QTimer w głównym wątku.
         """
-        if not self._keys:
+        if not self.session_id:
             return
 
-        self.layoutAboutToBeChanged.emit()
+        conn = None
+        try:
+            conn = DatabaseConnector.get_connection()
+            cursor = conn.cursor()
 
-        def get_day_sort_key(key):
-            """
-            Zwraca krotkę wartości, która będzie użyta do sortowania.
-            Hierarchia: (czy pracuje, godzina startu, godziny pracy, symbol)
-            """
-            day_data = self._processed_data.get(key, {}).get('days', {}).get(day, {})
-            symbol = day_data.get('symbol', '')
+            sql = f"UPDATE {self.table_name} SET LastHeartbeat = GETDATE() WHERE SessionId = ?"
+            cursor.execute(sql, (self.session_id,))
 
-            # Jeśli komórka jest pusta, przypisz wartości sortujące na koniec
-            if not symbol:
-                return (1, 99, 99, "")
+            conn.commit()
+            # debug_print(f"SessionManager: Heartbeat wysłany dla sesji {self.session_id}")
 
-            parsed = parse_symbol(symbol)
-            start = parsed.get('start_hour')
-            hours = parsed.get('work_hours')
-            special = parsed.get('special_symbol') or ''
+        except Exception as e:
+            # Cichy błąd heartbeat'u nie jest krytyczny, ale warto go odnotować w debugu
+            # Używamy debug_print zamiast log_error, aby nie zaśmiecać logów produkcyjnych przy chwilowych problemach z siecią
+            debug_print(f"SessionManager: Błąd wysyłania heartbeat: {e}")
+        finally:
+            if conn:
+                conn.close()
 
-            # Jeśli to tylko absencja bez godzin, traktuj jak dzień wolny
-            if start is None and hours is None and special:
-                return (1, 99, 99, special)
+    def end_session(self, exit_type: str = "Normal") -> None:
+        """
+        Zamyka sesję w bazie danych, ustawiając czas zakończenia i typ wyjścia.
 
-            # Krotka sortująca:
-            # 1. Osoby pracujące (0) przed niepracującymi (1)
-            # 2. Godzina rozpoczęcia (None jako 99, żeby były na końcu)
-            # 3. Liczba godzin (None jako 99)
-            # 4. Symbol specjalny alfabetycznie
-            return (0, start if start is not None else 99, hours if hours is not None else 99, special)
+        Args:
+            exit_type (str): Typ zamknięcia ('Normal', 'UserExit', 'RemoteKill', 'Error').
+        """
+        if not self.session_id:
+            return
 
-        # Sortuj listę kluczy
-        self._keys.sort(key=get_day_sort_key, reverse=(order == Qt.DescendingOrder))
+        conn = None
+        try:
+            conn = DatabaseConnector.get_connection()
+            cursor = conn.cursor()
 
-        self.layoutChanged.emit()
-        debug_print(f"Posortowano dane po dniu: {day}, kierunek: {'DESC' if order == Qt.DescendingOrder else 'ASC'}")
+            sql = f"UPDATE {self.table_name} SET SessionEnd = GETDATE(), ExitType = ? WHERE SessionId = ?"
+            cursor.execute(sql, (exit_type, self.session_id))
+
+            conn.commit()
+            debug_print(f"SessionManager: Sesja {self.session_id} zakończona (Typ: {exit_type}).")
+
+        except Exception as e:
+            log_error(f"Błąd zamykania sesji (SessionManager): {e}", exception=e)
+        finally:
+            if conn:
+                conn.close()
