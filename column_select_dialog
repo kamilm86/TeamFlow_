@@ -1,12 +1,14 @@
 # column_select_dialog.py
 
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-                               QListWidget, QListWidgetItem, QAbstractItemView, QCheckBox,
+                               QListWidget, QListWidgetItem, QAbstractItemView, QCheckBox, QMessageBox,
+                               QInputDialog, QLineEdit,
                                QFrame, QGroupBox, QTableWidget, QTableWidgetItem, QComboBox,
                                QHeaderView)
 from PySide6.QtCore import Qt
 from styles import AppStyles
 from app_settings import app_settings
+from ui_utils import show_confirmation_dialog
 
 
 class ColumnSelectDialog(QDialog):
@@ -17,27 +19,31 @@ class ColumnSelectDialog(QDialog):
 
     def __init__(self, parent=None, available_columns=None, visible_columns=None,
                  default_columns=None, user_role=None, is_comment_column_checked=False,
+                 is_percent_morning_checked=False,  # <--- TUTAJ BYŁ BRAKUJĄCY ARGUMENT
                  sort_preferences=None):
         super().__init__(parent)
         self.parent_widget = parent
         self.setWindowTitle("Dostosowywanie widoku tabeli")
         self.setMinimumWidth(400)
-        self.setMinimumHeight(550)
+        self.setMinimumHeight(600)
 
         # Dane
         self.available_columns = available_columns or []
         self.visible_columns = visible_columns or []
         self.default_columns = default_columns or []
         self.column_map = {col_id: name for col_id, name, width in self.available_columns}
+        self.custom_columns = {col_id: {'name': name, 'values': {}} for col_id, name, _ in self.available_columns if
+                               col_id.startswith("custom_")}
         self.user_role = user_role
         self.sort_preferences = sort_preferences if sort_preferences is not None else []
 
         # Poprawna kolejność inicjalizacji
-        self.setup_ui(is_comment_column_checked)
+        # Przekazujemy oba parametry do setup_ui
+        self.setup_ui(is_comment_column_checked, is_percent_morning_checked)
         self.populate_lists()
         self.apply_dialog_theme()
 
-    def setup_ui(self, is_comment_checked):
+    def setup_ui(self, is_comment_checked, is_percent_checked):
         main_layout = QVBoxLayout(self)
 
         # --- Sekcja widoczności kolumn (bez zmian) ---
@@ -56,6 +62,15 @@ class ColumnSelectDialog(QDialog):
         columns_layout.addWidget(self.columns_list)
         columns_layout.addLayout(order_buttons_layout)
         columns_group_layout.addLayout(columns_layout)
+
+        # --- NOWA SEKCJA: Zarządzanie własnymi kolumnami ---\
+        custom_cols_layout = QHBoxLayout()
+        self.add_column_button = QPushButton("Dodaj kolumnę")
+        self.remove_column_button = QPushButton("Usuń kolumnę")
+        custom_cols_layout.addWidget(self.add_column_button)
+        custom_cols_layout.addWidget(self.remove_column_button)
+        custom_cols_layout.addStretch()
+        columns_group_layout.addLayout(custom_cols_layout)
 
         # --- NOWA SEKCJA SORTOWANIA ---
         sort_group = QGroupBox("Ustawienia sortowania danych")
@@ -86,6 +101,15 @@ class ColumnSelectDialog(QDialog):
         separator = QFrame()
         separator.setFrameShape(QFrame.HLine)
         separator.setFrameShadow(QFrame.Sunken)
+
+        # --- NOWY CHECKBOX DLA PROCENT RANO ---
+        self.percent_morning_checkbox = QCheckBox("Pokaż kolumnę 'Procent rano'")
+        self.percent_morning_checkbox.setChecked(is_percent_checked)
+        # Sprawdzamy nowe uprawnienie
+        self.percent_morning_checkbox.setVisible(
+            app_settings.has_permission(self.user_role, 'view_schedule_percent_morning_column'))
+
+        # --- CHECKBOX DLA KOMENTARZA ---
         self.komentarz_checkbox = QCheckBox("Pokaż kolumnę 'Komentarz do Grafiku'")
         self.komentarz_checkbox.setChecked(is_comment_checked)
         self.komentarz_checkbox.setVisible(app_settings.has_permission(self.user_role, 'view_schedule_comment_column'))
@@ -100,6 +124,8 @@ class ColumnSelectDialog(QDialog):
         buttons_layout.addWidget(self.cancel_button)
 
         main_layout.addWidget(separator)
+        # Dodajemy oba checkboxy do layoutu
+        main_layout.addWidget(self.percent_morning_checkbox)
         main_layout.addWidget(self.komentarz_checkbox)
         main_layout.addLayout(buttons_layout)
 
@@ -114,27 +140,35 @@ class ColumnSelectDialog(QDialog):
         self.move_up_button.clicked.connect(self.move_item_up)
         self.move_down_button.clicked.connect(self.move_item_down)
         self.columns_list.itemSelectionChanged.connect(self.update_button_states)
+        self.add_column_button.clicked.connect(self._add_custom_column)
+        self.remove_column_button.clicked.connect(self._remove_custom_column)
 
         self.add_sort_level_button.clicked.connect(self._add_sort_row)
         self.remove_sort_level_button.clicked.connect(self._remove_sort_row)
         self.sort_table.itemSelectionChanged.connect(self._update_sort_buttons_state)
 
     def populate_lists(self):
-        # Wypełnianie listy kolumn
+        """Wypełnia listę kolumn na podstawie `visible_columns` i `available_columns`."""
         self.columns_list.clear()
+        added_cols = set()
+
+        # Krok 1: Dodaj wszystkie widoczne kolumny (standardowe i niestandardowe) w zapisanej kolejności
         for col_id in self.visible_columns:
             if col_id in self.column_map:
                 name = self.column_map[col_id]
-                item = QListWidgetItem(name);
+                display_name = f"{name} (Własna)" if col_id.startswith("custom_") else name
+                item = QListWidgetItem(display_name)
                 item.setData(Qt.UserRole, col_id)
                 item.setFlags(item.flags() | Qt.ItemIsUserCheckable);
                 item.setCheckState(Qt.Checked)
                 self.columns_list.addItem(item)
+                added_cols.add(col_id)
 
-        visible_ids = set(self.visible_columns)
+        # Krok 2: Dodaj pozostałe dostępne kolumny, które nie są widoczne
         for col_id, name, _ in self.available_columns:
-            if col_id not in visible_ids:
-                item = QListWidgetItem(name);
+            if col_id not in added_cols:
+                display_name = f"{name} (Własna)" if col_id.startswith("custom_") else name
+                item = QListWidgetItem(display_name)
                 item.setData(Qt.UserRole, col_id)
                 item.setFlags(item.flags() | Qt.ItemIsUserCheckable);
                 item.setCheckState(Qt.Unchecked)
@@ -144,6 +178,100 @@ class ColumnSelectDialog(QDialog):
         self.sort_table.setRowCount(0)
         for col_id, direction in self.sort_preferences:
             self._add_sort_row(col_id, direction)
+        self.update_button_states()
+
+    def _add_custom_column(self):
+        # --- POCZĄTEK ZMIANY: Użycie QInputDialog jako instancji (dla polskich przycisków i stylu) ---
+        dialog = QInputDialog(self)
+        dialog.setWindowTitle("Nowa kolumna")
+        dialog.setLabelText("Wprowadź nazwę dla nowej kolumny:")
+        dialog.setTextValue("")
+        dialog.setInputMode(QInputDialog.TextInput)
+        dialog.setOkButtonText("OK")
+        dialog.setCancelButtonText("Anuluj")
+
+        # Zastosuj motyw do okna dialogowego
+        actual_theme = "dark"
+        if self.parent_widget and hasattr(self.parent_widget, 'is_dark_theme'):
+            actual_theme = "dark" if self.parent_widget.is_dark_theme else "light"
+
+        dialog.setStyleSheet(AppStyles.get_dialog_style(actual_theme))
+        # Styl dla pola tekstowego i przycisków wewnątrz
+        dialog.findChild(QLineEdit).setStyleSheet(AppStyles.get_line_edit_style(actual_theme))
+        for btn in dialog.findChildren(QPushButton):
+            btn.setStyleSheet(AppStyles.get_button_style(actual_theme))
+
+        ok = dialog.exec()
+        text = dialog.textValue()
+        # --- KONIEC ZMIANY ---
+
+        if ok and text:
+            name = text.strip()
+            # Prosta walidacja nazwy
+            if not name or len(name) > 50:
+                QMessageBox.warning(self, "Błąd",
+                                    "Nazwa kolumny nie może być pusta i musi mieć mniej niż 50 znaków.")
+                return
+
+            # Utwórz unikalne ID dla kolumny
+            col_id = f"custom_{name.lower().replace(' ', '_')}"
+            if col_id in self.column_map:
+                QMessageBox.warning(self, "Błąd", "Kolumna o tej nazwie (lub podobnej) już istnieje.")
+                return
+
+            # Dodaj do struktur danych
+            self.custom_columns[col_id] = {'name': name, 'values': {}}
+            self.column_map[col_id] = name
+
+            # --- NOWY KOD: Dodaj do available_columns, aby dialog sortowania ją widział ---
+            self.available_columns.append((col_id, name, 100))
+            # --- KONIEC NOWEGO KODU ---
+
+            # Dodaj do listy w UI
+            item = QListWidgetItem(f"{name} (Własna)")
+            item.setData(Qt.UserRole, col_id)
+            item.setFlags(item.flags() | Qt.ItemIsUserCheckable)
+            item.setCheckState(Qt.Checked)  # Domyślnie zaznaczona
+            self.columns_list.insertItem(0, item)  # Dodaj na górze listy
+            self.columns_list.setCurrentItem(item)
+
+    def _remove_custom_column(self):
+        current_item = self.columns_list.currentItem()
+        if not current_item:
+            return
+
+        col_id = current_item.data(Qt.UserRole)
+        if not col_id.startswith("custom_"):
+            QMessageBox.information(self, "Informacja", "Można usuwać tylko kolumny własne.")
+            return
+
+        # --- POCZĄTEK ZMIANY: Użycie polskiego dialogu 'show_confirmation_dialog' ---
+        reply = show_confirmation_dialog(self, "Potwierdzenie",
+                                         f"Czy na pewno chcesz usunąć kolumnę '{self.column_map[col_id]}' i wszystkie jej dane?",
+                                         QMessageBox.No)  # Domyślny przycisk "Nie"
+        # --- KONIEC ZMIANY ---
+
+        if reply == QMessageBox.Yes:
+            # Usuń ze struktur danych
+            if col_id in self.custom_columns:
+                del self.custom_columns[col_id]
+            if col_id in self.column_map:
+                del self.column_map[col_id]
+
+            # --- NOWY KOD: Usuń z available_columns ---
+            self.available_columns = [col for col in self.available_columns if col[0] != col_id]
+            # --- KONIEC NOWEGO KODU ---
+
+            # --- NOWY KOD: Usuń z preferencji sortowania ---
+            # Usuwamy wszystkie odniesienia do tej kolumny z zapisanych preferencji
+            self.sort_preferences = [pref for pref in self.sort_preferences if pref[0] != col_id]
+            # Przeładuj tabelę sortowania, aby odzwierciedlić zmianę
+            self.populate_lists()
+            # --- KONIEC NOWEGO KODU ---
+
+            # Usuń z listy UI
+            self.columns_list.takeItem(self.columns_list.row(current_item))
+
         self._update_sort_buttons_state()
 
     def _add_sort_row(self, col_id=None, direction='asc'):
@@ -155,8 +283,18 @@ class ColumnSelectDialog(QDialog):
         self.sort_table.setItem(row_position, 0, level_item)
 
         combo_column = QComboBox()
+
+        # --- ZMIANA: Użyj `self.available_columns` jako głównego źródła ---
         for c_id, c_name, _ in self.available_columns:
-            combo_column.addItem(c_name, c_id)
+            display_name = f"{c_name} (Własna)" if c_id.startswith("custom_") else c_name
+            combo_column.addItem(display_name, c_id)
+
+        # --- DODANIE KOLUMN SPECJALNYCH DO SORTOWANIA ---
+        combo_column.addItem("Suma Godzin", "total_hours")
+        combo_column.addItem("Bilans Godzin", "balance_hours")
+        combo_column.addItem("Procent rano", "percent_morning")  # <-- DODANE
+        # -----------------------------------------------
+
         if col_id:
             index = combo_column.findData(col_id)
             if index != -1: combo_column.setCurrentIndex(index)
@@ -174,6 +312,7 @@ class ColumnSelectDialog(QDialog):
         current_row = self.sort_table.currentRow()
         if current_row >= 0:
             self.sort_table.removeRow(current_row)
+            # Zaktualizuj numerację poziomów
             for row in range(self.sort_table.rowCount()):
                 self.sort_table.item(row, 0).setText(str(row + 1))
         self._update_sort_buttons_state()
@@ -198,8 +337,18 @@ class ColumnSelectDialog(QDialog):
     def update_button_states(self):
         current_row = self.columns_list.currentRow()
         item_count = self.columns_list.count()
+        current_item = self.columns_list.currentItem()
+        is_custom = False
+        if current_item:
+            # --- POPRAWKA: Bezpieczne sprawdzanie (na wypadek gdyby item nie miał danych) ---
+            item_data = current_item.data(Qt.UserRole)
+            if item_data:
+                is_custom = str(item_data).startswith("custom_")
+            # --- KONIEC POPRAWKI ---
+
         self.move_up_button.setEnabled(current_row > 0)
         self.move_down_button.setEnabled(current_row >= 0 and current_row < item_count - 1)
+        self.remove_column_button.setEnabled(is_custom)
 
     def move_item_up(self):
         row = self.columns_list.currentRow()
@@ -217,14 +366,27 @@ class ColumnSelectDialog(QDialog):
 
     def restore_default_columns(self):
         self.visible_columns = self.default_columns.copy()
+        # --- NOWA LOGIKA: Przywrócenie domyślnych usuwa też kolumny niestandardowe ---
+        # Filtruj available_columns, aby zawierały tylko te, które nie są 'custom'
+        self.available_columns = [col for col in self.available_columns if not col[0].startswith("custom_")]
+        self.custom_columns.clear()
+        self.sort_preferences = []
+        # --- KONIEC NOWEJ LOGIKI ---
         self.populate_lists()
 
     def get_selected_columns(self):
         return [self.columns_list.item(i).data(Qt.UserRole) for i in range(self.columns_list.count()) if
                 self.columns_list.item(i).checkState() == Qt.Checked]
 
+    def get_custom_columns(self):
+        return self.custom_columns
+
     def get_comment_column_state(self):
         return self.komentarz_checkbox.isChecked()
+
+    def get_percent_morning_column_state(self):
+        """Zwraca stan checkboxa dla kolumny Procent rano."""
+        return self.percent_morning_checkbox.isChecked()
 
     def apply_dialog_theme(self):
         actual_theme = "dark"
@@ -232,12 +394,9 @@ class ColumnSelectDialog(QDialog):
             actual_theme = "dark" if self.parent_widget.is_dark_theme else "light"
 
         # --- NOWA LOGIKA: Połączenie stylów dla lepszej spójności ---
-        # Łączymy ogólny styl dialogu ze szczegółowym stylem dla QListWidget.
-        # Ustawienie jednego, bardziej kompletnego arkusza stylów dla całego okna dialogowego
-        # rozwiązuje problemy ze specyficznością i dziedziczeniem stylów w Qt.
         combined_style = (
-            AppStyles.get_dialog_style(actual_theme) +
-            AppStyles.get_list_style(actual_theme)
+                AppStyles.get_dialog_style(actual_theme) +
+                AppStyles.get_list_style(actual_theme)
         )
         self.setStyleSheet(combined_style)
         # --- KONIEC NOWEJ LOGIKI ---
@@ -247,10 +406,18 @@ class ColumnSelectDialog(QDialog):
 
         button_style = AppStyles.get_button_style(actual_theme)
         for btn in [self.move_up_button, self.move_down_button, self.restore_default_button,
-                    self.ok_button, self.cancel_button, self.add_sort_level_button, self.remove_sort_level_button]:
+                    self.ok_button, self.cancel_button, self.add_sort_level_button, self.remove_sort_level_button,
+                    self.add_column_button, self.remove_column_button]:
             btn.setStyleSheet(button_style)
 
-        for combo in self.sort_table.findChildren(QComboBox):
-            combo.setStyleSheet(AppStyles.get_combobox_style(actual_theme))
+        # Styl dla QComboBox w tabeli sortowania (musimy je znaleźć)
+        combobox_style = AppStyles.get_combobox_style(actual_theme)
+        for row in range(self.sort_table.rowCount()):
+            for col in [1, 2]:  # Kolumny z ComboBoxami
+                widget = self.sort_table.cellWidget(row, col)
+                if isinstance(widget, QComboBox):
+                    widget.setStyleSheet(combobox_style)
 
-        self.komentarz_checkbox.setStyleSheet(AppStyles.get_checkbox_style(actual_theme))
+        checkbox_style = AppStyles.get_checkbox_style(actual_theme)
+        self.komentarz_checkbox.setStyleSheet(checkbox_style)
+        self.percent_morning_checkbox.setStyleSheet(checkbox_style)
