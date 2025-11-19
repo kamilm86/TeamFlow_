@@ -1,3 +1,4 @@
+# schedule_change_processor.py
 # -*- coding: utf-8 -*-
 
 from PySide6.QtCore import QThread, Signal, Qt
@@ -5,11 +6,13 @@ from PySide6.QtWidgets import QProgressDialog, QMessageBox
 from enum import Enum, auto
 import pyodbc
 
-from db_connector import DatabaseConnector, SQL_OBJECTS
+from db_connector import DatabaseConnector, SQL_OBJECTS, get_modifier_id
 from debug_utils import log_error, debug_print
 from symbol_parser import parse_symbol, build_symbol
 from app_settings import app_settings
 
+
+# Definicja typów operacji (bez zmian)
 class ChangeType(Enum):
     """Definiuje typy operacji, jakie może przetwarzać ScheduleChangeProcessor."""
     QUICK_EDIT_START_HOUR = auto()
@@ -18,62 +21,236 @@ class ChangeType(Enum):
     QUICK_EDIT_START_HOUR_NO_LOCATION = auto()
     CLEAR_CELL = auto()
     APPLY_BUILT_SYMBOL = auto()
+    APPLY_LOCATION_CHANGE = auto()
+
 
 class ScheduleChangeThread(QThread):
-    """Wątek roboczy do wykonywania zmian w grafiku w tle."""
+    """
+    Wątek roboczy do wykonywania zmian w grafiku w tle.
+    """
     progress_updated = Signal(int)
-    finished = Signal(list)  # Zwraca listę wyników
+    finished = Signal(list)
     error_occurred = Signal(str)
 
-    def __init__(self, change_requests, main_window, parent=None):
+    def __init__(self, data_input, reason_cache, main_window, year, month, parent=None):
         super().__init__(parent)
-        self.change_requests = change_requests
+        self.data_input = data_input
+        self.reason_cache = reason_cache
         self.main_window = main_window
+        self.year = year
+        self.month = month
         self._is_cancelled = False
 
+        self.is_new_logic_path = isinstance(self.reason_cache, dict)
+        debug_print(f"[Wątek] Inicjalizacja dla {self.year}-{self.month}. Tryb 'Nowa Logika': {self.is_new_logic_path}")
+
+    def _prepare_change_request_for_row(self, row_data: dict, visual_row: int) -> tuple | None:
+        """Sprawdza, czy nastąpiła zmiana i przygotowuje krotkę z żądaniem (Nowa Logika)."""
+        try:
+            if not isinstance(row_data, dict):
+                log_error(f"[Wątek] Błąd krytyczny: row_data nie jest słownikiem! {type(row_data)}")
+                return (None, 'failure', 'Błąd wewnętrzny: Nieprawidłowy typ danych')
+
+            is_dirty = row_data.get('is_dirty', False)
+            if not is_dirty:
+                return (None, 'no_change', "")
+
+            parsed = parse_symbol(row_data.get('symbol', ''))
+            special_symbol = parsed.get('special_symbol')
+
+            new_loc_from_ui = row_data.get('current_location')
+            new_start = row_data.get('current_start_hour')
+            new_hours = row_data.get('current_work_hours')
+
+            previous_loc = parsed.get('location') or row_data.get('lokalizacja_domyslna')
+            previous_start = parsed.get('start_hour')
+            previous_hours = parsed.get('work_hours')
+
+            new_loc = previous_loc if new_loc_from_ui is None else new_loc_from_ui
+            is_work_shift = not special_symbol or special_symbol.upper() in app_settings.WORK_LIKE_SYMBOLS
+
+            if is_work_shift and (new_start is None or new_hours is None):
+                return (None, 'no_change', "")
+
+            if previous_loc == new_loc and previous_start == new_start and previous_hours == new_hours:
+                return (None, 'no_change', "")
+
+            accepts_loc = is_work_shift
+            final_loc_for_build = new_loc if accepts_loc else None
+
+            new_symbol = build_symbol(
+                location=final_loc_for_build,
+                start_hour=new_start,
+                work_hours=new_hours,
+                special_symbol=special_symbol
+            )
+
+            essential_cell_data = {
+                'nr_kadrowy': row_data.get('nr_kadrowy'),
+                'date_str': row_data.get('date_str'),
+                'uzytkownik_id': row_data.get('uzytkownik_id'),
+                'uzytkownik_dane': row_data.get('uzytkownik_dane'),
+                'symbol': row_data.get('symbol'),
+                'etat': row_data.get('etat'),
+                'system_czasu_pracy': row_data.get('system_czasu_pracy'),
+                'lokalizacja_domyslna': row_data.get('lokalizacja_domyslna'),
+                'wydzial': row_data.get('wydzial'),
+                'rola_nazwa': row_data.get('rola_nazwa'),
+                'visual_row': visual_row
+            }
+
+            return (ChangeType.APPLY_BUILT_SYMBOL, essential_cell_data, new_symbol)
+
+        except Exception as e:
+            log_error(f"Błąd przygotowania żądania w wątku: {e}", exception=e)
+            return (None, 'failure', str(e))
+
+    def _handle_location_logic_for_request(self, change_request_tuple: tuple) -> tuple | None:
+        """Transformuje żądanie (APPLY_BUILT_SYMBOL) na (APPLY_LOCATION_CHANGE) dla Nowej Logiki."""
+        if not change_request_tuple or change_request_tuple[0] is None:
+            return None
+
+        change_type, cell_data, new_symbol = change_request_tuple
+
+        parsed_new = parse_symbol(new_symbol)
+        parsed_old = parse_symbol(cell_data.get('symbol', ''))
+        new_loc = parsed_new.get('location')
+        old_loc = parsed_old.get('location') or cell_data.get('lokalizacja_domyslna')
+        new_special = parsed_new.get('special_symbol')
+        accepts_loc = (new_special is None or new_special.upper() in app_settings.WORK_LIKE_SYMBOLS)
+
+        if not accepts_loc or new_loc == old_loc:
+            return (ChangeType.APPLY_BUILT_SYMBOL, cell_data, new_symbol)
+
+        default_loc = cell_data.get('lokalizacja_domyslna')
+        reason = None
+        if new_loc == default_loc:
+            reason = "Powrót do lokalizacji domyślnej"
+        else:
+            user_id = cell_data.get('uzytkownik_id')
+            reason = self.reason_cache.get(user_id, "Zmiana lokalizacji (brak powodu)")
+
+        new_start = parsed_new.get('start_hour')
+        new_hours = parsed_new.get('work_hours')
+        old_start = parsed_old.get('start_hour')
+        old_hours = parsed_old.get('work_hours')
+        czy_zmiana_grafiku = 1 if (new_start != old_start or new_hours != old_hours) else 0
+
+        payload = {
+            'reason': reason,
+            'new_location': new_loc,
+            'czy_zmiana_grafiku': czy_zmiana_grafiku,
+            'godzina_nowa': new_start,
+            'liczba_godzin_nowe': new_hours,
+            'oryginalny_symbol': cell_data.get('symbol', ''),
+            'nowy_symbol_wygenerowany': new_symbol
+        }
+        return (ChangeType.APPLY_LOCATION_CHANGE, cell_data, payload)
+
     def run(self):
+        """Wykonuje zmiany w grafiku w tle."""
         conn = None
-        results = []
+        all_results = []
+
         try:
             conn = DatabaseConnector.get_connection()
+            conn.timeout = 0
             cursor = conn.cursor()
-            total_changes = len(self.change_requests)
+            modyfikujacy_id, _, _, _, _, _ = get_modifier_id(existing_conn=conn)
 
-            for i, (change_type, cell_data, value) in enumerate(self.change_requests):
-                if self._is_cancelled:
-                    break
+            requests_to_execute = []
 
-                new_symbol = self._prepare_new_symbol(change_type, cell_data, value, cursor)
-                if new_symbol is None:
-                    continue
+            if self.is_new_logic_path:
+                raw_data_dict = self.data_input
+                for visual_row, row_data in raw_data_dict.items():
+                    if self._is_cancelled: break
+                    prep_result = self._prepare_change_request_for_row(row_data, visual_row)
 
-                # Wykonanie procedury w bazie danych
-                req = {
-                    'nr_kadrowy': cell_data.get('nr_kadrowy'),
-                    'rok': self.main_window.year,
-                    'miesiac': self.main_window.month,
-                    'data': cell_data.get('date_str'),
-                    'symbol': new_symbol,
-                    'user_id': cell_data.get('uzytkownik_id'),
-                    'user_name': cell_data.get('uzytkownik_dane', '')
-                }
-                result = self._execute_and_parse_change(cursor, req)
-                results.append(result)
-                self.progress_updated.emit(i + 1)
+                    if prep_result[0] is None:
+                        status = prep_result[1]
+                        msg = prep_result[2] if len(prep_result) > 2 else ""
+                        all_results.append(
+                            {'success': (status == 'no_change'), 'message': msg, 'visual_row': visual_row,
+                             'status_override': status})
+                        continue
+
+                    final_tuple = self._handle_location_logic_for_request(prep_result)
+                    if final_tuple:
+                        requests_to_execute.append(final_tuple)
+            else:
+                requests_to_execute = self.data_input
+
+            if requests_to_execute and not self._is_cancelled:
+                self.progress_updated.emit(0 - len(requests_to_execute))
+
+                for i, request_tuple in enumerate(requests_to_execute):
+                    if self._is_cancelled: break
+
+                    change_type, cell_data, value = request_tuple
+
+                    req_data = {
+                        'nr_kadrowy': cell_data.get('nr_kadrowy'),
+                        'rok': self.year,
+                        'miesiac': self.month,
+                        'data': cell_data.get('date_str'),
+                        'user_id': cell_data.get('uzytkownik_id'),
+                        'user_name': cell_data.get('uzytkownik_dane', ''),
+                        'visual_row': cell_data.get('visual_row', -1)
+                    }
+
+                    if change_type == ChangeType.APPLY_LOCATION_CHANGE and isinstance(value, dict):
+                        proc_name = SQL_OBJECTS.get('p_zarzadzajlokalizacja')
+                        params = (
+                            req_data['user_id'], req_data['data'],
+                            value.get('new_location'), value.get('reason'),
+                            value.get('czy_zmiana_grafiku'), value.get('godzina_nowa'),
+                            value.get('liczba_godzin_nowe')
+                        )
+                        sql = f"EXEC {proc_name} ?, ?, ?, ?, ?, ?, ?"
+                        result = self._execute_and_parse_change(cursor, sql, params, req_data, value)
+                    else:
+                        new_symbol = ""
+                        if change_type == ChangeType.APPLY_BUILT_SYMBOL:
+                            new_symbol = str(value)
+                        else:
+                            new_symbol = self._prepare_new_symbol_legacy(change_type, cell_data, value, cursor)
+
+                        if new_symbol is None:
+                            all_results.append({'success': False, 'message': 'Błąd budowania symbolu', **req_data})
+                            continue
+
+                        params = (
+                            req_data['nr_kadrowy'], req_data['rok'], req_data['miesiac'],
+                            req_data['data'], new_symbol, None
+                        )
+                        sql = f"EXEC {SQL_OBJECTS['p_importzmianynaserwer']} ?, ?, ?, ?, ?, ?"
+                        result = self._execute_and_parse_change(cursor, sql, params, req_data, new_symbol)
+
+                    all_results.append(result)
+                    self.progress_updated.emit(i + 1)
 
             if not self._is_cancelled:
                 conn.commit()
-            self.finished.emit(results)
+            else:
+                conn.rollback()
+
+            self.finished.emit(all_results)
 
         except Exception as e:
-            log_error(f"Krytyczny błąd w ScheduleChangeThread: {e}", exception=e)
-            self.error_occurred.emit(str(e))
+            log_error(f"Krytyczny błąd w ScheduleChangeThread.run: {e}", exception=e)
+            if conn:
+                try:
+                    conn.rollback()
+                except:
+                    pass
+            if not self._is_cancelled:
+                self.error_occurred.emit(str(e))
         finally:
             if conn:
                 conn.close()
 
-    def _prepare_new_symbol(self, change_type, cell_data, value, cursor):
-        """Przygotowuje nowy symbol na podstawie typu operacji."""
+    def _prepare_new_symbol_legacy(self, change_type, cell_data, value, cursor):
+        """Obsługuje starsze typy ChangeType."""
         current_symbol = cell_data.get('symbol', '')
         parsed = parse_symbol(current_symbol)
 
@@ -83,49 +260,23 @@ class ScheduleChangeThread(QThread):
                 work_hours = int(float(cell_data.get('etat', 8.0)))
             except (ValueError, TypeError):
                 work_hours = 8
-
             location = parsed.get('location') or self.main_window.determine_correct_location(cell_data, cursor=cursor)
-            return build_symbol(
-                location=location,
-                start_hour=start_hour,
-                work_hours=parsed.get('work_hours') or work_hours,
-                special_symbol=parsed.get('special_symbol')
-            )
-        elif change_type == ChangeType.QUICK_EDIT_START_HOUR_NO_LOCATION:
-            start_hour = value
-            try:
-                work_hours = int(float(cell_data.get('etat', 8.0)))
-            except (ValueError, TypeError):
-                work_hours = 8
+            return build_symbol(location=location, start_hour=start_hour,
+                                work_hours=parsed.get('work_hours') or work_hours,
+                                special_symbol=parsed.get('special_symbol'))
 
-            # Używamy istniejącej lokalizacji lub żadnej, bez sprawdzania w bazie
-            location = parsed.get('location')
-            return build_symbol(
-                location=location,
-                start_hour=start_hour,
-                work_hours=parsed.get('work_hours') or work_hours,
-                special_symbol=parsed.get('special_symbol')
-            )
         elif change_type == ChangeType.MODIFY_WORK_HOURS:
-            # value to delta (+1 lub -1)
-            if parsed.get('work_hours') is None:
-                return None
+            if parsed.get('work_hours') is None: return None
             current_hours = int(parsed['work_hours'])
             new_hours = min(12, current_hours + value) if value > 0 else max(1, current_hours + value)
-            if new_hours == current_hours:
-                return None
-            return build_symbol(
-                location=parsed.get('location'),
-                start_hour=parsed.get('start_hour'),
-                work_hours=new_hours,
-                special_symbol=parsed.get('special_symbol')
-            )
+            if new_hours == current_hours: return None
+            return build_symbol(location=parsed.get('location'), start_hour=parsed.get('start_hour'),
+                                work_hours=new_hours, special_symbol=parsed.get('special_symbol'))
+
         elif change_type == ChangeType.APPLY_SPECIAL_SYMBOL:
-            # value to special_symbol
             special_symbol = value
             system_pracy = cell_data.get('system_czasu_pracy', '').strip().lower()
             is_equivalent_system = (system_pracy == 'równoważny')
-            # --- POPRAWKA: Sprawdź, czy special_symbol nie jest None przed wywołaniem .upper() ---
             is_absence_symbol = special_symbol is not None and special_symbol.upper() in app_settings.get_absence_symbols()
 
             final_start_hour = parsed.get('start_hour')
@@ -138,68 +289,86 @@ class ScheduleChangeThread(QThread):
                     final_work_hours = 8
 
             final_location = None
-            # --- POPRAWKA: Użyj `determine_correct_location` przy usuwaniu symbolu specjalnego ---
-            # Jeśli `special_symbol` jest None (usuwanie), lub jest to symbol "pracujący",
-            # musimy aktywnie ustalić prawidłową lokalizację.
             if (special_symbol and special_symbol.upper() in app_settings.WORK_LIKE_SYMBOLS) or not special_symbol:
                 final_location = self.main_window.determine_correct_location(cell_data, cursor=cursor)
 
-            new_symbol = build_symbol(
-                location=final_location,
-                start_hour=final_start_hour,
-                work_hours=final_work_hours,
-                special_symbol=special_symbol
-            )
-            if not new_symbol.strip() and special_symbol and special_symbol.strip():
-                return special_symbol.strip()
+            new_symbol = build_symbol(location=final_location, start_hour=final_start_hour, work_hours=final_work_hours,
+                                      special_symbol=special_symbol)
+
+            if not new_symbol.strip() and special_symbol and special_symbol.strip(): return special_symbol.strip()
             return new_symbol.strip() if new_symbol else ""
 
-
         elif change_type == ChangeType.CLEAR_CELL:
-            # Sprawdź, czy symbol specjalny to urlop - logika biznesowa jest w main.py
-            # Tutaj po prostu zwracamy pusty string, aby wyczyścić komórkę
-            return ""  # Pusty symbol czyści komórkę
+            return ""
 
-        elif change_type == ChangeType.APPLY_BUILT_SYMBOL:
-            # Wartość 'value' zawiera już gotowy, nowy symbol
-            return value if value is not None else ""
+        return str(value)
 
-        return None  # Domyślnie, jeśli typ nie pasuje
-
-    def _execute_and_parse_change(self, cursor, req):
-        """Wykonuje pojedynczą operację i interpretuje jej wynik."""
+    def _execute_and_parse_change(self, cursor, sql_query, params, req_data, value_payload):
+        """
+        Wykonuje pojedynczą operację (SQL) i interpretuje jej wynik.
+        POPRAWKA DLA "SILENT SUCCESS": Pusty wynik = SUKCES.
+        """
         try:
-            cursor.execute(
-                f"EXEC {SQL_OBJECTS['p_importzmianynaserwer']} @Nr_Kadrowy = ?, @Rok = ?, @Miesiac = ?, @Data = ?, @Symbol = ?, @CzyPobieranieSugestii = ?",
-                (req['nr_kadrowy'], req['rok'], req['miesiac'], req['data'], req['symbol'], None)
-            )
+            cursor.execute(sql_query, params)
+
             all_results = []
             while True:
                 try:
                     rows = cursor.fetchall()
                     if rows: all_results.extend(rows)
                     if not cursor.nextset(): break
-                except pyodbc.ProgrammingError: break
+                except pyodbc.ProgrammingError:
+                    break
 
-            returned_symbol, success, message = req.get('symbol', ''), True, "OK"
-            for row in all_results:
-                if row and len(row) > 0 and row[0] is not None:
-                    raw_value = row[0]
-                    if isinstance(raw_value, int) and raw_value == 0: continue
-                    value_str = str(raw_value).strip()
-                    if not value_str or value_str == "0": continue
-                    is_likely_a_symbol = ' ' not in value_str and len(value_str) <= 50
-                    if is_likely_a_symbol: returned_symbol = value_str
-                    else: success, message = False, value_str; break
-            
-            req_result = req.copy()
-            req_result.update({'success': success, 'message': message, 'returned_symbol': returned_symbol})
+            # --- ZMIANA: Domyślnie zakładamy SUKCES ---
+            # Jeśli baza nie zwróci nic, to znaczy że operacja się powiodła.
+            success = True
+            message = "OK"
+            returned_symbol = None
+
+            # Jeśli dostaliśmy jakieś wyniki, sprawdzamy czy to nie błąd
+            if all_results:
+                for row in all_results:
+                    if row and len(row) > 0 and row[0] is not None:
+                        raw_value = row[0]
+                        if isinstance(raw_value, int) and raw_value in [0, 1]: continue
+                        value_str = str(raw_value).strip()
+                        if not value_str or value_str == "0": continue
+
+                        # Heurystyka: Jeśli tekst jest długi lub ma spacje -> to komunikat błędu
+                        if ' ' in value_str or len(value_str) > 50:
+                            success = False
+                            message = value_str
+                            debug_print(f"[Wątek] DB Error wykryty w wyniku: {message}")
+                            break
+                        else:
+                            # Krótki tekst bez spacji (np. "8", "U") to zwrócony symbol (Sukces)
+                            returned_symbol = value_str
+
+            req_result = req_data.copy()
+            req_result.update({
+                'success': success,
+                'message': message,
+                'returned_symbol': returned_symbol
+            })
+
+            # Fallback: Jeśli sukces, ale baza nic nie zwróciła (Silent Success),
+            # przyjmujemy, że wstawiono to, co chcieliśmy.
+            if success and returned_symbol is None:
+                if isinstance(value_payload, dict):
+                    req_result['returned_symbol'] = value_payload.get('nowy_symbol_wygenerowany', '')
+                else:
+                    req_result['returned_symbol'] = value_payload
+
             return req_result
+
         except Exception as e:
-            error_msg = f"Błąd wykonania procedury: {e}"
-            log_error(f"Błąd przetwarzania żądania {req}: {e}", exception=e)
-            req_result = req.copy()
-            req_result.update({'success': False, 'message': error_msg, 'returned_symbol': req.get('symbol', '')})
+            error_msg = f"Wyjątek SQL: {e}"
+            log_error(f"Błąd przetwarzania żądania {req_data}: {e}", exception=e)
+            req_result = req_data.copy()
+            fallback = value_payload if isinstance(value_payload, str) else value_payload.get(
+                'nowy_symbol_wygenerowany', '')
+            req_result.update({'success': False, 'message': error_msg, 'returned_symbol': fallback})
             return req_result
 
     def cancel(self):
@@ -212,18 +381,34 @@ class ScheduleChangeProcessor:
     def __init__(self, parent_window):
         self.parent = parent_window
         self.thread = None
-        self.on_results_processed_callback = None  # <-- Nowy atrybut
+        self.on_results_processed_callback = None
 
-    def start_changes(self, change_requests: list, on_results_processed=None):
-        if not change_requests:
+    def start_changes(self, data_input, on_results_processed=None, reason_cache=None):
+        if not data_input:
             return
-        self.on_results_processed_callback = on_results_processed  # <-- Zapisz callback
-        self.progress_dialog = QProgressDialog("Aktualizowanie grafiku...", "Anuluj", 0, len(change_requests), self.parent)
+
+        self.on_results_processed_callback = on_results_processed
+        is_new_logic = isinstance(reason_cache, dict)
+
+        current_data = self.parent.date_combo.currentData()
+        if current_data:
+            year, month = current_data
+        else:
+            year, month = self.parent.year, self.parent.month
+
+        if is_new_logic:
+            self.progress_dialog = QProgressDialog("Przygotowywanie zmian...", "Anuluj", 0, len(data_input),
+                                                   self.parent)
+            self.thread = ScheduleChangeThread(data_input, reason_cache, self.parent, year, month)
+        else:
+            self.progress_dialog = QProgressDialog("Aktualizowanie grafiku...", "Anuluj", 0, len(data_input),
+                                                   self.parent)
+            self.thread = ScheduleChangeThread(data_input, None, self.parent, year, month)
+
         self.progress_dialog.setWindowModality(Qt.WindowModal)
         self.progress_dialog.setWindowTitle("Przetwarzanie zmian")
 
-        self.thread = ScheduleChangeThread(change_requests, self.parent)
-        self.thread.progress_updated.connect(self.progress_dialog.setValue)
+        self.thread.progress_updated.connect(self._on_progress_updated)
         self.thread.finished.connect(self._on_finished)
         self.thread.error_occurred.connect(self._on_error)
         self.progress_dialog.canceled.connect(self.thread.cancel)
@@ -231,37 +416,54 @@ class ScheduleChangeProcessor:
         self.thread.start()
         self.progress_dialog.open()
 
+    def _on_progress_updated(self, value):
+        if value < 0:
+            new_max = abs(value)
+            self.progress_dialog.setLabelText("Aktualizowanie grafiku...")
+            self.progress_dialog.setMaximum(new_max)
+            self.progress_dialog.setValue(0)
+        else:
+            if value <= self.progress_dialog.maximum():
+                self.progress_dialog.setValue(value)
+
     def _on_finished(self, results):
         self.progress_dialog.close()
-        successful_updates = [res for res in results if res.get('success')]
-        failed_updates = [res for res in results if not res.get('success')]
+
+        if not results:
+            self.thread = None
+            self.on_results_processed_callback = None
+            return
+
+        successful_updates = []
+        failed_updates = []
+
+        for res in results:
+            if res.get('success') and res.get('status_override') != 'no_change':
+                successful_updates.append(res)
+            elif not res.get('success'):
+                failed_updates.append(res)
 
         if successful_updates:
             updates_for_ui = [(res['user_id'], res['data'], res.get('returned_symbol')) for res in successful_updates]
             self.parent._update_cells_with_new_symbols(updates_for_ui)
             self.parent.statusBar().showMessage(f"Pomyślnie zaktualizowano {len(successful_updates)} komórek.", 5000)
+            self.parent._update_modification_date()
 
-        # --- NOWA LOGIKA: Wywołaj callback, jeśli istnieje ---
         if self.on_results_processed_callback:
             try:
-                # Przekaż pełne wyniki (sukcesy i porażki) do callbacka
                 self.on_results_processed_callback(results)
             except Exception as e:
-                log_error(f"Błąd podczas wywoływania on_results_processed_callback w ScheduleChangeProcessor: {e}",
-                          exception=e)
-        # --- KONIEC NOWEJ LOGIKI ---
+                log_error(f"Błąd callbacka: {e}", exception=e)
 
-        # Wyświetlanie błędów (bez zmian)
         if failed_updates:
             error_messages = [
-                f"- {res.get('user_name', '')} ({res.get('data', '')}): {res.get('message', 'Błąd')}" for res in
-                failed_updates]
-            # Rozważ użycie ErrorSummaryDialog zamiast QMessageBox dla długich list błędów
-            QMessageBox.warning(self.parent, "Błędy", "Wystąpiły błędy:<br>" + "<br>".join(error_messages))
+                f"- {res.get('user_name', '')} ({res.get('data', '')}): {res.get('message', 'Błąd')}"
+                for res in failed_updates
+            ]
+            QMessageBox.warning(self.parent, "Błędy", "Wystąpiły błędy:<br>" + "<br>".join(error_messages[:15]))
 
-        self.parent._update_modification_date()
         self.thread = None
-        self.on_results_processed_callback = None  # <-- Zresetuj callback
+        self.on_results_processed_callback = None
 
     def _on_error(self, error_message):
         self.progress_dialog.close()
