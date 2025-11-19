@@ -1,0 +1,66 @@
+-- 1. Tabela Sesji (Lekka, bez RODO)
+IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[AppSessions]') AND type in (N'U'))
+BEGIN
+    CREATE TABLE [dbo].[AppSessions](
+        [SessionId] [bigint] IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        [LoginWindows] [nvarchar](100) NOT NULL,
+        [AppVersion] [nvarchar](20) NOT NULL,
+        [SessionStart] [datetime] DEFAULT GETDATE(),
+        [LastHeartbeat] [datetime] DEFAULT GETDATE(),
+        [SessionEnd] [datetime] NULL,
+        [ExitType] [nvarchar](50) NULL
+    );
+    CREATE INDEX [IX_AppSessions_Login_Active] ON [dbo].[AppSessions] ([LoginWindows], [SessionEnd]);
+END
+
+-- 2. Tabela Komend
+IF NOT EXISTS (SELECT * FROM sys.objects WHERE object_id = OBJECT_ID(N'[dbo].[AppCommands]') AND type in (N'U'))
+BEGIN
+    CREATE TABLE [dbo].[AppCommands](
+        [Id] [bigint] IDENTITY(1,1) NOT NULL PRIMARY KEY,
+        [CommandType] [nvarchar](50) NOT NULL, -- 'KILL', 'REFRESH', 'MSG'
+        [TargetUser] [nvarchar](100) NULL,     -- NULL = Wszyscy
+        [CommandData] [nvarchar](max) NULL,
+        [CreatedAt] [datetime] DEFAULT GETDATE(),
+        [CreatedBy] [nvarchar](100) DEFAULT ORIGINAL_LOGIN()
+    );
+END
+GO
+
+-- 3. TRIGGER (Serce rozwiązania)
+-- Wysyła szczegóły komendy bezpośrednio w XML do kolejki
+CREATE OR ALTER TRIGGER [tr_AppCommands_PowiadomienieServiceBroker]
+ON [dbo].[AppCommands]
+AFTER INSERT
+AS
+BEGIN
+    SET NOCOUNT ON;
+
+    -- Wyślij powiadomienie Service Broker
+    DECLARE @dialog_handle UNIQUEIDENTIFIER;
+    DECLARE @message_body XML;
+    
+    -- Budujemy XML zawierający typ komendy i cel
+    -- Dzięki temu Python nie musi robić SELECT - dostanie dane w powiadomieniu!
+    SET @message_body = (
+        SELECT 
+            'AppCommands' AS TableName,
+            i.CommandType AS CmdType,
+            ISNULL(i.TargetUser, 'ALL') AS Target, -- 'ALL' dla NULL
+            ISNULL(i.CommandData, '') AS Data
+        FROM inserted i
+        FOR XML PATH('TeamFlowNotification'), ROOT('NotificationData')
+    );
+
+    -- Rozpocznij konwersację i wyślij wiadomość
+    BEGIN DIALOG CONVERSATION @dialog_handle
+        FROM SERVICE [//TeamFlowApp/Grafik/SerwisPowiadomien]
+        TO SERVICE '//TeamFlowApp/Grafik/SerwisPowiadomien'
+        ON CONTRACT [//TeamFlowApp/Grafik/KontraktPowiadomien]
+        WITH ENCRYPTION = OFF;
+
+    SEND ON CONVERSATION @dialog_handle
+        MESSAGE TYPE [//TeamFlowApp/Grafik/PowiadomienieZmiany]
+        (@message_body);
+END
+GO
