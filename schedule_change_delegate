@@ -37,6 +37,15 @@ class ScheduleChangeDelegate(QStyledItemDelegate):
         if option.state & QStyle.State_Selected:
             painter.fillRect(option.rect, option.palette.highlight())
 
+        # --- NOWA LOGIKA: Rysowanie tła dla "brudnych" wierszy ---
+        is_dirty = row_data.get('is_dirty', False)
+        if is_dirty:
+            is_dark = self.main_dialog.determined_theme == 'dark'
+            # Używamy subtelnego koloru, aby nie przytłaczać interfejsu
+            dirty_color = QColor("#3a2d00") if is_dark else QColor("#fff3cd")
+            painter.fillRect(option.rect, dirty_color)
+        # --- KONIEC NOWEJ LOGIKI ---
+
         col = index.column()
         permissions = self.main_dialog.parent_widget._get_permission_for_cell(row_data)
 
