@@ -1,10 +1,13 @@
 # async_operations.py
 
 from PySide6.QtCore import QThread, Signal, Qt
-from PySide6.QtWidgets import QProgressDialog, QMessageBox
-from db_connector import DatabaseConnector, SQL_OBJECTS, get_modifier_id
+from PySide6.QtWidgets import QProgressDialog, QMessageBox, QApplication
+from db_connector import DatabaseConnector, SQL_OBJECTS, get_modifier_id, load_all_app_settings
+from app_settings import app_settings
+from config import APP_VERSION
 from debug_utils import log_error, debug_print, log_warning
 import pyodbc
+
 
 class SuggestionImportThread(QThread):
     """
@@ -71,6 +74,7 @@ class SuggestionImportThread(QThread):
                 cursor.close()
                 debug_print("Zamknięto kursor bazy danych.")
             # --- KONIEC KLUCZOWEJ POPRAWKI ---
+
 
             if conn:
                 # Teraz te polecenia powinny wykonać się poprawnie
@@ -292,3 +296,51 @@ class LocationExceptionManager:
         QMessageBox.critical(self.parent, "Błąd krytyczny",
                              f"Wystąpił błąd podczas przetwarzania wyjątków:\n{error_message}")
         self.thread = None
+
+
+class BackgroundCheckerThread(QThread):
+    """
+    Wątek do sprawdzania w tle nowej wersji aplikacji i nowych danych w grafiku,
+    bez blokowania głównego wątku UI.
+    """
+    update_required = Signal(bool, bool)  # force_update, version_obsolete
+    permissions_changed = Signal()
+    error_occurred = Signal(str)
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.current_user_role = QApplication.instance().sender().current_user_app_role if QApplication.instance().sender() else None
+
+    def run(self):
+        conn = None
+        try:
+            conn = DatabaseConnector.get_connection()
+            if not conn:
+                self.error_occurred.emit("Nie można nawiązać połączenia z bazą danych.")
+                return
+
+            # 1. Załaduj najnowsze ustawienia aplikacji
+            # --- ZMIANA: Nie ładujemy już wszystkich ustawień, tylko sprawdzamy wersję ---
+            cursor = conn.cursor()
+            cursor.execute(f"SELECT SettingValue FROM {SQL_OBJECTS['appsettings']} WHERE SettingKey = 'current_version'")
+            version_row = cursor.fetchone()
+            cursor.execute(f"SELECT SettingValue FROM {SQL_OBJECTS['appsettings']} WHERE SettingKey = 'force_update'")
+            force_update_row = cursor.fetchone()
+
+            # 2. Sprawdź, czy wymagana jest aktualizacja
+            from packaging.version import parse as parse_version
+            is_update_forced = force_update_row[0].lower() == 'true' if force_update_row else False
+            required_version = version_row[0] if version_row else APP_VERSION
+            is_version_obsolete = parse_version(APP_VERSION) != parse_version(required_version)
+
+            if is_update_forced or is_version_obsolete:
+                self.update_required.emit(is_update_forced, is_version_obsolete)
+                return  # Zakończ wątek, aplikacja i tak zostanie zamknięta
+
+        except Exception as e:
+            log_error(f"Błąd w wątku BackgroundCheckerThread: {e}", exception=e)
+            self.error_occurred.emit(str(e))
+
+        finally:
+            if conn:
+                conn.close()
