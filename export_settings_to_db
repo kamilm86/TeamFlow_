@@ -46,7 +46,7 @@ def export_settings():
 
         # Klucz: 'action_delete_symbol'
         # Opis: Zezwala na usuwanie symboli z komórek za pomocą klawiszy Delete lub Backspace.
-        'action_delete_symbol': ['Pracownik WPR', 'Lider OUT','Lider'],
+        'action_delete_symbol': ['Pracownik WPR', 'Lider OUT', 'Lider'],
 
         # Klucz: 'view_schedule_comment_column'
         # Opis: Sprawia, że w oknie wyboru kolumn pojawia się opcja włączenia kolumny "Komentarz do Grafiku".
@@ -58,52 +58,94 @@ def export_settings():
 
         # Klucz: 'button_send_email'
         # Opis: Kontroluje widoczność przycisku "Wyślij e-mail" do zaznaczonych pracowników.
-        'button_send_email': ['Pracownik WPR', 'Lider OUT', 'Lider']
+        'button_send_email': ['Pracownik WPR', 'Lider OUT', 'Lider'],
+
+        # Klucz: 'view_schedule_percent_morning_column'
+        # Opis: Sprawia, że w oknie wyboru kolumn pojawia się opcja włączenia kolumny "Procent rano".
+        'view_schedule_percent_morning_column': ['Pracownik WPR']
     }
 
     # Definicja symboli, które oznaczają świadczenie pracy (nie absencję)
-    work_like_symbols = ["DYS", "T", "BC", "S", "P", "PR", "PD", "HO", "DK", "DZ", "BK", "BO", "CW", "MW"]
+    work_like_symbols = ["DYS", "T", "BC", "S", "P", "PR", "PD", "HO", "DZ"]
 
 
     # 2. Definicje symboli
     symbol_categories = OrderedDict([
         ("Urlopy", {
-            "U": "Urlop wypoczynkowy", "UZ": "Urlop na żądanie", "UB": "Urlop bezpłatny", "UM": "Urlop macierzyński",
-            "UO": "Urlop okolicznościowy", "UOD": "Opieka nad dzieckiem", "US": "Urlop szkolny", "UT": "Urlop ojcowski",
-            "UW": "Urlop wychowawczy", "UOP": "Urlop opiekuńczy (5 dni)"
-        }),
+            "U": "Urlop wypoczynkowy",
+            "UZ": "Urlop na żądanie",
+            "UB": "Urlop bezpłatny",
+            "UM": "Urlop macierzyński",
+            "UO": "Urlop okolicznościowy",
+            "UOD": "Opieka nad dzieckiem",
+            "US": "Urlop szkolny",
+            "UT": "Urlop ojcowski",
+            "UW": "Urlop wychowawczy",
+            "UOP": "Urlop opiekuńczy (5 dni)",
+            "USW": "Zwolnienie z powodu siły wyższej (2 dni)",
+         }),
         ("Zwolnienia", {
-            "CO": "Zwolnienie lekarskie", "CR": "Zwolnienie na inną osobę", "CRW": "Zwolnienie na opiekę (wyjątkowe)",
-            "CSR": "Świadczenie rehabilitacyjne", "ZO": "Zwolnienie z obowiązku świadczenia pracy",
+            "CO": "Zwolnienie lekarskie",
+            "CR": "Zwolnienie na inną osobę",
+            "CRW": "Zwolnienie na opiekę (wyjątkowe)",
+            "CSR": "Świadczenie rehabilitacyjne",
+            "ZO": "Zwolnienie z obowiązku świadczenia pracy",
             "ZS": "Zwolnienie z obowiązku świadczenia pracy (wyjątkowe)"
         }),
         ("Delegacje i Inne", {
-            "DK": "Delegacja krajowa", "DZ": "Delegacja zagraniczna", "HO": "Home Office", "P": "Czasowe oddelegowanie",
-            "PD": "Prace dodatkowe", "BC": "Backup", "BK": "Badanie kontrolne", "BO": "Badanie okresowe",
-            "CW": "Ćwiczenia wojskowe", "DYS": "Dyspozycja", "MW": "mWolne",
-            "NN": "Nieobecność nieusprawiedliwiona", "NU": "Nieobecność usprawiedliwiona",
-            "NW": "Nieobecność do wyjaśnienia", "O": "Odbiór godzin",
-            "OS": "Odbiór dnia wolnego za święto", "S": "Szkolenie", "T": "Testy",
-            "USW": "Zwolnienie z powodu siły wyższej (2 dni)", "Z": "Rozwiązanie umowy"
+            "DK": "Delegacja krajowa",
+            "DZ": "Delegacja zagraniczna",
+            "HO": "Home Office",
+            "P": "Czasowe oddelegowanie",
+            "PD": "Prace dodatkowe",
+            "PR": "",
+            "BC": "Backup",
+            "BK": "Badanie kontrolne",
+            "BO": "Badanie okresowe",
+            "CW": "Ćwiczenia wojskowe",
+            "DYS": "Dyspozycja",
+            "MW": "mWolne",
+            "NN": "Nieobecność nieusprawiedliwiona",
+            "NU": "Nieobecność usprawiedliwiona",
+            "NW": "Nieobecność do wyjaśnienia",
+            "O": "Odbiór godzin",
+            "OS": "Odbiór dnia wolnego za święto",
+            "S": "Szkolenie",
+            "T": "Testy",
+            "Z": "Rozwiązanie umowy"
         })
     ])
 
     # --- NOWA SEKCJA: Definicja uprawnień do poszczególnych symboli ---
     symbol_permissions = {
-        # Urlopy - dostępne tylko dla WPR
-        "U": ["Pracownik WPR", "Lider OUT", "Lider"], "UZ": ["Pracownik WPR", "Lider OUT", "Lider"], "UB": ["Pracownik WPR", "Lider OUT", "Lider"], "UM": ["Pracownik WPR", "Lider OUT", "Lider"],
-        "UO": ["Pracownik WPR", "Lider OUT", "Lider"], "UOD": ["Pracownik WPR", "Lider OUT", "Lider"], "US": ["Pracownik WPR", "Lider OUT", "Lider"], "UT": ["Pracownik WPR", "Lider OUT", "Lider"],
+        # Urlopy
+        "U": ["Pracownik WPR", "Lider OUT", "Lider"], "UZ": ["Pracownik WPR", "Lider OUT", "Lider"],
+        "UB": ["Pracownik WPR", "Lider OUT", "Lider"], "UM": ["Pracownik WPR", "Lider OUT", "Lider"],
+        "UO": ["Pracownik WPR", "Lider OUT", "Lider"], "UOD": ["Pracownik WPR", "Lider OUT", "Lider"],
+        "US": ["Pracownik WPR", "Lider OUT", "Lider"], "UT": ["Pracownik WPR", "Lider OUT", "Lider"],
         "UW": ["Pracownik WPR", "Lider OUT", "Lider"], "UOP": ["Pracownik WPR", "Lider OUT", "Lider"],
-        # Zwolnienia - dostępne dla WPR i Liderów
+        "USW": ["Pracownik WPR", "Lider OUT", "Lider"],  # Przeniesiono z "Inne" dla spójności
+
+        # Zwolnienia
         "CO": ["Pracownik WPR", "Lider", "Lider OUT"], "CR": ["Pracownik WPR", "Lider", "Lider OUT"],
         "CRW": ["Pracownik WPR", "Lider", "Lider OUT"], "CSR": ["Pracownik WPR", "Lider OUT", "Lider"],
         "ZO": ["Pracownik WPR", "Lider OUT", "Lider"], "ZS": ["Pracownik WPR", "Lider OUT", "Lider"],
-        # Inne - dostępne tylko dla WPR
-        "DK": ["Pracownik WPR", "Lider OUT", "Lider"], "DZ": ["Pracownik WPR", "Lider OUT", "Lider"], "HO": ["Pracownik WPR", "Lider OUT", "Lider"], "P": ["Pracownik WPR", "Lider OUT", "Lider"],
-        "PD": ["Pracownik WPR", "Lider OUT", "Lider"], "BC": ["Pracownik WPR", "Lider OUT", "Lider"], "BK": ["Pracownik WPR", "Lider OUT", "Lider"], "BO": ["Pracownik WPR", "Lider OUT", "Lider"],
-        "CW": ["Pracownik WPR", "Lider OUT", "Lider"], "DYS": ["Pracownik WPR", "Lider OUT", "Lider"], "MW": ["Pracownik WPR", "Lider OUT", "Lider"], "NN": ["Pracownik WPR", "Lider OUT", "Lider"],
-        "NU": ["Pracownik WPR", "Lider OUT", "Lider"], "NW": ["Pracownik WPR", "Lider OUT", "Lider"], "O": ["Pracownik WPR", "Lider OUT", "Lider"], "OS": ["Pracownik WPR", "Lider OUT", "Lider"],
-        "S": ["Pracownik WPR", "Lider OUT", "Lider"], "T": ["Pracownik WPR", "Lider OUT", "Lider"], "USW": ["Pracownik WPR", "Lider OUT", "Lider"], "Z": ["Pracownik WPR", "Lider OUT", "Lider"]
+
+        # Delegacje i Inne
+        "DK": ["Pracownik WPR", "Lider OUT", "Lider"], "DZ": ["Pracownik WPR", "Lider OUT", "Lider"],
+        "HO": ["Pracownik WPR", "Lider OUT", "Lider"], "P": ["Pracownik WPR", "Lider OUT", "Lider"],
+        "PD": ["Pracownik WPR", "Lider OUT", "Lider"], "BC": ["Pracownik WPR", "Lider OUT", "Lider"],
+        "BK": ["Pracownik WPR", "Lider OUT", "Lider"], "BO": ["Pracownik WPR", "Lider OUT", "Lider"],
+        "CW": ["Pracownik WPR", "Lider OUT", "Lider"], "DYS": ["Pracownik WPR", "Lider OUT", "Lider"],
+        "MW": ["Pracownik WPR", "Lider OUT", "Lider"], "NN": ["Pracownik WPR", "Lider OUT", "Lider"],
+        "NU": ["Pracownik WPR", "Lider OUT", "Lider"], "NW": ["Pracownik WPR", "Lider OUT", "Lider"],
+        "O": ["Pracownik WPR", "Lider OUT", "Lider"], "OS": ["Pracownik WPR", "Lider OUT", "Lider"],
+        "S": ["Pracownik WPR", "Lider OUT", "Lider"], "T": ["Pracownik WPR", "Lider OUT", "Lider"],
+        "Z": ["Pracownik WPR", "Lider OUT", "Lider"],
+
+        # --- POCZĄTEK POPRAWKI: Dodanie brakującego symbolu ---
+        "PR": ["Pracownik WPR", "Lider OUT", "Lider"]
+        # --- KONIEC POPRAWKI ---
     }
 
     # 3. Definicje logiki biznesowej (wcześniej w BusinessRules)
