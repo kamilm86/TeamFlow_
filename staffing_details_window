@@ -93,19 +93,23 @@ class HourlyStaffingTableModel(QAbstractTableModel):
             return str(int(round(value))) if value != 0 else ""
         if role == Qt.TextAlignmentRole: return Qt.AlignCenter
 
+        # --- POCZĄTEK NOWEJ LOGIKI KOLOROWANIA ---
         if role == Qt.BackgroundRole and value > 0:
-            factor = min((value / self._max_value) ** 0.5, 1.0)
-            if self._view_option == "overtime_only":
-                start_color = QColor(60, 25, 25) if self._is_dark_theme else QColor(255, 230, 230)
-                end_color = QColor(240, 120, 120) if self._is_dark_theme else QColor(180, 0, 0)
-            else:
-                start_color = QColor(25, 50, 25) if self._is_dark_theme else QColor(230, 255, 230)
-                end_color = QColor(120, 240, 120) if self._is_dark_theme else QColor(0, 100, 0)
+            percentage = (value / self._max_value) * 100 if self._max_value > 0 else 0
 
-            r = int(start_color.red() + (end_color.red() - start_color.red()) * factor)
-            g = int(start_color.green() + (end_color.green() - start_color.green()) * factor)
-            b = int(start_color.blue() + (end_color.blue() - start_color.blue()) * factor)
-            return QBrush(QColor(r, g, b))
+            if percentage <= 14:
+                # Do 14% - biały (lub tło motywu)
+                return None  # Brak specjalnego tła
+            elif percentage <= 32:
+                return QBrush(QColor("#00FF00"))  # Jasny zielony
+            elif percentage <= 57:
+                return QBrush(QColor("#00C000"))  # Ciemniejszy zielony
+            elif percentage <= 90:
+                return QBrush(QColor("#008000"))  # Ciemny zielony
+            else:
+                # Powyżej 90%
+                return QBrush(QColor("#003300"))  # Bardzo ciemny zielony
+        # --- KONIEC NOWEJ LOGIKI KOLOROWANIA ---
 
         if role == Qt.ForegroundRole and value > 0:
             bg_brush = self.data(index, Qt.BackgroundRole)
@@ -207,14 +211,14 @@ class DailyStaffingTableModel(BaseMatrixTableModel):
         if is_total_row:
             if role == Qt.DisplayRole:
                 if col == 0: return "Suma"
-                total = self._daily_totals[col - 1];
-                return f"{total:.1f}" if total > 0 else ""
+                total = self._daily_totals[col - 1]
+                return str(int(round(total))) if total > 0 else ""
             return self._get_total_row_style(role)
         row_label = self._row_labels[row]
         if role == Qt.DisplayRole:
             if col == 0: return row_label
-            count = self._matrix_data.get(row_label, [0.0] * self._days_in_month)[col - 1];
-            return f"{count:.1f}" if count > 0 else ""
+            count = self._matrix_data.get(row_label, [0.0] * self._days_in_month)[col - 1]
+            return str(int(round(count))) if count > 0 else ""
         if role == Qt.TextAlignmentRole: return Qt.AlignCenter
         return None
 
