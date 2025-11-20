@@ -106,7 +106,10 @@ class ScheduleChangeThread(QThread):
             return (None, 'failure', str(e))
 
     def _handle_location_logic_for_request(self, change_request_tuple: tuple) -> tuple | None:
-        """Transformuje żądanie (APPLY_BUILT_SYMBOL) na (APPLY_LOCATION_CHANGE) dla Nowej Logiki."""
+        """
+        Transformuje żądanie (APPLY_BUILT_SYMBOL) na (APPLY_LOCATION_CHANGE) dla Nowej Logiki.
+        Mapuje kod lokalizacji (char) na ID (int) przed wysłaniem do bazy.
+        """
         if not change_request_tuple or change_request_tuple[0] is None:
             return None
 
@@ -114,17 +117,21 @@ class ScheduleChangeThread(QThread):
 
         parsed_new = parse_symbol(new_symbol)
         parsed_old = parse_symbol(cell_data.get('symbol', ''))
-        new_loc = parsed_new.get('location')
-        old_loc = parsed_old.get('location') or cell_data.get('lokalizacja_domyslna')
+
+        # Kody lokalizacji jako stringi ('h', 's', 'p')
+        new_loc_code = parsed_new.get('location')
+        old_loc_code = parsed_old.get('location') or cell_data.get('lokalizacja_domyslna')
+
         new_special = parsed_new.get('special_symbol')
         accepts_loc = (new_special is None or new_special.upper() in app_settings.WORK_LIKE_SYMBOLS)
 
-        if not accepts_loc or new_loc == old_loc:
+        if not accepts_loc or new_loc_code == old_loc_code:
             return (ChangeType.APPLY_BUILT_SYMBOL, cell_data, new_symbol)
 
         default_loc = cell_data.get('lokalizacja_domyslna')
         reason = None
-        if new_loc == default_loc:
+
+        if new_loc_code == default_loc:
             reason = "Powrót do lokalizacji domyślnej"
         else:
             user_id = cell_data.get('uzytkownik_id')
@@ -134,11 +141,23 @@ class ScheduleChangeThread(QThread):
         new_hours = parsed_new.get('work_hours')
         old_start = parsed_old.get('start_hour')
         old_hours = parsed_old.get('work_hours')
+
+        # Wykrywanie czy zmieniono również godziny
         czy_zmiana_grafiku = 1 if (new_start != old_start or new_hours != old_hours) else 0
+
+        # --- MAPOWANIE LOKALIZACJI NA INT ---
+        # Mapa zgodna z Twoją bazą danych: h=1, p=2, s=3
+        # Wartości pobrane z analizy location_exception_dialog.py
+        location_map = {'h': 1, 'p': 2, 's': 3}
+
+        # Pobieramy ID. Jeśli kod jest nieznany, domyślnie 1 (Home Office) lub None (co wywoła błąd SQL, co jest pożądane przy błędnych danych)
+        mapped_location_id = location_map.get(new_loc_code, 1)
+
+        debug_print(f"[Processor] Mapowanie lokalizacji: '{new_loc_code}' -> ID {mapped_location_id}")
 
         payload = {
             'reason': reason,
-            'new_location': new_loc,
+            'new_location': mapped_location_id,  # <-- Przesyłamy INT
             'czy_zmiana_grafiku': czy_zmiana_grafiku,
             'godzina_nowa': new_start,
             'liczba_godzin_nowe': new_hours,
