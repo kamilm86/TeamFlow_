@@ -100,35 +100,33 @@ class HourlyStaffingTableModel(QAbstractTableModel):
         if role == Qt.TextAlignmentRole: return Qt.AlignCenter
 
         # --- POPRAWIONA LOGIKA KOLOROWANIA ---
-        if role == Qt.BackgroundRole and value > 0:
-            # Oblicz procent względem maksymalnej wartości w tabeli
-            percentage = (value / self._max_value) * 100 if self._max_value > 0 else 0
+        # Obliczamy procent raz, aby użyć go dla tła i czcionki
+        percentage = (value / self._max_value) * 100 if self._max_value > 0 else 0
 
+        if role == Qt.BackgroundRole and value > 0:
             # Zastosowano gradient zieleni.
             # Zmieniono pierwszy warunek, aby zwracał bardzo jasny zielony zamiast None.
-            if percentage <= 14:
+            if percentage < 14:
                 # Do 14% - Bardzo jasny zielony (zamiast białego)
-                return QBrush(QColor("#E0FFE0"))
-            elif percentage <= 32:
-                return QBrush(QColor("#90EE90"))  # Jasny zielony (LightGreen)
-            elif percentage <= 57:
-                return QBrush(QColor("#32CD32"))  # Średni zielony (LimeGreen)
-            elif percentage <= 90:
+                return QBrush(QColor("#CCFFCC"))
+            elif percentage < 32:
+                return QBrush(QColor("#00FF00"))  # Jasny zielony (LightGreen)
+            elif percentage < 57:
+                return QBrush(QColor("#00C000"))  # Średni zielony (LimeGreen)
+            elif percentage < 90:
                 return QBrush(QColor("#008000"))  # Ciemny zielony (Green)
             else:
                 # Powyżej 90%
-                return QBrush(QColor("#004d00"))  # Bardzo ciemny zielony
+                return QBrush(QColor("#003300"))  # Bardzo ciemny zielony
         # --- KONIEC POPRAWIONEJ LOGIKI ---
 
-        # Ustawienie koloru czcionki dla kontrastu
+        # --- ZMIANA: Kolor czcionki zależny od procentu ---
         if role == Qt.ForegroundRole and value > 0:
-            bg_brush = self.data(index, Qt.BackgroundRole)
-            if bg_brush:
-                bg_color = bg_brush.color()
-                # Wylicz jasność koloru tła (wzór na luminancję)
-                luminance = 0.299 * bg_color.red() + 0.587 * bg_color.green() + 0.114 * bg_color.blue()
-                # Jeśli tło jest ciemne (< 128), czcionka biała, w przeciwnym razie czarna
-                return QBrush(QColor(Qt.GlobalColor.white if luminance < 128 else Qt.GlobalColor.black))
+            # Warunek: czarny dla wartości < 90%, biały dla reszty (>= 90%)
+            if percentage < 90:
+                return QBrush(QColor(Qt.GlobalColor.black))
+            else:
+                return QBrush(QColor(Qt.GlobalColor.white))
 
         return None
 
@@ -605,12 +603,20 @@ class StaffingDetailsWindow(QDialog):
         # --- KONIEC ZMIANY ---
 
         self.setWindowTitle(f"Szczegóły obsady i analizy dla {month:02}/{year}")
-        self.setMinimumSize(1300, 800)
+        self.setMinimumSize(800, 500)
 
         self.setup_ui()
         self.apply_styles()
         self.load_and_display_data()
         self._setup_table_interactivity()
+
+        # --- NOWOŚĆ: Przywracanie zapisanego rozmiaru ---
+        if hasattr(self.parent_widget, 'user_app_settings'):
+            saved_size = self.parent_widget.user_app_settings.get('staffing_window_size')
+            if saved_size and isinstance(saved_size, (list, tuple)) and len(saved_size) == 2:
+                self.resize(saved_size[0], saved_size[1])
+            else:
+                self.resize(1300, 800)  # Domyślny startowy jeśli brak ustawień
 
     def setup_ui(self):
         main_layout = QVBoxLayout(self)
@@ -640,7 +646,7 @@ class StaffingDetailsWindow(QDialog):
     def apply_styles(self):
         theme = "dark" if self.is_dark_theme else "light"
 
-        # 1. Pobierz wszystkie potrzebne style z AppStyles
+        # 1. Pobierz style bazowe z klasy AppStyles
         dialog_style = AppStyles.get_dialog_style(theme)
         table_style = AppStyles.get_table_style(theme)
         button_style = AppStyles.get_button_style(theme)
@@ -648,65 +654,96 @@ class StaffingDetailsWindow(QDialog):
         list_style = AppStyles.get_list_style(theme)
         tab_style = AppStyles.get_tab_widget_style(theme)
 
-        # --- POPRAWKA: Wymuszenie koloru nagłówków w tym oknie ---
-        # Dodajemy ten fragment do stylu tabeli tylko tutaj.
-        # W oknie głównym kolor jest sterowany przez model (weekendy na czerwono),
-        # tutaj chcemy jednolity, czytelny kolor.
+        # --- POPRAWKA 1: Wymuszenie koloru nagłówków ---
         if theme == "dark":
             header_text_color = AppStyles.DARK_TEXT_PRIMARY
         else:
             header_text_color = AppStyles.LIGHT_TEXT_PRIMARY
 
         table_style += f"\nQHeaderView::section {{ color: {header_text_color}; }}"
-        # ---------------------------------------------------------
 
-        # 2. Zastosuj styl bazowy do samego okna
+        # --- POPRAWKA 2: USUNIĘCIE BLOKADY WYSOKOŚCI (PADDING) ---
+        # To jest kluczowe, aby wiersze mogły być niższe niż domyślne ~25-30px
+        table_style += """
+            QHeaderView::section:vertical {
+                padding-top: 0px;
+                padding-bottom: 0px;
+                margin: 0px;
+                min-height: 0px;
+            }
+        """
+
+        # --- NOWOŚĆ: POBIERANIE WYSOKOŚCI Z PROFILU ---
+        try:
+            # Pobieramy ustawienia z głównego okna (rodzica)
+            settings = self.parent_widget.user_app_settings
+            active_profile_name = settings.get('active_profile', 'Podstawowy')
+            profiles = settings.get('layout_profiles', {})
+            profile = profiles.get(active_profile_name, {})
+
+            # Pobierz wartość z profilu lub użyj domyślnej 22
+            target_row_height = int(profile.get('staffing_row_height', 22))
+        except Exception:
+            target_row_height = 22  # Fallback
+
+        # 2. Zastosuj styl do okna dialogowego
         self.setStyleSheet(dialog_style)
 
-        # 3. Zastosuj style do KONKRETNYCH widgetów
         if hasattr(self, 'tabs'):
             self.tabs.setStyleSheet(tab_style)
 
-        # Tabele (QTableView)
+        # 3. Konfiguracja Tabel (QTableView)
         all_views = [
             self.hourly_staffing_view, self.daily_staffing_view, self.symbols_count_view,
             self.symbols_rbh_view, self.overtime_summary_view, self.absence_summary_view,
             self.flexibility_table_view, self.forecast_table_view, self.absence_detail_view
         ]
+
         for view in all_views:
             if view:
                 view.setStyleSheet(table_style)
+
+                # Stylizacja nagłówka poziomego
                 if hasattr(view, 'horizontalHeader'):
                     view.horizontalHeader().setFixedHeight(38)
 
-        # Przyciski (QPushButton)
-        all_buttons = [
-            self.refresh_button, self.close_button, self.absence_back_button
-        ]
-        for button in all_buttons:
-            if button:
-                button.setStyleSheet(button_style)
+                # --- APLIKOWANIE WYSOKOŚCI WIERSZA ---
+                if hasattr(view, 'verticalHeader'):
+                    v_header = view.verticalHeader()
 
-        # Pola wyboru (QComboBox)
+                    # Zdejmij ograniczenie minimalne
+                    v_header.setMinimumSectionSize(15)
+
+                    # Ustaw tryb na Fixed (ignoruje zawartość przy liczeniu wysokości)
+                    v_header.setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
+
+                    # Ustaw docelową wysokość pobraną z ustawień
+                    v_header.setDefaultSectionSize(target_row_height)
+
+        # 4. Przyciski
+        all_buttons = [self.refresh_button, self.close_button, self.absence_back_button]
+        for button in all_buttons:
+            if button: button.setStyleSheet(button_style)
+
+        # 5. ComboBoxy
         all_combos = [
             self.hourly_staffing_options_combo, self.hourly_location_combo,
             self.daily_staffing_options_combo, self.daily_location_combo,
             self.forecast_group_combo, self.forecast_view_mode_combo
         ]
         for combo in all_combos:
-            if combo:
-                combo.setStyleSheet(combo_style)
+            if combo: combo.setStyleSheet(combo_style)
 
-        # ListWidget
+        # 6. Listy
         if hasattr(self, 'absence_symbols_list'):
             self.absence_symbols_list.setStyleSheet(list_style)
 
-        # 4. Zastosuj styl do KPI Boxów
+        # 7. KPI Boxy (Ramki z wynikami)
         if theme == "dark":
             kpi_frame_style = f"QFrame {{ background-color: {AppStyles.DARK_BACKGROUND_CONTROLS}; border: 1px solid {AppStyles.DARK_BORDER_PRIMARY}; border-radius: {AppStyles.BORDER_RADIUS}; }}"
             kpi_title_style = f"font-size: 10pt; color: {AppStyles.DARK_TEXT_SECONDARY}; background-color: transparent; border: none;"
             kpi_value_style = f"font-size: 18pt; font-weight: bold; color: {AppStyles.DARK_TEXT_PRIMARY}; background-color: transparent; border: none;"
-        else:  # light
+        else:
             kpi_frame_style = f"QFrame {{ background-color: {AppStyles.LIGHT_BACKGROUND_CONTROLS}; border: 1px solid {AppStyles.LIGHT_BORDER_PRIMARY}; border-radius: {AppStyles.BORDER_RADIUS}; }}"
             kpi_title_style = f"font-size: 10pt; color: {AppStyles.LIGHT_TEXT_SECONDARY}; background-color: transparent; border: none;"
             kpi_value_style = f"font-size: 18pt; font-weight: bold; color: {AppStyles.LIGHT_TEXT_PRIMARY}; background-color: transparent; border: none;"
@@ -720,7 +757,6 @@ class StaffingDetailsWindow(QDialog):
                 frame.setStyleSheet(kpi_frame_style)
                 if hasattr(frame, 'value_label'):
                     frame.value_label.setStyleSheet(kpi_value_style)
-
                 title_label = frame.findChild(QLabel)
                 if title_label and title_label != getattr(frame, 'value_label', None):
                     title_label.setStyleSheet(kpi_title_style)
@@ -756,8 +792,13 @@ class StaffingDetailsWindow(QDialog):
         self.hourly_staffing_view = QTableView()
         self._hourly_staffing_model = HourlyStaffingTableModel(self._year, self._month, self)
         self.hourly_staffing_view.setModel(self._hourly_staffing_model)
+
+        # 1. Ustawiamy tryb na Fixed (Sztywny) - to pozwala na dowolne zmniejszanie
         self.hourly_staffing_view.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
-        self.hourly_staffing_view.verticalHeader().setDefaultSectionSize(22)
+
+        # 2. Ustawiamy pożądaną wysokość (np. 20 pikseli)
+        self.hourly_staffing_view.verticalHeader().setDefaultSectionSize(10)
+
         self.hourly_staffing_view.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.hourly_staffing_view.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         layout.addWidget(self.hourly_staffing_view)
@@ -789,6 +830,7 @@ class StaffingDetailsWindow(QDialog):
         self.daily_staffing_view = QTableView()
         self._daily_staffing_model = DailyStaffingTableModel(self._year, self._month, "Wydział", self)
         self.daily_staffing_view.setModel(self._daily_staffing_model)
+        self.daily_staffing_view.verticalHeader().setDefaultSectionSize(10)
         splitter.addWidget(self.daily_staffing_view)
 
         self.daily_staffing_chart = QChartView()
@@ -824,7 +866,7 @@ class StaffingDetailsWindow(QDialog):
         self._forecast_model = ForecastComparisonTableModel(self._year, self._month, self)
         self.forecast_table_view.setModel(self._forecast_model)
         self.forecast_table_view.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
-        self.forecast_table_view.verticalHeader().setDefaultSectionSize(22)
+        self.forecast_table_view.verticalHeader().setDefaultSectionSize(5)
         self.forecast_table_view.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.forecast_table_view.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         layout.addWidget(self.forecast_table_view)
@@ -1316,13 +1358,26 @@ class StaffingDetailsWindow(QDialog):
         self.overtime_pie_chart.setChart(pie_chart)
 
     def set_current_theme(self, is_dark_theme):
-        if self.is_dark_theme != is_dark_theme:
-            self.is_dark_theme = is_dark_theme
-            self.apply_styles()
-            models = ['_hourly_staffing_model', '_daily_staffing_model', '_symbols_count_model', '_symbols_rbh_model']
-            for model_attr in models:
-                if hasattr(self, model_attr): getattr(self, model_attr).set_theme(is_dark_theme)
-            self.load_and_display_data()
+        """
+        Aktualizuje motyw i style okna.
+        ZMIANA: Usunięto warunek 'if self.is_dark_theme != is_dark_theme',
+        aby wymusić odświeżenie również przy zmianie rozmiarów (wysokość wiersza, czcionka),
+        nawet jeśli kolor motywu pozostaje ten sam.
+        """
+        # Zawsze aktualizuj flagę
+        self.is_dark_theme = is_dark_theme
+
+        # Zawsze aplikuj style (tu pobierana jest nowa wysokość wiersza z profilu)
+        self.apply_styles()
+
+        # Zaktualizuj motywy w modelach (dla kolorów tła/czcionki w komórkach)
+        models = ['_hourly_staffing_model', '_daily_staffing_model', '_symbols_count_model', '_symbols_rbh_model']
+        for model_attr in models:
+            if hasattr(self, model_attr):
+                getattr(self, model_attr).set_theme(is_dark_theme)
+
+        # Odśwież dane (aby przerysować wykresy z nowymi kolorami/czcionkami)
+        self.load_and_display_data()
 
     def update_for_new_month_or_filters(self, year, month):
         self._year, self._month = year, month
@@ -2221,3 +2276,22 @@ class StaffingDetailsWindow(QDialog):
                 log_error(f"Błąd przetwarzania wiersza prognozy dla macierzy: {e}, wiersz: {row}")
 
         return matrix
+
+    # --- NOWA METODA: Zapisywanie rozmiaru przy zamknięciu ---
+    def closeEvent(self, event):
+        """Zapisuje aktualne wymiary okna do ustawień i wymusza zapis do bazy."""
+        if self.parent_widget and hasattr(self.parent_widget, 'user_app_settings'):
+            # 1. Zapisz wymiary do słownika ustawień w pamięci głównego okna
+            current_size = (self.width(), self.height())
+            self.parent_widget.user_app_settings['staffing_window_size'] = current_size
+
+            # 2. Wymuś natychmiastowy zapis do bazy danych SQL
+            # Dzięki temu rozmiar zostanie zapamiętany nawet przy awarii aplikacji
+            if hasattr(self.parent_widget, 'settings_db'):
+                self.parent_widget.settings_db.save_settings(
+                    self.parent_widget.user_app_settings
+                )
+                # from debug_utils import debug_print
+                # debug_print(f"Zapisano wymiary okna obsady do bazy: {current_size}")
+
+        event.accept()
