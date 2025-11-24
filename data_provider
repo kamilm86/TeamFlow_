@@ -484,16 +484,11 @@ class DataProvider(QObject):
     def _update_dynamic_icons(self, processed_data_target: Dict, events_cache: Dict):
         """
         Nakłada informacje o ikonach na dostarczony słownik `processed_data_target`.
-        WERSJA ZMODYFIKOWANA: Ikona spotkania/szkolenia (koło) jest pokazywana
-        tylko dla zdarzeń w statusie 'Delegowany'.
         """
         if not self._current_year or not self._current_month:
-            log_error("DataProvider: _current_year lub _current_month nie jest ustawione w _update_dynamic_icons")
             return
 
-        debug_print(
-            f"DataProvider (ZMODYFIKOWANA WERSJA): Rozpoczynam _update_dynamic_icons dla {self._current_year}-{self._current_month}...")
-
+        # Mapa kluczy (bo processed_data_target ma klucz jako krotkę)
         user_id_to_key_map = {key[3]: key for key in processed_data_target.keys()}
 
         for key, user_data in processed_data_target.items():
@@ -504,17 +499,33 @@ class DataProvider(QObject):
                 date_str = f"{self._current_year}-{self._current_month:02d}-{day:02d}"
                 events_for_cell = events_cache.get((user_id, date_str), [])
 
-                # Utrzymujemy listę wszystkich aktywnych zdarzeń dla celów ogólnych (np. tooltip)
-                active_events = [e for e in events_for_cell if str(e.get('status', '1')) != '0']
+                # --- LOGIKA IKON ---
+                has_spotkania = False
+                has_szkolenia = False
+                has_nadgodziny = False
+                active_events = []
 
-                # NOWA LOGIKA DLA IKONY KOŁA: Sprawdzamy status 'Delegowany'
-                has_spotkania = any(
-                    e.get('type') == 'Spotkanie' and e.get('status') == 'Delegowany' for e in events_for_cell)
-                has_szkolenia = any(
-                    e.get('type') == 'Szkolenie' and e.get('status') == 'Delegowany' for e in events_for_cell)
+                for e in events_for_cell:
+                    # Pobieranie typu i statusu niezależnie od prefiksu (evt_ lub bez)
+                    e_type = e.get('evt_type') or e.get('type')
+                    e_status = e.get('evt_status') or e.get('status')
 
-                # Logika dla nadgodzin pozostaje bez zmian (bazuje na ogólnie aktywnych zdarzeniach)
-                has_nadgodziny = any(e.get('type') == 'Nadgodziny' for e in active_events)
+                    # Filtrowanie usuniętych (jeśli status to '0' lub 'Usunięty')
+                    if str(e_status) in ['0', 'Usunięty']:
+                        continue
+
+                    active_events.append(e)
+
+                    # Spotkania/Szkolenia tylko jeśli status to 'Delegowany'
+                    if e_status == 'Delegowany':
+                        if e_type == 'Spotkanie':
+                            has_spotkania = True
+                        elif e_type == 'Szkolenie':
+                            has_szkolenia = True
+
+                    # Nadgodziny zawsze jeśli aktywne
+                    if e_type == 'Nadgodziny':
+                        has_nadgodziny = True
 
                 day_data_dict['spotkania'] = 1 if has_spotkania else 0
                 day_data_dict['szkolenia'] = 1 if has_szkolenia else 0
@@ -709,44 +720,84 @@ class DataProvider(QObject):
         return schedule_data
 
     def _fetch_events_data(self, year: int, month: int, conn) -> List[Dict]:
-        """Pobiera i mapuje zdarzenia, używając ColumnDefinitions."""
+        """
+        Pobiera i mapuje zdarzenia.
+        WERSJA DIAGNOSTYCZNA: Wypisuje dostępne kolumny i szuka pracownika 'siłowo'.
+        """
         cursor = conn.cursor()
-        # Import lokalny, aby uniknąć cyklicznych zależności
         from column_definitions import ColumnDefinitions
         cols = ColumnDefinitions.EVENTS_COLUMNS
 
         query = f"SELECT * FROM {SQL_OBJECTS['fn_geteventsdata']}(?, ?)"
         cursor.execute(query, (year, month))
 
+        if not cursor.description:
+            return []
+
         columns = [column[0] for column in cursor.description]
         raw_events_as_dicts = [dict(zip(columns, row)) for row in cursor.fetchall()]
 
-        debug_print(f"DataProvider: Pobrane surowe zdarzenia: {len(raw_events_as_dicts)} wierszy.")
+        # --- DIAGNOSTYKA: TO POKAŻE W KONSOLI PRAWDZIWE NAZWY KOLUMN ---
+        if raw_events_as_dicts:
+            first_row_keys = list(raw_events_as_dicts[0].keys())
+            debug_print(f"!!! KOLUMNY ZDARZEŃ Z SQL !!!: {first_row_keys}")
+        # ---------------------------------------------------------------
 
         processed_events = []
         for raw_event in raw_events_as_dicts:
             try:
-                # MAPOWANIE: Klucz Python (evt_*) -> Wartość z SQL (pobrana przez cols[...].name)
+                # --- KROK 1: BRUTE FORCE (Szukanie danych pracownika) ---
+                # Szukamy wartości w kolumnach, które mogą zawierać nazwisko
+                user_display = ""
+
+                # Lista priorytetowa znanych nazw
+                priority_keys = [
+                    cols['evt_user_display'].name,  # UzytkownikDane
+                    'NazwiskoImie',
+                    'Pracownik',
+                    'UzytkownikDane',
+                    'User',
+                    'UserName',
+                    'PracownikNazwa'
+                ]
+
+                # Najpierw sprawdź znane klucze
+                for key in priority_keys:
+                    val = raw_event.get(key)
+                    if val and str(val).strip():
+                        user_display = str(val)
+                        break
+
+                # Jeśli nadal pusto, szukaj w DOWOLNEJ kolumnie zawierającej "Nazwisko" lub "Dane" w nazwie
+                if not user_display:
+                    for key, val in raw_event.items():
+                        key_lower = key.lower()
+                        if ('nazwisko' in key_lower or 'dane' in key_lower or 'pracownik' in key_lower) and val:
+                            # Ignoruj kolumny z datami (DataModyfikacji, PrzelozonyDane itp)
+                            if 'data' not in key_lower and 'przelozony' not in key_lower:
+                                user_display = str(val)
+                                break
+                # ------------------------------------------------------
+
                 event = {
                     'evt_type': raw_event.get(cols['evt_type'].name),
                     'evt_id': raw_event.get(cols['evt_id'].name),
                     'evt_topic': raw_event.get(cols['evt_topic'].name),
                     'evt_name': raw_event.get(cols['evt_name'].name),
                     'evt_user_id': raw_event.get(cols['evt_user_id'].name),
-                    'evt_user_display': raw_event.get(cols['evt_user_display'].name),  # UzytkownikDane
-                    'evt_date': raw_event.get(cols['evt_date'].name),  # Data
-                    'evt_time_from': raw_event.get(cols['evt_time_from'].name),  # DataOd
-                    'evt_time_to': raw_event.get(cols['evt_time_to'].name),  # DataDo
-                    'evt_status': raw_event.get(cols['evt_status'].name),  # StatusNazwa
-                    'evt_modified_date': raw_event.get(cols['evt_modified_date'].name)  # DataModyfikacji
+
+                    'evt_user_display': user_display,  # <-- Tutaj trafi znaleziona wartość
+
+                    'evt_date': raw_event.get(cols['evt_date'].name),
+                    'evt_time_from': raw_event.get(cols['evt_time_from'].name),
+                    'evt_time_to': raw_event.get(cols['evt_time_to'].name),
+                    'evt_status': raw_event.get(cols['evt_status'].name),
+                    'evt_modified_date': raw_event.get(cols['evt_modified_date'].name)
                 }
 
-                # Dodatkowe klucze pomocnicze (dla logiki DataProvidera)
-                # DataProvider wewnętrznie używa 'user_id' i 'date_key' do budowania cache
+                # Dodatkowe klucze pomocnicze
                 event['user_id'] = event['evt_user_id']
                 event['date_key'] = self._standardize_date(event['evt_date'])
-
-                # Dodatkowo 'id' i 'type' dla kompatybilności wstecznej z niektórymi funkcjami
                 event['id'] = event['evt_id']
                 event['type'] = event['evt_type']
 
@@ -756,16 +807,16 @@ class DataProvider(QObject):
                     if hasattr(value, 'strftime'):
                         event[key] = value.strftime('%Y-%m-%d %H:%M')
 
-                # Mapowanie starych kluczy czasowych (dla kompatybilności main.py)
+                # Mapowanie starych kluczy czasowych
                 event['time_from'] = event['evt_time_from']
                 event['time_to'] = event['evt_time_to']
 
                 processed_events.append(event)
             except Exception as e:
-                log_error(f"DataProvider: Błąd przetwarzania pojedynczego zdarzenia: {raw_event}. Błąd: {e}")
+                log_error(f"DataProvider: Błąd przetwarzania zdarzenia: {e}")
                 continue
 
-        debug_print(f"DataProvider: Poprawnie przetworzono {len(processed_events)} zdarzeń.")
+        debug_print(f"DataProvider: Przetworzono {len(processed_events)} zdarzeń.")
         return processed_events
 
     def _build_events_cache(self, events_data: List[Dict]) -> Dict[Tuple[int, str], List[Dict]]:
