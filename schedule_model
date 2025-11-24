@@ -215,6 +215,15 @@ class ScheduleTableModel(QAbstractTableModel):
                         return row_data.get('sched_przelozony_nazwisko', '')  # Tu pobieramy ze słownika
                     elif col_id == 'sched_user_display':
                         return key[2] or ""
+                    elif col_id == 'sched_korekta':
+                        val = row_data.get(col_id)
+                        try:
+                            # Konwertujemy na float, a potem na int (usuwa .0)
+                            if val is not None and str(val).strip() != "":
+                                return str(int(float(val)))
+                            return ""  # Lub "0", zależnie od preferencji
+                        except (ValueError, TypeError):
+                            return str(val)
                     else:
                         # Dla reszty po prostu pobierz wartość ze słownika używając col_id
                         return str(row_data.get(col_id, ''))
