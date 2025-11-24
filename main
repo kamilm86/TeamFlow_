@@ -2425,57 +2425,52 @@ class WorkScheduleWindow(QMainWindow):
     def setup_events_table_columns(self):
         """
         Konfiguruje kolumny dla tabeli zdarzeń.
-        Wersja: Id jest STRETCH (wypełniaczem), reszta ma stałe szerokości i jest Interactive.
+        Nowa strategia: Nazwa i Temat rozciągają się, reszta jest kompaktowa.
         """
         if not hasattr(self, 'events_table') or not self.events_table.model():
             return
 
         header = self.events_table.horizontalHeader()
 
-        # Ważne: Wyłączamy rozciąganie ostatniej sekcji, bo rolę wypełniacza przejmuje kolumna 0 (Id)
+        # Ustawiamy minimalną szerokość dla KAŻDEJ kolumny, żeby nie dało się ich ścisnąć do zera
+        header.setMinimumSectionSize(40)
+
+        # Wyłączamy automatyczne rozciąganie ostatniej sekcji, bo chcemy sterować tym ręcznie
         header.setStretchLastSection(False)
 
-        # 0. Id - ROZCIĄGLIWY (STRETCH) - To ta kolumna będzie "sprężyną"
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
-        # Nie ustawiamy szerokości, bo ona obliczy się sama
+        # 0. Id - Dopasuj do zawartości (jest krótka)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
 
-        # 1. Typ - Interaktywny
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
-        self.events_table.setColumnWidth(1, 80)
+        # 1. Typ - Dopasuj do zawartości (np. "Szkolenie")
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.ResizeToContents)
 
-        # 2. Temat - Interaktywny (Ustawiamy mniejszą szerokość startową dla laptopów)
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
-        self.events_table.setColumnWidth(2, 250)
+        # 2. Temat - ROZCIĄGLIWY (Zajmuje wolną przestrzeń)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
 
-        # 3. Nazwa - Interaktywny
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)
-        self.events_table.setColumnWidth(3, 250)
+        # 3. Nazwa - ROZCIĄGLIWY (Zajmuje wolną przestrzeń)
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)
 
-        # 4. Użytkownik
+        # 4. Użytkownik - Interaktywny (można zmieniać rozmiar) z domyślną szerokością
         header.setSectionResizeMode(4, QHeaderView.ResizeMode.Interactive)
-        self.events_table.setColumnWidth(4, 150)
+        self.events_table.setColumnWidth(4, 160)
 
-        # 5. Data
-        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Interactive)
-        self.events_table.setColumnWidth(5, 90)
+        # 5. Data - Dopasuj do zawartości (format YYYY-MM-DD jest stały)
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.ResizeToContents)
 
-        # 6. Czas od
-        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Interactive)
-        self.events_table.setColumnWidth(6, 110)
+        # 6. Czas od - Dopasuj do zawartości
+        header.setSectionResizeMode(6, QHeaderView.ResizeMode.ResizeToContents)
 
-        # 7. Czas do
-        header.setSectionResizeMode(7, QHeaderView.ResizeMode.Interactive)
-        self.events_table.setColumnWidth(7, 110)
+        # 7. Czas do - Dopasuj do zawartości
+        header.setSectionResizeMode(7, QHeaderView.ResizeMode.ResizeToContents)
 
-        # 8. Status
-        header.setSectionResizeMode(8, QHeaderView.ResizeMode.Interactive)
-        self.events_table.setColumnWidth(8, 100)
+        # 8. Status - Dopasuj do zawartości (np. "Delegowany")
+        header.setSectionResizeMode(8, QHeaderView.ResizeMode.ResizeToContents)
 
-        # 9. Data Modyfikacji
+        # 9. Data Modyfikacji - Interaktywny (czasem warto ją zwęzić)
         header.setSectionResizeMode(9, QHeaderView.ResizeMode.Interactive)
-        self.events_table.setColumnWidth(9, 125)
+        self.events_table.setColumnWidth(9, 110)
 
-        # 10. Akcje - Stała szerokość
+        # 10. Akcje - Stała szerokość dla przycisku
         header.setSectionResizeMode(10, QHeaderView.ResizeMode.Fixed)
         self.events_table.setColumnWidth(10, 85)
 
