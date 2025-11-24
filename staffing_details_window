@@ -648,13 +648,22 @@ class StaffingDetailsWindow(QDialog):
         list_style = AppStyles.get_list_style(theme)
         tab_style = AppStyles.get_tab_widget_style(theme)
 
+        # --- POPRAWKA: Wymuszenie koloru nagłówków w tym oknie ---
+        # Dodajemy ten fragment do stylu tabeli tylko tutaj.
+        # W oknie głównym kolor jest sterowany przez model (weekendy na czerwono),
+        # tutaj chcemy jednolity, czytelny kolor.
+        if theme == "dark":
+            header_text_color = AppStyles.DARK_TEXT_PRIMARY
+        else:
+            header_text_color = AppStyles.LIGHT_TEXT_PRIMARY
+
+        table_style += f"\nQHeaderView::section {{ color: {header_text_color}; }}"
+        # ---------------------------------------------------------
+
         # 2. Zastosuj styl bazowy do samego okna
-        # To ustawia domyślne tło i kolor tekstu dla QDialog, QGroupBox, QLabel itp.
         self.setStyleSheet(dialog_style)
 
-        # 3. Zastosuj style do KONKRETNYCH widgetów, nadpisując styl bazowy
-
-        # Zakładki
+        # 3. Zastosuj style do KONKRETNYCH widgetów
         if hasattr(self, 'tabs'):
             self.tabs.setStyleSheet(tab_style)
 
@@ -665,7 +674,7 @@ class StaffingDetailsWindow(QDialog):
             self.flexibility_table_view, self.forecast_table_view, self.absence_detail_view
         ]
         for view in all_views:
-            if view:  # Sprawdź czy widget nie jest None
+            if view:
                 view.setStyleSheet(table_style)
                 if hasattr(view, 'horizontalHeader'):
                     view.horizontalHeader().setFixedHeight(38)
@@ -675,7 +684,7 @@ class StaffingDetailsWindow(QDialog):
             self.refresh_button, self.close_button, self.absence_back_button
         ]
         for button in all_buttons:
-            if button:  # Sprawdź czy widget nie jest None
+            if button:
                 button.setStyleSheet(button_style)
 
         # Pola wyboru (QComboBox)
@@ -685,14 +694,14 @@ class StaffingDetailsWindow(QDialog):
             self.forecast_group_combo, self.forecast_view_mode_combo
         ]
         for combo in all_combos:
-            if combo:  # Sprawdź czy widget nie jest None
+            if combo:
                 combo.setStyleSheet(combo_style)
 
         # ListWidget
         if hasattr(self, 'absence_symbols_list'):
             self.absence_symbols_list.setStyleSheet(list_style)
 
-        # 4. Zastosuj styl do KPI Boxów (QFrame) i ich etykiet
+        # 4. Zastosuj styl do KPI Boxów
         if theme == "dark":
             kpi_frame_style = f"QFrame {{ background-color: {AppStyles.DARK_BACKGROUND_CONTROLS}; border: 1px solid {AppStyles.DARK_BORDER_PRIMARY}; border-radius: {AppStyles.BORDER_RADIUS}; }}"
             kpi_title_style = f"font-size: 10pt; color: {AppStyles.DARK_TEXT_SECONDARY}; background-color: transparent; border: none;"
@@ -712,7 +721,6 @@ class StaffingDetailsWindow(QDialog):
                 if hasattr(frame, 'value_label'):
                     frame.value_label.setStyleSheet(kpi_value_style)
 
-                # Poprawka znajdowania etykiety tytułowej
                 title_label = frame.findChild(QLabel)
                 if title_label and title_label != getattr(frame, 'value_label', None):
                     title_label.setStyleSheet(kpi_title_style)
