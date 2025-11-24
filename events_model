@@ -27,11 +27,20 @@ class EventsTableModel(QAbstractTableModel):
         ]
         self._column_count = len(self._column_headers)
         self._column_to_field = {
-            0: 'id', 1: 'type', 2: 'topic', 3: 'name', 4: 'UzytkownikDane',
-            5: 'date_key', 6: 'time_from', 7: 'time_to', 8: 'status', 9: 'DataModyfikacji'
+            0: 'evt_id',
+            1: 'evt_type',
+            2: 'evt_topic',
+            3: 'evt_name',
+            4: 'evt_user_display',  # Wcześniej user_name
+            5: 'date_key',  # Data zostaje jako date_key (sformatowana)
+            6: 'evt_time_from',
+            7: 'evt_time_to',
+            8: 'evt_status',
+            9: 'evt_modified_date'
         }
+
         self._display_transformers = {
-            0: str  # ID powinno być stringiem
+            0: str
         }
         self._is_dark_theme = False
 
@@ -166,10 +175,10 @@ class EventsTableModel(QAbstractTableModel):
             else:
                 # Filtruj wszystkie dane według kryteriów
                 for event in self._data:
-                    event_type = event.get('type')
+                    event_type = event.get('evt_type')  # Było 'type'
                     event_date_str = event.get('date_key', '')
-                    event_topic = str(event.get('topic', '')).lower()
-                    event_name = str(event.get('name', '')).lower()
+                    event_topic = str(event.get('evt_topic', '')).lower()  # Było 'topic'
+                    event_name = str(event.get('evt_name', '')).lower()  # Było 'name'
 
                     # Najpierw sprawdź typ zdarzenia - najszybsze kryterium
                     if allowed_types_filter and event_type not in allowed_types_filter:
@@ -218,7 +227,7 @@ class EventsTableModel(QAbstractTableModel):
                 # Sprawdź, które zdarzenia się zmieniły lub zostały zastąpione
                 changed_rows = set()
                 for i, new_event in enumerate(filtered_data):
-                    event_id = new_event.get('id')
+                    event_id = new_event.get('evt_id') # Było 'id'
                     if event_id is not None and event_id in event_id_map:
                         # Zdarzenie o tym ID już istnieje
                         old_idx = event_id_map[event_id]
