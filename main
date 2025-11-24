@@ -49,6 +49,7 @@ from loading_indicator import ModernLoadingIndicator
 from filter_select_dialog import FilterSelectDialog
 from session_manager import SessionManager
 
+
 class OvertimeItemDelegate(QStyledItemDelegate):
     """Delegat dla komórek tabeli grafiku."""
 
@@ -113,29 +114,84 @@ class OvertimeItemDelegate(QStyledItemDelegate):
 
     def _draw_text_with_background(self, painter: QPainter, option: QStyleOptionViewItem, text: str, position: str):
         icon_font = QFont(option.font)
-        font_size_map = {7: 6, 8: 6, 9: 7, 10: 8, 11: 9, 12: 10}
-        icon_font_size = font_size_map.get(option.font.pointSize(), 7)
-        icon_font.setPointSize(icon_font_size)
-        painter.setFont(icon_font)
-        metrics = painter.fontMetrics()
-        text_width = metrics.horizontalAdvance(text)
-        text_height = metrics.ascent() + metrics.descent()
 
-        bg_rect = QRect(0, 0, text_width, text_height)
-        bg_rect.adjust(0, 1, 0, -1)
-        bg_rect.adjust(-1, 0, 1, 0)
+        # --- ZMIANA 1: Lepsze skalowanie proporcji ---
+        main_size = option.font.pointSize()
+
+        # Zamiast odejmować stałą wartość, używamy mnożnika.
+        # Ikona będzie miała ok. 65% wielkości głównego tekstu.
+        # Np. Główny 10 -> Ikona 6
+        #     Główny 13 -> Ikona 8 (a nie 11 jak wcześniej)
+        #     Główny 16 -> Ikona 10
+        icon_font_size = max(7, int(main_size * 0.65))
+
+        icon_font.setPointSize(icon_font_size)
+        # Ustawiamy pogrubienie dla małych ikon, żeby były czytelne
+        # if icon_font_size < 8:
+        #     icon_font.setBold(True)
+
+        painter.setFont(icon_font)
+
+        metrics = painter.fontMetrics()
+
+        # --- ZMIANA 2: Ciaśniejszy padding ---
+        text_bounds = metrics.boundingRect(text)
+
+        # Zmniejszamy padding, aby ramka nie była "napompowana"
+        padding_x = 1  # Minimalny odstęp po bokach
+        padding_y = 0  # Brak dodatkowego odstępu w pionie
+
+        # Obliczamy wymiary "na styk"
+        total_width = metrics.horizontalAdvance(text) + (2 * padding_x)
+        # Dla wysokości bierzemy max z (wysokość znaku, minimalna estetyczna wysokość)
+        total_height = max(text_bounds.height() + (2 * padding_y), icon_font_size + 2)
+
+        bg_rect = QRect(0, 0, total_width, total_height)
+
+        # 3. Pozycjonowanie (zerowy margines od krawędzi komórki)
+        margin_x = 0
+        margin_y = 0
 
         if position == 'top_left':
-            bg_rect.moveTo(option.rect.topLeft() + QPoint(1, 1))
-        elif position == 'top_right':
-            bg_rect.moveTo(option.rect.topRight() - QPoint(bg_rect.width() - 1, -1))
+            bg_rect.moveTo(option.rect.topLeft() + QPoint(margin_x, margin_y))
 
+        elif position == 'top_right':
+            bg_rect.moveTo(option.rect.topRight() + QPoint(-bg_rect.width() - margin_x, margin_y))
+
+        # 4. Rysowanie
         painter.setBrush(QColor(Qt.white))
         painter.setPen(Qt.NoPen)
         painter.drawRoundedRect(bg_rect, 3, 3)
+
         painter.setPen(QColor(Qt.black))
+
+        # Precyzyjne centrowanie w małej ramce
         painter.drawText(bg_rect, Qt.AlignCenter, text)
 
+    # def _draw_text_with_background(self, painter: QPainter, option: QStyleOptionViewItem, text: str, position: str):
+    #     icon_font = QFont(option.font)
+    #     font_size_map = {7: 6, 8: 6, 9: 7, 10: 8, 11: 9, 12: 10}
+    #     icon_font_size = font_size_map.get(option.font.pointSize(), 7)
+    #     icon_font.setPointSize(icon_font_size)
+    #     painter.setFont(icon_font)
+    #     metrics = painter.fontMetrics()
+    #     text_width = metrics.horizontalAdvance(text)
+    #     text_height = metrics.ascent() + metrics.descent()
+    #
+    #     bg_rect = QRect(0, 0, text_width, text_height)
+    #     bg_rect.adjust(0, 1, 0, -1)
+    #     bg_rect.adjust(-1, 0, 1, 0)
+    #
+    #     if position == 'top_left':
+    #         bg_rect.moveTo(option.rect.topLeft() + QPoint(1, 1))
+    #     elif position == 'top_right':
+    #         bg_rect.moveTo(option.rect.topRight() - QPoint(bg_rect.width() - 1, -1))
+    #
+    #     painter.setBrush(QColor(Qt.white))
+    #     painter.setPen(Qt.NoPen)
+    #     painter.drawRoundedRect(bg_rect, 3, 3)
+    #     painter.setPen(QColor(Qt.black))
+    #     painter.drawText(bg_rect, Qt.AlignCenter, text)
 
 class ButtonDelegate(QStyledItemDelegate):
     button_clicked = Signal(int)
@@ -621,9 +677,9 @@ class WorkScheduleWindow(QMainWindow):
     def __init__(self):
         super().__init__()
 
-        # Przechowuje referencję do okna, aby nie zostało "zjedzone" przez garbage collector
+        self._is_updating_layout = False
+        self.user_hidden_days = set()
         self.schedule_control_win = None
-
         self._state_to_restore = None
 
         self.settings_db = SettingsDatabase()
@@ -637,6 +693,7 @@ class WorkScheduleWindow(QMainWindow):
 
         # Wczytaj nowe ustawienie
         self.show_percent_morning_column = self.user_app_settings.get('show_schedule_percent_morning', False)
+        self.show_percent_ho_column = self.user_app_settings.get('show_schedule_percent_ho', False)
         self.show_comment_column = self.user_app_settings.get('show_schedule_comment', False)
 
         # Inicjalizacja Menedżera Sesji
@@ -680,7 +737,9 @@ class WorkScheduleWindow(QMainWindow):
             ('jezyk', "Język:", False),
             ('etat', "Etat:", False),
             ('dtn', "DTN:", False),
-            ('rka', "Rka:", False)
+            ('rka', "Rka:", False),
+            ('sched_grafik_za_punkty', "Grafik za pkt:", False),
+            ('sched_brak_nocki', "Brak nocki:", False)
         ]
 
         # Mapa do szybkiego wyszukiwania widgetów po ich ID
@@ -725,7 +784,7 @@ class WorkScheduleWindow(QMainWindow):
         self.delegation_canceler = DelegationCanceler(self)
         self.location_exception_manager = LocationExceptionManager(self)
         self.overtime_manager = OvertimeManager(self)
-        
+
         # --- POPRAWKA: Przekazanie `column_map` do modelu ---
         self.column_map = {col_id: name for col_id, name, width in self.employee_columns}
         # Ustaw flagi w modelu
@@ -733,6 +792,7 @@ class WorkScheduleWindow(QMainWindow):
         self.schedule_model.set_visible_columns(self.visible_columns)
         self.schedule_model.set_show_comment_column(self.show_comment_column)
         self.schedule_model.set_show_percent_morning_column(self.show_percent_morning_column)
+        self.schedule_model.set_show_percent_ho_column(self.show_percent_ho_column)
         self.schedule_model.set_custom_columns(self.custom_columns)
 
         self.refresh_column_configuration()
@@ -747,7 +807,6 @@ class WorkScheduleWindow(QMainWindow):
         self.table.set_model(self.schedule_model)
         self.events_table.setModel(self.events_model)
         self.manage_columns_button.clicked.connect(self.show_column_select_dialog)
-
 
         # --- NOWA LOGIKA: Włączenie i podłączenie menu kontekstowego ---
         self.table.employees_view.setContextMenuPolicy(Qt.CustomContextMenu)
@@ -803,6 +862,14 @@ class WorkScheduleWindow(QMainWindow):
         self._is_refreshing_data = False
 
         self.start_full_initialization()
+
+        # Inicjalizacja Centrum Powiadomień (Warunkowa)
+        if app_settings.ENABLE_NOTIFICATION_CENTER:
+            from notification_center import NotificationDrawer
+            self.notification_drawer = NotificationDrawer(self)
+            self.notification_drawer.hide()
+        else:
+            self.notification_drawer = None
 
         # PRZENIESIONY BLOK: Ustawienie rozmiaru i pokazanie okna na samym końcu
         if self.user_app_settings.get('is_maximized'):
@@ -870,7 +937,7 @@ class WorkScheduleWindow(QMainWindow):
         # self.background_checker = None # Referencja do wątku sprawdzającego
         # --- NOWA LOGIKA: Uruchomienie obu mechanizmów sprawdzania ---
 
-        self.start_db_listener() # Dla zmian danych
+        self.start_db_listener()  # Dla zmian danych
         # --- KONIEC NOWEJ LOGIKI ---
 
     def check_if_update_is_required(self) -> bool:
@@ -977,40 +1044,48 @@ class WorkScheduleWindow(QMainWindow):
         user_role, user_dept = self.current_user_app_role, self.current_user_app_department
         target_role, target_dept = cell_data.get('rola_nazwa'), cell_data.get('wydzial')
 
-        # --- POCZĄTEK NOWEJ LOGIKI ---
-        # Specjalna reguła: Lider i Lider OUT mogą wstawić symbol 'CO' osobom z wydziału DTN.
-        # Przyznajemy im tylko uprawnienie do edycji symbolu w tym konkretnym przypadku.
-        if user_role in ['Lider', 'Lider OUT'] and target_dept and target_dept.strip().lower() == 'dtn':
-            return {'can_edit_hours': False, 'can_edit_symbol': True, 'can_edit_location': False, 'can_delete': False}
-        # --- KONIEC NOWEJ LOGIKI ---
-
-        if user_role == 'Pracownik WPR':
+        # Logika dla Administratora i Pracownika WPR (bez zmian - pełny dostęp)
+        if user_role in ['Pracownik WPR', 'Administrator']:
             return {'can_edit_hours': True, 'can_edit_symbol': True, 'can_edit_location': True, 'can_delete': True}
 
-        is_in_same_department = False
-        if user_dept and target_dept:
-            if target_dept.strip().lower().startswith(user_dept.strip().lower()):
-                is_in_same_department = True
-
-        if not is_in_same_department: return permissions
-
+        # Logika dla Lidera OUT (bez zmian)
         if user_role == 'Lider OUT':
-            return {'can_edit_hours': True, 'can_edit_symbol': True, 'can_edit_location': True, 'can_delete': True}
+            # Sprawdzenie czy ten sam wydział (lub nadrzędny)
+            is_same_dept = user_dept and target_dept and target_dept.strip().lower().startswith(
+                user_dept.strip().lower())
+            if is_same_dept:
+                return {'can_edit_hours': True, 'can_edit_symbol': True, 'can_edit_location': True, 'can_delete': True}
+            # Specjalny wyjątek dla DTN
+            if target_dept and target_dept.strip().lower() == 'dtn':
+                return {'can_edit_hours': False, 'can_edit_symbol': True, 'can_edit_location': False,
+                        'can_delete': False}
+            return permissions
 
+        # --- LOGIKA DLA LIDERA (ZMIENIONA/ZWERYFIKOWANA) ---
         if user_role == 'Lider':
-            # --- NOWA LOGIKA DLA "SUPER LIDERA" ---
-
-            # Sprawdź, czy bieżący użytkownik jest na liście Super Liderów
+            # Super Lider (bez zmian)
             is_super_lider = self.current_user_app_login_windows.lower() in app_settings.SUPER_LIDER_LOGINS
 
-            # Super Lider może edytować godziny wszystkim w swoim wydziale.
-            # Zwykły Lider może edytować godziny tylko innym Liderom.
+            # Sprawdzenie wydziału
+            is_same_dept = False
+            if user_dept and target_dept:
+                if target_dept.strip().lower().startswith(user_dept.strip().lower()):
+                    is_same_dept = True
+
+            # Wyjątek dla DTN (pozwalamy na edycję symbolu, np. CO)
+            if target_dept and target_dept.strip().lower() == 'dtn':
+                return {'can_edit_hours': False, 'can_edit_symbol': True, 'can_edit_location': False,
+                        'can_delete': False}
+
+            if not is_same_dept:
+                return permissions
+
+            # W ramach swojego wydziału:
             if is_super_lider or target_role == 'Lider':
                 return {'can_edit_hours': True, 'can_edit_symbol': True, 'can_edit_location': True, 'can_delete': True}
             else:
-                return {'can_edit_hours': False, 'can_edit_symbol': True, 'can_edit_location': True,
-                        'can_delete': False}
-            # --- KONIEC NOWEJ LOGIKI ---
+                # Dla zwykłych pracowników Lider nie może edytować godzin, ale może symbole (z wyjątkami obsłużonymi w _apply...)
+                return {'can_edit_hours': False, 'can_edit_symbol': True, 'can_edit_location': True, 'can_delete': True}
 
         return permissions
 
@@ -1283,7 +1358,9 @@ class WorkScheduleWindow(QMainWindow):
         top_bar_layout.setContentsMargins(5, 5, 5, 5)
         top_bar_frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
 
-        self.toggle_menu_button = QPushButton("☰")
+        # --- LEWA STRONA PASKA (Menu, Ustawienia, Akcje) ---
+
+        self.toggle_menu_button = QPushButton("☰")  # Używam standardowego znaku menu
         self.toggle_menu_button.setFixedSize(32, 32)
         self.toggle_menu_button.setToolTip("Pokaż/ukryj panel filtrów (F1)")
         self.toggle_menu_button.clicked.connect(self.toggle_left_panel)
@@ -1298,9 +1375,7 @@ class WorkScheduleWindow(QMainWindow):
         top_bar_layout.addWidget(QLabel("Miesiąc:"))
         self.date_combo = QComboBox()
         self.date_combo.setMinimumWidth(120)
-        # --- POCZĄTEK POPRAWKI: Pozostawiono tylko jedno, poprawne podłączenie ---
         self.date_combo.currentIndexChanged.connect(self.refresh_data)
-        # --- KONIEC POPRAWKI ---
         top_bar_layout.addWidget(self.date_combo)
 
         self.load_data_button = QPushButton("🚀 Pobierz Dane")
@@ -1322,7 +1397,7 @@ class WorkScheduleWindow(QMainWindow):
         self.staffing_details_button.clicked.connect(self.show_staffing_details_window)
         top_bar_layout.addWidget(self.staffing_details_button)
 
-        # --- ZMIANA: Przycisk z ikoną Excel ---
+        # Ikony Excel, Teams, Outlook
         self.export_button = QPushButton()
         self.export_button.setIcon(QIcon(resource_path("icons/excel.png")))
         self.export_button.setIconSize(QSize(24, 24))
@@ -1331,7 +1406,6 @@ class WorkScheduleWindow(QMainWindow):
         self.export_button.clicked.connect(self.export_schedule_to_excel)
         top_bar_layout.addWidget(self.export_button)
 
-        # --- ZMIANA: Przycisk z ikoną Teams ---
         self.teams_chat_button = QPushButton()
         self.teams_chat_button.setIcon(QIcon(resource_path("icons/teams.png")))
         self.teams_chat_button.setIconSize(QSize(24, 24))
@@ -1341,7 +1415,6 @@ class WorkScheduleWindow(QMainWindow):
         self.teams_chat_button.setEnabled(False)
         top_bar_layout.addWidget(self.teams_chat_button)
 
-        # --- ZMIANA: Przycisk z ikoną Outlook ---
         self.send_email_button = QPushButton()
         self.send_email_button.setIcon(QIcon(resource_path("icons/outlook.png")))
         self.send_email_button.setIconSize(QSize(24, 24))
@@ -1355,9 +1428,38 @@ class WorkScheduleWindow(QMainWindow):
         self.schedule_control_button.clicked.connect(self.show_schedule_control_dialog)
         top_bar_layout.addWidget(self.schedule_control_button)
 
+        # --- KLUCZOWY ELEMENT: Wypychacz (Spacer) ---
+        # To on zajmuje całą wolną przestrzeń między przyciskami po lewej a dzwonkiem po prawej
         top_bar_layout.addStretch()
 
+        # --- PRAWA STRONA PASKA (Tylko Powiadomienia) ---
+
+        self.notification_btn = QPushButton()
+        try:
+            icon_path = resource_path("icons/notification.png")
+            self.notification_btn.setIcon(QIcon(icon_path))
+        except Exception as e:
+            from debug_utils import log_error
+            log_error(f"Nie znaleziono ikony powiadomień: {e}")
+            self.notification_btn.setText("🔔")
+
+        self.notification_btn.setIconSize(QSize(24, 24))
+        self.notification_btn.setFixedSize(32, 32)
+        self.notification_btn.setToolTip("Powiadomienia")
+
+        self.notification_btn.clicked.connect(self.toggle_notifications)
+        self.notification_btn.setVisible(app_settings.ENABLE_NOTIFICATION_CENTER)
+
+        top_bar_layout.addWidget(self.notification_btn)
+
         return top_bar_frame
+
+    def toggle_notifications(self):
+        """Przełącza widoczność panelu powiadomień."""
+        if hasattr(self, 'notification_drawer'):
+            if self.notification_drawer.isHidden():
+                self.notification_drawer.show()
+            self.notification_drawer.toggle()
 
     def create_separator(self):
         separator = QFrame()
@@ -1817,7 +1919,7 @@ class WorkScheduleWindow(QMainWindow):
         filter_layout.setSpacing(4)
 
         filter_label = QLabel(label_text)
-        filter_label.setFixedWidth(65)
+        filter_label.setFixedWidth(75)
         filter_layout.addWidget(filter_label)
 
         combo = CustomMultiComboBox()
@@ -1853,7 +1955,7 @@ class WorkScheduleWindow(QMainWindow):
         filter_layout.setSpacing(4)
 
         filter_label = QLabel(label_text)
-        filter_label.setFixedWidth(65)
+        filter_label.setFixedWidth(75)
         filter_layout.addWidget(filter_label)
 
         text_edit = QLineEdit()
@@ -1954,7 +2056,9 @@ class WorkScheduleWindow(QMainWindow):
             ("Język:", "jezyk_combo", "jezyk"),
             ("Etat:", "etat_combo", "etat"),
             ("DTN:", "dtn_combo", "dtn"),
-            ("Rka:", "rka_combo", "rka")
+            ("Rka:", "rka_combo", "rka"),
+            ("Grafik za pkt:", "grafik_za_punkty_combo", "sched_grafik_za_punkty"),
+            ("Brak nocki:", "brak_nocki_combo", "sched_brak_nocki")
         ]
 
         for label, combo_name, f_id in filter_definitions:
@@ -2319,28 +2423,61 @@ class WorkScheduleWindow(QMainWindow):
         return events_filter_frame
 
     def setup_events_table_columns(self):
-        """Konfiguruje kolumny dla tabeli zdarzeń, w tym ich szerokość."""
+        """
+        Konfiguruje kolumny dla tabeli zdarzeń.
+        Wersja: Id jest STRETCH (wypełniaczem), reszta ma stałe szerokości i jest Interactive.
+        """
         if not hasattr(self, 'events_table') or not self.events_table.model():
             return
 
         header = self.events_table.horizontalHeader()
-        self.events_table.setSortingEnabled(True)
 
-        # ZMIANA: Zaktualizowane indeksy kolumn
-        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Id
-        header.setSectionResizeMode(1, QHeaderView.ResizeToContents)  # Typ
-        header.setSectionResizeMode(2, QHeaderView.Stretch)  # Temat
-        header.setSectionResizeMode(3, QHeaderView.Stretch)  # Nazwa
-        header.setSectionResizeMode(4, QHeaderView.ResizeToContents)  # Użytkownik
-        header.setSectionResizeMode(5, QHeaderView.ResizeToContents)  # Data
-        header.setSectionResizeMode(6, QHeaderView.ResizeToContents)  # Czas od
-        header.setSectionResizeMode(7, QHeaderView.ResizeToContents)  # Czas do
-        header.setSectionResizeMode(8, QHeaderView.ResizeToContents)  # Status
-        header.setSectionResizeMode(9, QHeaderView.ResizeToContents)  # Data Modyfikacji
+        # Ważne: Wyłączamy rozciąganie ostatniej sekcji, bo rolę wypełniacza przejmuje kolumna 0 (Id)
+        header.setStretchLastSection(False)
 
-        # Ustaw stałą, większą szerokość dla kolumny Akcje (teraz indeks 10)
-        header.setSectionResizeMode(10, QHeaderView.Fixed)
-        self.events_table.setColumnWidth(10, 80)
+        # 0. Id - ROZCIĄGLIWY (STRETCH) - To ta kolumna będzie "sprężyną"
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        # Nie ustawiamy szerokości, bo ona obliczy się sama
+
+        # 1. Typ - Interaktywny
+        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
+        self.events_table.setColumnWidth(1, 80)
+
+        # 2. Temat - Interaktywny (Ustawiamy mniejszą szerokość startową dla laptopów)
+        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Interactive)
+        self.events_table.setColumnWidth(2, 250)
+
+        # 3. Nazwa - Interaktywny
+        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Interactive)
+        self.events_table.setColumnWidth(3, 250)
+
+        # 4. Użytkownik
+        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Interactive)
+        self.events_table.setColumnWidth(4, 150)
+
+        # 5. Data
+        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Interactive)
+        self.events_table.setColumnWidth(5, 90)
+
+        # 6. Czas od
+        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Interactive)
+        self.events_table.setColumnWidth(6, 110)
+
+        # 7. Czas do
+        header.setSectionResizeMode(7, QHeaderView.ResizeMode.Interactive)
+        self.events_table.setColumnWidth(7, 110)
+
+        # 8. Status
+        header.setSectionResizeMode(8, QHeaderView.ResizeMode.Interactive)
+        self.events_table.setColumnWidth(8, 100)
+
+        # 9. Data Modyfikacji
+        header.setSectionResizeMode(9, QHeaderView.ResizeMode.Interactive)
+        self.events_table.setColumnWidth(9, 125)
+
+        # 10. Akcje - Stała szerokość
+        header.setSectionResizeMode(10, QHeaderView.ResizeMode.Fixed)
+        self.events_table.setColumnWidth(10, 85)
 
     def setup_table_properties(self):
         """Konfiguruje właściwości tabel i tworzy delegatów z ustawieniami."""
@@ -2361,6 +2498,12 @@ class WorkScheduleWindow(QMainWindow):
             self.events_table.horizontalHeader().sortIndicatorChanged.connect(self.on_events_sort_changed)
             self.setup_events_table_columns()
 
+        # Konfiguracja menu kontekstowego dla nagłówka dni (Prawy Przycisk Myszy)
+        if hasattr(self, 'table') and hasattr(self.table, 'schedule_view'):
+            header = self.table.schedule_view.horizontalHeader()
+            header.setContextMenuPolicy(Qt.CustomContextMenu)
+            header.customContextMenuRequested.connect(self._on_schedule_header_context_menu)
+
         overtime_delegate = OvertimeItemDelegate(settings=self.user_app_settings)
         self.table.schedule_view.setItemDelegate(overtime_delegate)
 
@@ -2370,6 +2513,85 @@ class WorkScheduleWindow(QMainWindow):
 
         self.table.day_sort_requested.connect(self.apply_day_sort)
         self.table.generic_sort_requested.connect(self.apply_generic_sort)
+
+    def _on_schedule_header_context_menu(self, pos):
+        """
+        Wyświetla menu kontekstowe na nagłówku dni (ukrywanie/pokazywanie kolumn).
+        """
+        from PySide6.QtWidgets import QMenu
+
+        header = self.table.schedule_view.horizontalHeader()
+        logical_index = header.logicalIndexAt(pos)
+
+        # Oblicz, który to dzień miesiąca
+        # logical_index to indeks w modelu (wliczając ukryte kolumny pracownika)
+        visible_employee_cols = len(self.schedule_model.get_visible_columns())
+        day = logical_index - visible_employee_cols + 1
+
+        # Sprawdź, czy kliknięto w dzień (1-31), a nie w sumy czy komentarz
+        if day < 1 or day > 31:
+            return
+
+        menu = QMenu(self)
+
+        # Stylizacja menu (opcjonalnie, by pasowało do ciemnego motywu)
+        if self.is_dark_theme:
+            menu.setStyleSheet(AppStyles.get_dialog_style("dark"))
+
+        # Akcja 1: Ukryj ten dzień
+        hide_action = menu.addAction(f"Ukryj dzień {day}")
+
+        # Akcja 2: Ukryj zaznaczone (Excel style)
+        # Sprawdzamy, czy jest zaznaczenie kolumn
+        selection = self.table.schedule_view.selectionModel()
+        selected_cols = []
+        if selection.hasSelection():
+            # Pobierz unikalne kolumny z zaznaczenia
+            indexes = selection.selectedIndexes()
+            cols = set(idx.column() for idx in indexes)
+            # Filtruj tylko kolumny z dniami
+            for col in cols:
+                d = col - visible_employee_cols + 1
+                if 1 <= d <= 31:
+                    selected_cols.append(d)
+
+        if len(selected_cols) > 1:
+            hide_selected_action = menu.addAction(f"Ukryj zaznaczone dni ({len(selected_cols)})")
+        else:
+            hide_selected_action = None
+
+        menu.addSeparator()
+
+        # Akcja 3: Pokaż wszystkie (jeśli coś jest ukryte)
+        if self.user_hidden_days:
+            unhide_action = menu.addAction(f"Pokaż wszystkie dni (ukryte: {len(self.user_hidden_days)})")
+        else:
+            unhide_action = None
+
+        # Wyświetl menu i pobierz akcję
+        action = menu.exec(header.mapToGlobal(pos))
+
+        if not action:
+            return
+
+        # Obsługa akcji
+        needs_update = False
+
+        if action == hide_action:
+            self.user_hidden_days.add(day)
+            needs_update = True
+
+        elif hide_selected_action and action == hide_selected_action:
+            self.user_hidden_days.update(selected_cols)
+            needs_update = True
+
+        elif unhide_action and action == unhide_action:
+            self.user_hidden_days.clear()
+            needs_update = True
+
+        # Odśwież widok, jeśli coś zmieniono
+        if needs_update:
+            self._apply_dynamic_sizes()
 
     def apply_day_sort(self, day: int, order: Qt.SortOrder):
         """
@@ -2449,12 +2671,12 @@ class WorkScheduleWindow(QMainWindow):
                 row_data = self.processed_data.get(key, {})
                 row_to_write = []
                 for col_id in self.visible_columns:
-                    # Logika zbierania danych o pracownikach
-                    if col_id == 'wydzial':
+                    # Mapowanie specjalne dla krotki
+                    if col_id == 'sched_wydzial':
                         row_to_write.append(key[0])
-                    elif col_id == 'przelozony':
+                    elif col_id == 'sched_przelozony':
                         row_to_write.append(key[1])
-                    elif col_id == 'uzytkownik_dane':
+                    elif col_id == 'sched_user_display':
                         row_to_write.append(key[2])
                     else:
                         row_to_write.append(str(row_data.get(col_id, '')))
@@ -2556,29 +2778,29 @@ class WorkScheduleWindow(QMainWindow):
                 default_columns=self.default_visible_columns,
                 user_role=self.current_user_app_role,
                 is_comment_column_checked=self.show_comment_column,
-                is_percent_morning_checked=self.show_percent_morning_column,  # <-- PRZEKAZANIE STANU
+                is_percent_morning_checked=self.show_percent_morning_column,
+                is_percent_ho_checked=self.show_percent_ho_column,
                 sort_preferences=self.user_sort_preferences
             )
             if dialog.exec() == QDialog.Accepted:
-                # Pobierz nowy stan
+                # 1. Najpierw zapisz stan BIEŻĄCY (zanim cokolwiek zmienimy)
+                # To gwarantuje, że mamy najnowsze szerokości ustawione ręcznie przez usera
+                self.user_app_settings['column_widths'] = self.table.get_column_widths()
+
+                # Pobierz nowy stan z dialogu
                 self.visible_columns = dialog.get_selected_columns()
                 self.show_comment_column = dialog.get_comment_column_state()
-                # --- DIAGNOSTYKA START ---
                 self.show_percent_morning_column = dialog.get_percent_morning_column_state()
-                debug_print(
-                    f"[DEBUG] Main: Dialog zamknięty. Flaga 'Procent rano' ustawiona na: {self.show_percent_morning_column}")
-                # --- DIAGNOSTYKA END ---
+                self.show_percent_ho_column = dialog.get_percent_ho_column_state()
 
-                self.user_app_settings['column_widths'] = self.table.get_column_widths()
                 self.custom_columns = dialog.get_custom_columns()
-
                 new_visible_set = set(self.visible_columns)
 
                 # Zapisz ustawienia
                 self.user_app_settings['visible_columns'] = self.visible_columns
                 self.user_app_settings['show_schedule_comment'] = self.show_comment_column
-                self.user_app_settings[
-                    'show_schedule_percent_morning'] = self.show_percent_morning_column  # <-- ZAPIS DO SŁOWNIKA
+                self.user_app_settings['show_schedule_percent_morning'] = self.show_percent_morning_column
+                self.user_app_settings['show_schedule_percent_ho'] = self.show_percent_ho_column
                 self.user_app_settings['custom_columns'] = self.custom_columns
                 self.user_sort_preferences = dialog.get_sort_preferences()
                 self.user_app_settings['sort_preferences'] = self.user_sort_preferences
@@ -2587,13 +2809,14 @@ class WorkScheduleWindow(QMainWindow):
                 self._synchronize_custom_filter_widgets()
                 self.update_filters()
 
-                # Oblicz deltę szerokości
+                # Oblicz deltę szerokości dla okna (logika bez zmian)
                 delta_width = 0
                 hidden_cols = old_visible_set - new_visible_set
                 for col_id in hidden_cols:
                     delta_width -= current_column_widths.get(col_id, 100)
 
                 shown_cols = new_visible_set - old_visible_set
+                # Pobieramy ZAPISANE szerokości (te z punktu 1)
                 saved_widths = self.user_app_settings.get('column_widths', {})
 
                 for col_id in shown_cols:
@@ -2608,26 +2831,34 @@ class WorkScheduleWindow(QMainWindow):
                         width_to_add = default_width
                     delta_width += width_to_add
 
-                # Zastosuj zmiany w modelu
-                # --- DIAGNOSTYKA: APLIKOWANIE DO MODELU ---
-                debug_print("[DEBUG] Main: Aplikuję zmiany do modelu...")
-                self.schedule_model.set_visible_columns(self.visible_columns)
-                self.schedule_model.set_show_comment_column(self.show_comment_column)
-                self.schedule_model.set_show_percent_morning_column(self.show_percent_morning_column)
-                self.schedule_model.set_custom_columns(self.custom_columns)
+                # --- SEKCJA KRYTYCZNA: Aplikowanie zmian do widoku ---
+                self._is_updating_layout = True  # BLOKUJEMY zapisywanie zmian wywołanych przez kod
+                try:
+                    debug_print("[DEBUG] Main: Aplikuję zmiany do modelu...")
+                    self.schedule_model.set_visible_columns(self.visible_columns)
+                    self.schedule_model.set_show_comment_column(self.show_comment_column)
+                    self.schedule_model.set_show_percent_morning_column(self.show_percent_morning_column)
+                    self.schedule_model.set_show_percent_ho_column(self.show_percent_ho_column)
+                    self.schedule_model.set_custom_columns(self.custom_columns)
 
-                self.refresh_column_configuration()
-                self.table.apply_column_widths(saved_widths)
+                    self.refresh_column_configuration()
 
-                if hasattr(self, 'table'):
-                    new_left_width = max(50, current_left_width + delta_width)
-                    total_width = self.table.splitter.width()
-                    new_right_width = max(100, total_width - new_left_width - self.table.splitter.handleWidth())
-                    self.table.splitter.setSizes([new_left_width, new_right_width])
-                    self._apply_dynamic_sizes()
+                    # Tutaj przywracamy szerokości. Ponieważ flaga jest True,
+                    # sygnał sectionResized nie nadpisze naszych ustawień domyślnymi wartościami.
+                    self.table.apply_column_widths(saved_widths)
 
-                self.apply_custom_sort()
-                self._apply_filter_visibility_and_order()
+                    if hasattr(self, 'table'):
+                        new_left_width = max(50, current_left_width + delta_width)
+                        total_width = self.table.splitter.width()
+                        new_right_width = max(100, total_width - new_left_width - self.table.splitter.handleWidth())
+                        self.table.splitter.setSizes([new_left_width, new_right_width])
+                        self._apply_dynamic_sizes()  # To też zmienia rozmiary, więc musi być w bloku try
+
+                    self.apply_custom_sort()
+                    self._apply_filter_visibility_and_order()
+
+                finally:
+                    self._is_updating_layout = False  # ODBLOKOWUJEMY
 
         except Exception as e:
             log_error(f"Błąd w show_column_select_dialog: {e}", exception=e)
@@ -2705,66 +2936,81 @@ class WorkScheduleWindow(QMainWindow):
         debug_print("Zakończono sortowanie niestandardowe (compare func).")
 
     def _apply_dynamic_sizes(self):
-        """Ustawia dynamiczne rozmiary w zależności od rozmiaru czcionki ORAZ zapisanych ustawień."""
+        """
+        Ustawia dynamiczne rozmiary w oparciu o AKTYWNY PROFIL oraz UKRYTE DNI.
+        """
         debug_print("[DEBUG] _apply_dynamic_sizes: START")
+
         if not hasattr(self, 'table') or not self.table.employees_view.model() or self.schedule_model.rowCount() == 0:
             return
 
-        # --- ZMIANA: Logika szerokości kolumn ---
-        saved_widths = self.user_app_settings.get('column_widths', {})
+        self._is_updating_layout = True
 
-        # Zastosuj zapisane szerokości
-        visible_columns = self.schedule_model.get_visible_columns()
-        for i, col_id in enumerate(visible_columns):
-            if col_id in saved_widths:
-                self.table.employees_view.setColumnWidth(i, saved_widths[col_id])
-        # --- KONIEC ZMIANY ---
+        try:
+            # 1. Pobierz aktywny profil
+            profiles = self.user_app_settings.get('layout_profiles', {})
+            active_name = self.user_app_settings.get('active_profile', 'Podstawowy')
+            profile = profiles.get(active_name, {
+                'row_height': 25, 'header_height': 35, 'day_col_width': 45, 'font_size': 9
+            })
 
-        font_size = self.current_font_size
-        width_map = {7: 35, 8: 40, 9: 45, 10: 50, 11: 55, 12: 60}
-        day_column_width = width_map.get(font_size, 40)
-        height_map = {7: 25, 8: 25, 9: 25, 10: 28, 11: 28, 12: 30}
-        row_height = height_map.get(font_size, 25)
-        header_height_map = {7: 30, 8: 35, 9: 35, 10: 38, 11: 40, 12: 42}
-        header_height = header_height_map.get(font_size, 35)
+            row_height = int(profile.get('row_height', 25))
+            header_height = int(profile.get('header_height', 35))
+            day_column_width = int(profile.get('day_col_width', 45))
 
-        self.table.set_header_height(header_height)
-        header = self.table.schedule_view.horizontalHeader()
-        model = self.table.employees_view.model()
+            self.current_font_size = int(profile.get('font_size', 9))
+            self.current_font = profile.get('font_family', 'Segoe UI')
 
-        # --- POPRAWKA: Używamy \n zamiast <br> i dodajemy nową kolumnę ---
-        special_widths = {
-            "Suma\nRBH": 45,
-            "Bilans\nRBH": 45,
-            "Procent\nrano": 55,  # <-- Dodano nową kolumnę
-            "Komentarz": 300
-        }
-        total_columns = model.columnCount()
-        debug_print(f"[DEBUG] _apply_dynamic_sizes: Całkowita liczba kolumn w modelu: {total_columns}")
+            # 2. Lewa tabela (Pracownicy)
+            saved_widths = self.user_app_settings.get('column_widths', {})
+            visible_columns = self.schedule_model.get_visible_columns()
+            for i, col_id in enumerate(visible_columns):
+                if col_id in saved_widths:
+                    self.table.employees_view.setColumnWidth(i, saved_widths[col_id])
 
-        for logical_index in range(model.columnCount()):
-            # Pobieramy surowy tekst nagłówka, aby pasował do kluczy słownika
-            header_text = model.headerData(logical_index, Qt.Horizontal, Qt.DisplayRole)
-            # Jeśli header_text zawiera <br>, zamień na \n dla pewności
-            if header_text:
-                header_text = header_text.replace("<br>", "\n")
+            # 3. Nagłówek
+            self.table.set_header_height(header_height)
 
-            width_to_set = special_widths.get(header_text, day_column_width)
-            # --- LOGOWANIE DLA NOWEJ KOLUMNY ---
-            if "Procent" in str(header_text):
-                debug_print(
-                    f"[DEBUG] Znaleziono kolumnę 'Procent rano' na indeksie {logical_index}. Ustawiam szerokość: {width_to_set}")
-            header.resizeSection(logical_index, width_to_set)
+            # 4. Prawa tabela (Grafik)
+            header = self.table.schedule_view.horizontalHeader()
+            model = self.table.employees_view.model()
 
-        days_in_month = model._days_in_month
-        employee_cols_count = len(model.get_visible_columns())
-        for day in range(1, 32):
-            logical_index = employee_cols_count + (day - 1)
-            if logical_index < model.columnCount():
-                header.setSectionHidden(logical_index, day > days_in_month)
+            scale_factor = day_column_width / 45.0
+            special_widths = {
+                "Suma\nRBH": int(60 * scale_factor),
+                "Bilans\nRBH": int(60 * scale_factor),
+                "Procent\nrano": int(80 * scale_factor),
+                "Procent\nHO": int(60 * scale_factor),
+                "Komentarz": 300
+            }
 
-        self.table._force_sync_heights(row_height)
-        debug_print("[DEBUG] _apply_dynamic_sizes: KONIEC")
+            for logical_index in range(model.columnCount()):
+                header_text = model.headerData(logical_index, Qt.Horizontal, Qt.DisplayRole)
+                if header_text:
+                    header_text = str(header_text).replace("<br>", "\n")
+                width_to_set = special_widths.get(header_text, day_column_width)
+                header.resizeSection(logical_index, width_to_set)
+
+            # 5. Ukrywanie dni (spoza miesiąca ORAZ ukrytych ręcznie)
+            days_in_month = model._days_in_month
+            employee_cols_count = len(model.get_visible_columns())
+
+            for day in range(1, 32):
+                logical_index = employee_cols_count + (day - 1)
+                if logical_index < model.columnCount():
+                    # Dzień jest ukryty jeśli:
+                    # A) Jest poza zakresem miesiąca (np. 30 luty)
+                    # B) Został dodany do user_hidden_days przez użytkownika
+                    should_hide = (day > days_in_month) or (day in self.user_hidden_days)
+                    header.setSectionHidden(logical_index, should_hide)
+
+            # 6. Synchronizacja wysokości
+            self.table._force_sync_heights(row_height)
+
+        finally:
+            self._is_updating_layout = False
+
+        debug_print(f"[DEBUG] _apply_dynamic_sizes: KONIEC. Ukryte dni: {self.user_hidden_days}")
 
     def showEvent(self, event):
         """Automatycznie wywoływane przez Qt, gdy okno jest pokazywane po raz pierwszy."""
@@ -2812,6 +3058,8 @@ class WorkScheduleWindow(QMainWindow):
         Slot wywoływany natychmiast po zmianie rozmiaru kolumny przez użytkownika.
         Aktualizuje ustawienia w pamięci, aby przetrwały odświeżenie danych.
         """
+        if self._is_updating_layout:
+            return
         # Sprawdź, czy index mieści się w zakresie widocznych kolumn pracownika
         if logical_index < len(self.visible_columns):
             col_id = self.visible_columns[logical_index]
@@ -3159,7 +3407,9 @@ class WorkScheduleWindow(QMainWindow):
         return grouped_events
 
     def clear_special_symbol_from_selected_cells(self):
-        """W pełni asynchronicznie usuwa symbol specjalny (F12) z zaznaczonych komórek."""
+        """
+        Usuwa symbol specjalny (F12) z uwzględnieniem blokady usuwania U/OS przez Lidera u nie-Liderów.
+        """
         if not app_settings.has_permission(self.current_user_app_role, 'action_clear_special_symbol'):
             self.statusBar().showMessage("Brak uprawnień do wykonania tej operacji.", 3000)
             return
@@ -3168,41 +3418,56 @@ class WorkScheduleWindow(QMainWindow):
         if not self._can_modify_cells(selected_cells_data):
             return
 
-        cells_to_modify = [cell for cell in selected_cells_data if
-                           parse_symbol(cell.get('symbol', '')).get('special_symbol')]
+        user_role = self.current_user_app_role
+        cells_to_modify = []
+        skipped_restricted_removal = []  # Lista pominiętych przy usuwaniu U/OS
 
-        # --- NOWA ZMIANA: Sprawdzenie, czy usuwamy urlop ---
-        contains_vacation_symbol = any(
-            (parse_symbol(cell.get('symbol', '')).get('special_symbol') or '').upper() in ['U', 'UZ']
-            for cell in cells_to_modify
-        )
-        # --- KONIEC ZMIANY ---
+        for cell in selected_cells_data:
+            parsed = parse_symbol(cell.get('symbol', ''))
+            current_special = (parsed.get('special_symbol') or '').upper()
+
+            if not current_special:
+                continue
+
+            target_role = cell.get('rola_nazwa', '')
+
+            # --- LOGIKA DLA LIDERA: BLOKADA USUWANIA 'U' i 'OS' ---
+            if user_role == 'Lider':
+                if current_special in ['U', 'OS']:
+                    # Jeśli cel to nie Lider -> BLOKUJEMY USUNIĘCIE
+                    if target_role != 'Lider':
+                        skipped_restricted_removal.append(
+                            f"{cell.get('uzytkownik_dane', 'Nieznany')} (Symbol: {current_special})")
+                        continue
+
+            cells_to_modify.append(cell)
+
+        # Wyświetl komunikat o blokadzie usuwania
+        if skipped_restricted_removal:
+            QMessageBox.warning(self, "Ograniczenia uprawnień",
+                                f"Lider może usunąć symbol 'U' lub 'OS' tylko u innego Lidera.<br>"
+                                f"Pominięto usuwanie dla:<br>- {', '.join(set(skipped_restricted_removal))}")
 
         if not cells_to_modify:
-            QMessageBox.information(self, "Brak zmian",
-                                    "W zaznaczonych komórkach nie ma symboli specjalnych do usunięcia.")
+            if not skipped_restricted_removal:  # Jeśli nic nie pominięto i nic nie dodano, to po prostu brak symboli
+                QMessageBox.information(self, "Brak zmian",
+                                        "W zaznaczonych komórkach nie ma symboli możliwych do usunięcia.")
             return
 
+        # --- Reszta logiki bez zmian ---
         reply = show_confirmation_dialog(self, "Potwierdzenie operacji",
                                          f"Czy na pewno chcesz usunąć symbole specjalne z {len(cells_to_modify)} komórek?")
         if reply != QMessageBox.Yes:
             return
 
-        # --- POCZĄTEK POPRAWKI: Użycie nowego ScheduleChangeProcessor ---
         change_requests = []
         for cell_data in cells_to_modify:
             permissions = self._get_permission_for_cell(cell_data)
             if permissions['can_edit_symbol']:
-                # Wartość `None` dla symbolu specjalnego oznacza jego usunięcie z zachowaniem godzin
                 change_requests.append((ChangeType.APPLY_SPECIAL_SYMBOL, cell_data, None))
 
         if change_requests:
             self.schedule_change_processor.start_changes(change_requests)
-            # Po zakończeniu operacji, wyświetl informację o urlopie, jeśli to konieczne.
-            # Używamy QTimer, aby dać czas na przetworzenie zmian.
-            if contains_vacation_symbol:
-                QTimer.singleShot(100, lambda: self._show_f12_vacation_info(True, len(change_requests), 0))
-        # --- KONIEC POPRAWKI ---
 
     def _on_preparation_finished(self, contains_vacation_symbol, change_requests):
         """Slot wywoływany po zakończeniu pracy wątku przygotowawczego."""
@@ -3677,30 +3942,48 @@ class WorkScheduleWindow(QMainWindow):
         """Przeładowuje ustawienia globalne, style i logikę na żądanie."""
         debug_print("Zdalne żądanie: Pełne przeładowanie ustawień...")
 
-        # 1. Pobierz świeże dane z tabeli appsettings do obiektu app_settings
+        # 1. Pobierz świeże dane
         load_all_app_settings()
 
-        # 2. Odśwież uprawnienia (mogły się zmienić definicje ról w JSON)
+        # 2. Odśwież uprawnienia
         self.check_user_permissions()
 
-        # 3. Odśwież wygląd (mogły się zmienić kolory w stylach)
-        # Przekazujemy aktualne preferencje użytkownika co do motywu/czcionki
+        # 3. Odśwież wygląd
         self.apply_theme_settings(
             'dark' if self.is_dark_theme else 'light',
             self.current_font,
             self.current_font_size
         )
 
-        # 4. Odśwież tabele (mogły się zmienić kolory zmian w SHIFT_COLOR_MAP)
-        # Wymuszamy przerysowanie viewportu, co zaciągnie nowe kolory z app_settings
-        if hasattr(self, 'table'):
-            # Jeśli zmieniły się definicje kolorów, musimy odświeżyć model/widok
-            # Najbezpieczniej jest po prostu odświeżyć widok,
-            # ale jeśli zmieniły się np. definicje symboli, przydałby się pełny refresh
-            self.table.schedule_view.viewport().update()
+        # 4. Obsługa Włączania/Wyłączania Powiadomień w locie
+        if app_settings.ENABLE_NOTIFICATION_CENTER:
+            # Włączamy
+            if not hasattr(self, 'notification_drawer') or self.notification_drawer is None:
+                from notification_center import NotificationDrawer
+                self.notification_drawer = NotificationDrawer(self)
+                self.notification_drawer.hide()
 
-            # Jeśli chcesz być pewien, że nowe reguły (np. nowe symbole) zadziałają:
-            # self.refresh_data() # <-- Odkomentuj to, jeśli reload ma też pobierać dane
+            # Pokaż przycisk (teraz mamy pewność, że istnieje)
+            if hasattr(self, 'notification_btn'):
+                self.notification_btn.setVisible(True)
+
+        else:
+            # Wyłączamy
+            if hasattr(self, 'notification_drawer') and self.notification_drawer:
+                self.notification_drawer.deleteLater()
+                self.notification_drawer = None
+
+            # Ukryj przycisk
+            if hasattr(self, 'notification_btn'):
+                self.notification_btn.setVisible(False)
+
+        # Dzięki temu nowa grupa pojawi się w filtrze u wszystkich użytkowników
+        if hasattr(self, 'update_filters'):
+            self.update_filters()
+
+        # 5. Odśwież tabele
+        if hasattr(self, 'table'):
+            self.table.schedule_view.viewport().update()
 
         self.statusBar().showMessage("Konfiguracja aplikacji została zaktualizowana.", 5000)
 
@@ -3725,16 +4008,17 @@ class WorkScheduleWindow(QMainWindow):
         """
         Slot wywoływany, gdy nadejdzie powiadomienie z bazy danych.
         Implementuje logikę ignorowania własnych zmian, hybrydowe odświeżanie
-        ORAZ zachowywanie zaznaczenia.
+        ORAZ obsługę Centrum Powiadomień.
         """
         # 1. Sprawdzenie daty (dla powiadomień specyficznych dla miesiąca - grafik, zdarzenia)
-        # Tabela 'appsettings' jest globalna (year=0), więc pomijamy dla niej sprawdzanie daty.
+        # Tabela 'appsettings' jest globalna, więc pomijamy dla niej sprawdzanie daty.
         if table_name != 'appsettings':
             current_data = self.date_combo.currentData()
             if not current_data: return
             current_year, current_month = current_data
 
-            # Jeśli powiadomienie dotyczy innego miesiąca niż oglądany -> Ignoruj
+            # Jeśli powiadomienie dotyczy innego miesiąca niż oglądany -> Ignoruj logikę odświeżania widoku
+            # (Ale wciąż można by dodać powiadomienie do Drawera, tu jednak trzymamy się kontekstu widoku)
             if year != current_year or month != current_month:
                 return
 
@@ -3749,7 +4033,52 @@ class WorkScheduleWindow(QMainWindow):
 
         debug_print(f"Przetwarzanie powiadomienia zewnętrznego: Tabela={table_name}, Kto={modifier}")
 
-        # 3. LOGIKA ODŚWIEŻANIA (Zależna od tabeli)
+        # --- 3. INTEGRACJA Z CENTRUM POWIADOMIEŃ (Poprawiona) ---
+        # Sprawdzamy, czy drawer istnieje I nie jest None (kluczowe przy wyłączonej opcji globalnej)
+        if hasattr(self, 'notification_drawer') and self.notification_drawer:
+            readable_tables = {
+                'grafikipracy': 'Grafik',
+                'spotkania': 'Spotkanie',
+                'szkolenia': 'Szkolenie',
+                'nadgodziny': 'Nadgodziny',
+                'appsettings': 'Konfiguracja'
+            }
+            readable_name = readable_tables.get(table_name.lower(), table_name)
+
+            category = "info"
+            if table_name == 'grafikipracy':
+                category = "schedule"
+            elif table_name == 'appsettings':
+                category = "warning"
+            elif table_name in ['spotkania', 'szkolenia', 'nadgodziny']:
+                category = "success"  # lub info
+
+            title = f"Zmiana: {readable_name}"
+            message = f"Użytkownik <b>{modifier}</b> wprowadził zmiany dla okresu <b>{month:02}/{year}</b>."
+
+            if table_name == 'nadgodziny':
+                message = f"<b>{modifier}</b> zmodyfikował nadgodziny w <b>{month:02}/{year}</b>."
+
+            if table_name == 'appsettings':
+                title = "Zmiana globalna"
+                message = f"Admin <b>{modifier}</b> zmienił ustawienia aplikacji."
+
+            self.notification_drawer.add_notification(title, message, category)
+
+            # Zmień kolor dzwonka na czerwony, aby zasygnalizować nowe powiadomienie
+            if hasattr(self, 'notification_btn') and self.notification_btn:
+                self.notification_btn.setStyleSheet("""
+                    QPushButton { 
+                        color: #e74c3c; 
+                        font-weight: bold; 
+                        border: none; 
+                        background: transparent;
+                        font-size: 16px;
+                    }
+                    QPushButton:hover { background-color: #3a3d42; border-radius: 4px; }
+                 """)
+
+        # --- 4. LOGIKA ODŚWIEŻANIA DANYCH (Zależna od tabeli) ---
 
         # PRZYPADEK A: Zmiana w ustawieniach globalnych (appsettings)
         if table_name == 'appsettings':
@@ -3762,14 +4091,12 @@ class WorkScheduleWindow(QMainWindow):
             # A2. Uruchom BackgroundCheckerThread jednorazowo (sprawdzenie wersji)
             from async_operations import BackgroundCheckerThread
 
-            # Sprawdź czy wątek już nie działa, aby nie dublować
             if hasattr(self, 'background_checker') and self.background_checker and self.background_checker.isRunning():
                 debug_print("BackgroundCheckerThread już działa. Pomijam.")
                 return
 
             self.background_checker = BackgroundCheckerThread(parent=self)
             self.background_checker.update_required.connect(self._handle_update_required)
-            # Czyszczenie referencji po zakończeniu
             self.background_checker.finished.connect(lambda: setattr(self, 'background_checker', None))
             self.background_checker.start()
             return
@@ -3800,7 +4127,6 @@ class WorkScheduleWindow(QMainWindow):
                 if view_state:
                     self._restore_view_state(view_state)
 
-            # B6. Pokaż informację na pasku statusu
             self.statusBar().showMessage(f"Zaktualizowano dane zdarzeń (zmiana przez: {modifier})", 5000)
             return
 
@@ -3823,7 +4149,6 @@ class WorkScheduleWindow(QMainWindow):
 
             # Opcjonalnie: mruganie oknem na pasku zadań
             QApplication.alert(self)
-
 
     def _clear_service_broker_queue(self):
         """
@@ -3960,7 +4285,6 @@ class WorkScheduleWindow(QMainWindow):
         finally:
             if conn:
                 conn.close()
-
 
     def _handle_update_required(self, force_update: bool, version_obsolete: bool):
         """
@@ -4156,47 +4480,6 @@ class WorkScheduleWindow(QMainWindow):
             self.events_model.filtered_update(filtered_data)
         except Exception as e:
             log_error(f"Błąd podczas filtrowania zdarzeń: {str(e)}")
-
-    def setup_events_table_columns(self):
-        """Konfiguruje kolumny dla tabeli zdarzeń w sposób jawny i niezawodny."""
-        if not hasattr(self, 'events_table') or not self.events_table.model():
-            return
-
-        header = self.events_table.horizontalHeader()
-        header.setStretchLastSection(False)
-
-        # Ustawiamy tryb interaktywny, aby użytkownik mógł sam zmieniać rozmiar,
-        # ale definiujemy rozsądne szerokości startowe.
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
-        self.events_table.setColumnWidth(0, 40)  # Id
-
-        header.setSectionResizeMode(1, QHeaderView.ResizeMode.Interactive)
-        self.events_table.setColumnWidth(1, 80)  # Typ
-
-        header.setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)  # Temat
-        header.setSectionResizeMode(3, QHeaderView.ResizeMode.Stretch)  # Nazwa
-
-        header.setSectionResizeMode(4, QHeaderView.ResizeMode.Interactive)
-        self.events_table.setColumnWidth(4, 150)  # Użytkownik
-
-        header.setSectionResizeMode(5, QHeaderView.ResizeMode.Interactive)
-        self.events_table.setColumnWidth(5, 90)  # Data
-
-        header.setSectionResizeMode(6, QHeaderView.ResizeMode.Interactive)
-        self.events_table.setColumnWidth(6, 120)  # Czas od
-
-        header.setSectionResizeMode(7, QHeaderView.ResizeMode.Interactive)
-        self.events_table.setColumnWidth(7, 120)  # Czas do
-
-        header.setSectionResizeMode(8, QHeaderView.ResizeMode.Interactive)
-        self.events_table.setColumnWidth(8, 100)  # Status
-
-        header.setSectionResizeMode(9, QHeaderView.ResizeMode.Interactive)
-        self.events_table.setColumnWidth(9, 125)  # Data Modyfikacji
-
-        # Kolumna Akcje - stała i nienaruszalna
-        header.setSectionResizeMode(10, QHeaderView.ResizeMode.Fixed)
-        self.events_table.setColumnWidth(10, 85)  # Akcje
 
     def show_schedule_control_dialog(self):
         """
@@ -4702,10 +4985,14 @@ class WorkScheduleWindow(QMainWindow):
         """Pokazuje okno dialogowe ustawień aplikacji."""
         from settings_dialog import AppSettingsDialog
 
-        dialog = AppSettingsDialog(self, settings=self.user_app_settings)
+        # Przekazujemy current_user_app_role
+        dialog = AppSettingsDialog(self, settings=self.user_app_settings, user_role=self.current_user_app_role)
+
         dialog.live_theme_changed.connect(self.apply_theme_settings)
-        # --- PODŁĄCZENIE NOWEGO SYGNAŁU ---
         dialog.import_requested.connect(self.on_import_requested)
+
+        # --- PODŁĄCZENIE ZAPISU GLOBALNEGO ---
+        dialog.save_global_settings_requested.connect(self._save_global_app_settings)
 
         if dialog.exec() == QDialog.Accepted:
             # Ta część wykona się po kliknięciu "OK" lub "Importuj teraz"
@@ -4726,6 +5013,86 @@ class WorkScheduleWindow(QMainWindow):
             if should_save:
                 self.settings_db.save_settings(self.user_app_settings)
                 debug_print(f"Zapisano ustawienia z dialogu.")
+
+    def _save_global_app_settings(self, settings_dict):
+        """
+        Zapisuje ustawienia globalne do tabeli appsettings (SQL)
+        ORAZ wysyła komendę RELOAD_SETTINGS do wszystkich klientów.
+        Wersja obsługująca zarówno Administratora, jak i Pracownika WPR (dla Grup).
+        """
+        # --- KROK 1: Walidacja uprawnień ---
+        has_admin_access = app_settings.has_permission(self.current_user_app_role, 'manage_app_configuration')
+        has_group_access = app_settings.has_permission(self.current_user_app_role, 'manage_group_definitions')
+
+        # Jeśli użytkownik nie ma ŻADNEGO z tych uprawnień, blokujemy.
+        if not (has_admin_access or has_group_access):
+            from debug_utils import log_warning
+            log_warning(f"Próba zapisu ustawień globalnych bez uprawnień przez: {self.current_user_app_role}")
+            return
+
+        debug_print(f"Rozpoczynam zapis globalny ustawień SQL. Klucze: {list(settings_dict.keys())}")
+
+        conn = None
+        try:
+            conn = DatabaseConnector.get_connection()
+            cursor = conn.cursor()
+
+            # --- KROK 2: Aktualizacja tabeli appsettings (MERGE) ---
+            table_name_settings = SQL_OBJECTS['appsettings']
+
+            for key, value in settings_dict.items():
+                # Dodatkowe zabezpieczenie: Jeśli to nie Admin, a próbuje zmienić coś innego niż grupy -> zignoruj/zaloguj
+                if not has_admin_access and key != 'GroupMapping':
+                    debug_print(f"Pominięto zapis klucza '{key}' - brak uprawnień administratora.")
+                    continue
+
+                # Konwersja wartości na string (dla pewności, bo JSON to string)
+                val_str = str(value)
+
+                sql_merge = f"""
+                    MERGE {table_name_settings} AS target
+                    USING (SELECT ? AS SettingKey, ? AS SettingValue) AS source
+                    ON (target.SettingKey = source.SettingKey)
+                    WHEN MATCHED THEN UPDATE SET target.SettingValue = source.SettingValue
+                    WHEN NOT MATCHED THEN INSERT (SettingKey, SettingValue) VALUES (source.SettingKey, source.SettingValue);
+                """
+                cursor.execute(sql_merge, (key, val_str))
+
+            # --- KROK 3: Wysłanie komendy przeładowania (AppCommands) ---
+            if 'appcommands' in SQL_OBJECTS:
+                table_name_commands = SQL_OBJECTS['appcommands']
+
+                # Ustalamy treść komunikatu w zależności od tego, co zmieniono
+                command_msg = 'Zmiana ustawień globalnych'
+                if 'GroupMapping' in settings_dict and len(settings_dict) == 1:
+                    command_msg = 'Aktualizacja konfiguracji grup'
+
+                sql_command = f"""
+                    INSERT INTO {table_name_commands} 
+                    (CommandType, TargetUser, CommandData, CreatedAt, CreatedBy)
+                    VALUES (?, ?, ?, GETDATE(), ?)
+                """
+
+                cursor.execute(sql_command, (
+                    'RELOAD_SETTINGS',
+                    'ALL',
+                    command_msg,
+                    self.current_user_app_login_windows
+                ))
+
+            conn.commit()
+            debug_print("Zapis do bazy (appsettings + AppCommands) zakończony sukcesem.")
+
+            # Wymuszamy przerysowanie filtrów, aby nowa grupa pojawiła się w ComboBoxie natychmiast
+            self.update_filters()
+
+        except Exception as e:
+            from debug_utils import log_error
+            log_error(f"Błąd zapisu ustawień globalnych: {e}", exception=e)
+            QMessageBox.critical(self, "Błąd", f"Nie udało się zapisać ustawień globalnych: {e}")
+        finally:
+            if conn:
+                conn.close()
 
     def on_import_requested(self, grupa, funkcja):
         """Obsługuje żądanie importu z okna ustawień."""
@@ -5275,6 +5642,8 @@ class WorkScheduleWindow(QMainWindow):
         selected_role = self.rola_combo.get_selected_items()
         selected_podrola = self.podrola_combo.get_selected_items()
         selected_rka = self.rka_combo.get_selected_items()
+        selected_grafik_pkt = self.grafik_za_punkty_combo.get_selected_items()
+        selected_brak_nocki = self.brak_nocki_combo.get_selected_items()
         selected_jezyki = self.jezyk_combo.get_selected_items()
         selected_etaty = self.etat_combo.get_selected_items()
         selected_scp = self.system_czasu_pracy_combo.get_selected_items()
@@ -5318,7 +5687,7 @@ class WorkScheduleWindow(QMainWindow):
             # Struktura klucza: (Wydział, Przełożony, UżytkownikDane, UżytkownikID)
 
             # --- A. Filtry statyczne ---
-            if selected_locations_default and data.get('lokalizacja_domyslna') not in selected_locations_default:
+            if selected_locations_default and data.get('sched_lokalizacja') not in selected_locations_default:
                 continue
 
             if selected_wydzialy and key[0] not in selected_wydzialy:
@@ -5332,19 +5701,33 @@ class WorkScheduleWindow(QMainWindow):
             if selected_uzytkownicy_ids and key[3] not in selected_uzytkownicy_ids:
                 continue
 
-            if selected_dtn and str(data.get('dtn', '')) not in selected_dtn:
+            if selected_dtn and str(data.get('sched_dtn', '')) not in selected_dtn:
                 continue
-            if selected_role and data.get('rola_nazwa', '') not in selected_role:
+            if selected_role and data.get('sched_rola', '') not in selected_role:
                 continue
-            if selected_jezyki and data.get('jezyk', '') not in selected_jezyki:
+            # Grafik za punkty
+            # Pobieramy wartość, zamieniamy None/Pusty na ''
+            val_grafik = str(data.get('sched_grafik_za_punkty') or '')
+            if not val_grafik.strip(): val_grafik = 'NIE'  # Dodatkowe zabezpieczenie dla pustego stringa
+
+            if selected_grafik_pkt and val_grafik not in selected_grafik_pkt:
                 continue
-            if selected_etaty and str(data.get('etat', '')) not in selected_etaty:
+
+            # Brak nocki
+            val_nocki = str(data.get('sched_brak_nocki') or '')
+            if not val_nocki.strip(): val_nocki = 'NIE'
+
+            if selected_brak_nocki and val_nocki not in selected_brak_nocki:
                 continue
-            if selected_scp and data.get('system_czasu_pracy', '') not in selected_scp:
+            if selected_jezyki and data.get('sched_jezyk', '') not in selected_jezyki:
                 continue
-            if selected_rka and data.get('rka', '') not in selected_rka:
+            if selected_etaty and str(data.get('sched_etat', '')) not in selected_etaty:
                 continue
-            if selected_podrola and data.get('pod_rola_nazwa', '') not in selected_podrola:
+            if selected_scp and data.get('sched_system_pracy', '') not in selected_scp:
+                continue
+            if selected_rka and data.get('sched_rka', '') not in selected_rka:
+                continue
+            if selected_podrola and data.get('sched_podrola', '') not in selected_podrola:
                 continue
 
             # --- B. Filtry niestandardowe (ZMODYFIKOWANE) ---
@@ -5370,7 +5753,7 @@ class WorkScheduleWindow(QMainWindow):
             # --- C. Filtr "Obecni w pracy" ---
             if show_only_at_work:
                 # Pomijamy osoby z DTN=1 w filtrze obecności (zgodnie z logiką biznesową)
-                if data.get('dtn') == 1:
+                if data.get('sched_dtn') == 1:
                     continue
 
                 selected_date = self.presence_date_edit.date()
@@ -5689,6 +6072,19 @@ class WorkScheduleWindow(QMainWindow):
         """Obsługuje pomyślne załadowanie danych async."""
         debug_print("Otrzymano dane z async loading")
         try:
+            # --- NOWA SEKCJA: Czyszczenie powiadomień po udanym odświeżeniu ---
+            if hasattr(self, 'notification_drawer') and self.notification_drawer:
+                # 1. Usuń wszystkie kafelki
+                self.notification_drawer.clear_notifications()
+                debug_print("Wyczyszczono powiadomienia po odświeżeniu danych.")
+
+            if hasattr(self, 'notification_btn'):
+                # 2. Przywróć domyślny (szary/przezroczysty) styl dzwonka
+                current_theme = 'dark' if self.is_dark_theme else 'light'
+                style = AppStyles.get_icon_button_style(current_theme)
+                self.notification_btn.setStyleSheet(style)
+            # ------------------------------------------------------------------
+
             is_initial_load = self.schedule_model.rowCount() == 0
 
             # Zapisz stan widoku (sortowanie i zaznaczenie) przed resetem modelu
@@ -5703,11 +6099,9 @@ class WorkScheduleWindow(QMainWindow):
 
             debug_print("Pomyślnie zastosowano dane z async loading")
 
-
         except Exception as e:
             log_error(f"Błąd podczas stosowania załadowanych danych: {e}", exception=e)
         finally:
-            # --- KLUCZOWA ZMIANA: Zdejmij flagę blokującą na samym końcu, po wszystkich operacjach UI ---
             self._is_refreshing_data = False
             debug_print("Ustawiono flagę _is_refreshing_data = False (w bloku finally)")
 
@@ -5855,9 +6249,8 @@ class WorkScheduleWindow(QMainWindow):
 
             # Jeśli tabela już istnieje, poinformuj ją, aby na nowo ustawiła widoczność kolumn
             if hasattr(self, 'table') and self.table:
-                self.schedule_model.layoutChanged.emit() # Sygnał, że struktura się zmieniła
-                self.table.setup_columns() # Wywołanie nowej, dedykowanej metody
-
+                self.schedule_model.layoutChanged.emit()  # Sygnał, że struktura się zmieniła
+                self.table.setup_columns()  # Wywołanie nowej, dedykowanej metody
 
     def setup_event_table_columns(self):
         """
@@ -6103,6 +6496,8 @@ class WorkScheduleWindow(QMainWindow):
             'dtn': self.dtn_combo.get_selected_items(),
             'rka': self.rka_combo.get_selected_items(),
             'podrola': self.podrola_combo.get_selected_items(),
+            'grafik_za_punkty': self.grafik_za_punkty_combo.get_selected_items(),
+            'brak_nocki': self.brak_nocki_combo.get_selected_items(),
         }
 
         # --- NOWA LOGIKA: Zapisywanie filtrów niestandardowych ---
@@ -6145,6 +6540,8 @@ class WorkScheduleWindow(QMainWindow):
             self.dtn_combo.select_items(state.get('dtn', []))
             self.rka_combo.select_items(state.get('rka', []))
             self.podrola_combo.select_items(state.get('podrola', []))
+            self.grafik_za_punkty_combo.select_items(state.get('grafik_za_punkty', []))
+            self.brak_nocki_combo.select_items(state.get('brak_nocki', []))
 
             # Przywróć przełożonego (używa tekstu)
             przelozeni_items_text = state.get('przelozony', [])
@@ -6178,18 +6575,20 @@ class WorkScheduleWindow(QMainWindow):
 
     def _get_unique_values_for_filter(self, filter_key):
         """
-        Pobiera unikalne wartości dla danego filtra z aktualnie załadowanych,
-        pełnych danych w self.processed_data.
+        Pobiera unikalne wartości dla danego filtra z aktualnie załadowanych
+        danych, uwzględniając nowe nazwy kluczy (sched_...).
         """
         if not hasattr(self, 'processed_data') or not self.processed_data:
             return set()
 
         unique_values = set()
 
+        # Mapowanie: jeśli pytamy o klucz z krotki głównej, bierzemy go z indeksu
+        # Klucze słownika DataProvider: (sched_wydzial, sched_przelozony, sched_user_display, sched_user_id)
         key_map = {
-            'wydzial': 0,
-            'przelozony': 1,
-            'uzytkownik_dane': 2
+            'sched_wydzial': 0,
+            'sched_przelozony': 1,
+            'sched_user_display': 2
         }
 
         if filter_key in key_map:
@@ -6198,10 +6597,9 @@ class WorkScheduleWindow(QMainWindow):
                 if len(key_tuple) > key_index and key_tuple[key_index]:
                     unique_values.add(str(key_tuple[key_index]))
         else:
+            # Pobieranie ze słownika wartości
             for data_dict in self.processed_data.values():
                 value = data_dict.get(filter_key)
-                # --- POPRAWIONY WARUNEK ---
-                # Sprawdzamy, czy wartość nie jest None, co poprawnie uwzględni zero.
                 if value is not None and value != '':
                     unique_values.add(str(value))
 
@@ -6220,6 +6618,7 @@ class WorkScheduleWindow(QMainWindow):
             'rola_combo', 'jezyk_combo', 'etat_combo',
             'system_czasu_pracy_combo',
             'default_location_combo', 'rka_combo',
+            'grafik_za_punkty_combo', 'brak_nocki_combo',
             'podrola_combo', 'presence_location_combo',
             'presence_hour_combo'
         ]
@@ -6407,18 +6806,20 @@ class WorkScheduleWindow(QMainWindow):
     def update_filters(self):
         """
         Wypełnia wszystkie filtry na podstawie załadowanych danych.
-        WERSJA POPRAWIONA: Używa uzytkownik_id jako klucza dla filtra Użytkownik.
+        WERSJA ZAKTUALIZOWANA: Używa nowych kluczy 'sched_*' ze słownika danych.
         """
         try:
             if not hasattr(self, 'processed_data') or not self.processed_data:
                 debug_print("Brak danych do wypełnienia filtrów, pomijam.")
                 return
 
-            debug_print("Rozpoczynam pełną aktualizację filtrów...")
+            debug_print("Rozpoczynam pełną aktualizację filtrów (nowe klucze sched_)...")
 
-            # --- Pobranie starych zaznaczeń ---
+            # --- 1. Pobranie starych zaznaczeń (aby je przywrócić) ---
             selected_grupy = self.grupa_main_filter_combo.get_selected_items()
             selected_wydzialy = self.wydzial_combo.get_selected_items()
+
+            # Zmienione klucze
             selected_dtn = self.dtn_combo.get_selected_items()
             selected_role = self.rola_combo.get_selected_items()
             selected_jezyki = self.jezyk_combo.get_selected_items()
@@ -6427,82 +6828,115 @@ class WorkScheduleWindow(QMainWindow):
             selected_locations = self.default_location_combo.get_selected_items()
             selected_rka = self.rka_combo.get_selected_items()
             selected_podrola = self.podrola_combo.get_selected_items()
-            # Dla przełożonego wciąż używamy tekstu
+            selected_grafik_pkt = self.grafik_za_punkty_combo.get_selected_items()
+            selected_brak_nocki = self.brak_nocki_combo.get_selected_items()
+            # Filtry listowe
             selected_przelozeni_text = self.get_list_selected_items(self.przelozony_list)
-            # Dla użytkownika pobieramy ID (dane)
             selected_uzytkownik_ids = self.get_list_selected_data(self.uzytkownik_list)
 
-            # --- Wypełnianie filtrów ComboBox (bez zmian) ---
+            # --- 2. Wypełnianie filtrów ComboBox ---
+
+            # Grupy (bez zmian, logika biznesowa)
             group_mapping = self.data_provider.get_department_to_group_mapping()
             self.grupa_main_filter_combo.add_items(sorted(group_mapping.keys()))
             self.grupa_main_filter_combo.select_items(selected_grupy)
 
+            # Wydziały (klucz 0 w krotce)
             wydzialy = sorted(set(key[0] for key in self.processed_data.keys() if key[0]))
             self.wydzial_combo.add_items(wydzialy)
             self.wydzial_combo.select_items(selected_wydzialy)
 
-            locations = sorted(set(data.get('lokalizacja_domyslna', '') for data in self.processed_data.values() if
-                                   data.get('lokalizacja_domyslna')))
+            # Lokalizacja Domyślna (sched_lokalizacja)
+            locations = sorted(set(data.get('sched_lokalizacja', '') for data in self.processed_data.values() if
+                                   data.get('sched_lokalizacja')))
             self.default_location_combo.add_items(locations)
             self.default_location_combo.select_items(selected_locations)
 
-            scp_values = sorted(set(data.get('system_czasu_pracy', '') for data in self.processed_data.values() if
-                                    data.get('system_czasu_pracy', '')))
+            # System Czasu Pracy (sched_system_pracy)
+            scp_values = sorted(set(data.get('sched_system_pracy', '') for data in self.processed_data.values() if
+                                    data.get('sched_system_pracy')))
             self.system_czasu_pracy_combo.add_items(scp_values)
             self.system_czasu_pracy_combo.select_items(selected_scp)
 
+            # Rola (sched_rola)
             role_values = sorted(
-                set(data.get('rola_nazwa', '') for data in self.processed_data.values() if data.get('rola_nazwa', '')))
+                set(data.get('sched_rola', '') for data in self.processed_data.values() if data.get('sched_rola')))
             self.rola_combo.add_items(role_values)
             self.rola_combo.select_items(selected_role)
 
-            podrola_values = self._get_unique_values_for_filter('pod_rola_nazwa')
-            self.podrola_combo.add_items(podrola_values)
+            # Podrola (sched_podrola)
+            podrola_values = self._get_unique_values_for_filter('sched_podrola')
+            self.podrola_combo.add_items(sorted(list(podrola_values)))
             self.podrola_combo.select_items(selected_podrola)
 
+            # Język (sched_jezyk)
             jezyki_values = sorted(
-                set(data.get('jezyk', '') for data in self.processed_data.values() if data.get('jezyk', '')))
+                set(data.get('sched_jezyk', '') for data in self.processed_data.values() if data.get('sched_jezyk')))
             self.jezyk_combo.add_items(jezyki_values)
             self.jezyk_combo.select_items(selected_jezyki)
 
-            etaty_values = set(str(data.get('etat', '')) for data in self.processed_data.values() if
-                               data.get('etat') is not None and str(data.get('etat', '')))
+            # Etat (sched_etat)
+            etaty_values = set(str(data.get('sched_etat', '')) for data in self.processed_data.values() if
+                               data.get('sched_etat') is not None)
+            # Sortowanie numeryczne etatów
             sorted_etaty = sorted(etaty_values, key=lambda x: float(x) if x.replace('.', '', 1).isdigit() else 0)
             self.etat_combo.add_items(sorted_etaty)
             self.etat_combo.select_items(selected_etaty)
 
-            dtn_values = sorted(
-                set(str(data['dtn']) for data in self.processed_data.values() if data.get('dtn') is not None), key=int)
+            # DTN (sched_dtn)
+            dtn_values = sorted(set(
+                str(data['sched_dtn']) for data in self.processed_data.values() if data.get('sched_dtn') is not None),
+                                key=int)
             self.dtn_combo.add_items(dtn_values)
             self.dtn_combo.select_items(selected_dtn)
 
-            rka_values = self._get_unique_values_for_filter('rka')
-            self.rka_combo.add_items(rka_values)
+            # RKA (sched_rka)
+            rka_values = self._get_unique_values_for_filter('sched_rka')
+            self.rka_combo.add_items(sorted(list(rka_values)))
             self.rka_combo.select_items(selected_rka)
 
-            # --- Aktualizacja Przełożonego (logika bez zmian, używa tekstu) ---
-            przelozeni_items = self._get_unique_values_for_filter('przelozony')
-            self.update_list_safely(self.przelozony_list, przelozeni_items, selected_przelozeni_text)
+            # Grafik za punkty (sched_grafik_za_punkty)
+            # Logika: Pobierz wartość, jeśli pusta/None -> zamień na 'NIE'
+            grafik_pkt_values = set()
+            for data in self.processed_data.values():
+                val = data.get('sched_grafik_za_punkty')
+                # Jeśli wartość istnieje i nie jest pusta -> użyj jej, w przeciwnym razie 'NIE'
+                grafik_pkt_values.add(str(val) if val and str(val).strip() else 'NIE')
 
-            # --- POCZĄTEK NOWEJ LOGIKI DLA UŻYTKOWNIKA (UŻYWA ID) ---
-            # 1. Zbuduj mapę {user_id: (display_name, login)}
+            self.grafik_za_punkty_combo.add_items(sorted(list(grafik_pkt_values)))
+            self.grafik_za_punkty_combo.select_items(selected_grafik_pkt)
+
+            # Brak nocki (sched_brak_nocki)
+            brak_nocki_values = set()
+            for data in self.processed_data.values():
+                val = data.get('sched_brak_nocki')
+                brak_nocki_values.add(str(val) if val and str(val).strip() else 'NIE')
+
+            self.brak_nocki_combo.add_items(sorted(list(brak_nocki_values)))
+            self.brak_nocki_combo.select_items(selected_brak_nocki)
+
+            # --- 3. Aktualizacja List (Przełożony i Użytkownik) ---
+
+            # Przełożony (używamy metody pomocniczej z nowym kluczem)
+            przelozeni_items = self._get_unique_values_for_filter('sched_przelozony')
+            self.update_list_safely(self.przelozony_list, sorted(list(przelozeni_items)), selected_przelozeni_text)
+
+            # Użytkownik (Specjalna logika dla ID i Loginu)
             user_map = {}
             for key, data in self.processed_data.items():
+                # key = (wydzial, przelozony, user_display, user_id)
                 user_id = key[3]
                 display_name = key[2]
-                login = data.get('login_windows')
+                # NOWY KLUCZ: sched_login
+                login = data.get('sched_login')
 
-                # Warunek: Musi być ID i nazwa
                 if user_id and display_name:
-                    # Użyj ID jako klucza
-                    user_map[user_id] = (display_name, login or '')  # Zapewnij, że login nie jest None
+                    user_map[user_id] = (display_name, login or '')
 
-            # 2. Ręczna aktualizacja QListWidget
+            # Ręczna aktualizacja QListWidget dla Użytkownika
             self.uzytkownik_list.blockSignals(True)
             try:
                 search_text = self.uzytkownik_filter.text().lower()
-
-                # Słownik {user_id: item} dla szybkiego dostępu
                 current_items_map = {}
                 for i in range(self.uzytkownik_list.count()):
                     item = self.uzytkownik_list.item(i)
@@ -6511,66 +6945,54 @@ class WorkScheduleWindow(QMainWindow):
                 new_ids_set = set(user_map.keys())
                 current_ids_set = set(current_items_map.keys())
 
-                # Ukryj starych
-                ids_to_hide = current_ids_set - new_ids_set
-                for user_id in ids_to_hide:
+                # Ukryj nieaktualnych
+                for user_id in (current_ids_set - new_ids_set):
                     current_items_map[user_id].setHidden(True)
 
                 # Dodaj nowych
-                ids_to_add = new_ids_set - current_ids_set
-                for user_id in ids_to_add:
+                for user_id in (new_ids_set - current_ids_set):
                     display_name, login = user_map[user_id]
                     item = QListWidgetItem(display_name)
-                    item.setData(Qt.UserRole, user_id)  # Główny ID
-                    item.setData(Qt.UserRole + 1, login)  # Login do wyszukiwania
+                    item.setData(Qt.UserRole, user_id)
+                    item.setData(Qt.UserRole + 1, login)
                     self.uzytkownik_list.addItem(item)
 
-                # Pokaż/zaznacz/filtruj istniejących
+                # Odśwież widoczność i zaznaczenie
                 for user_id in new_ids_set:
                     item = current_items_map.get(user_id)
-                    if not item:  # Nowo dodany item
-                        # Musimy go znaleźć (to wolniejsze, ale zdarzy się tylko raz)
-                        for i in range(self.uzytkownik_list.count()):
-                            if self.uzytkownik_list.item(i).data(Qt.UserRole) == user_id:
-                                item = self.uzytkownik_list.item(i)
-                                current_items_map[user_id] = item
-                                break
+                    if not item:  # Jeśli to był nowy element, musimy go znaleźć w pętli (rzadki przypadek)
+                        # W praktyce został dodany wyżej, więc pominę ponowne szukanie dla optymalizacji
+                        # Dla pewności przy następnym odświeżeniu się złapie.
+                        continue
 
-                    if not item: continue  # Zabezpieczenie
-
-                    item.setHidden(False)  # Pokaż
+                    item.setHidden(False)
 
                     if user_id in selected_uzytkownik_ids:
-                        item.setSelected(True)  # Zaznacz
+                        item.setSelected(True)
 
                     # Zastosuj filtr wyszukiwania
                     item_text_lower = item.text().lower()
                     item_id_str = str(user_id)
                     item_login_str = str(item.data(Qt.UserRole + 1) or '').lower()
+
                     if not self._matches_user_search(item_text_lower, item_id_str, item_login_str, search_text):
                         item.setHidden(True)
             finally:
                 self.uzytkownik_list.blockSignals(False)
-            # --- KONIEC NOWEJ LOGIKI DLA UŻYTKOWNIKA ---
 
-            # --- Populacja filtrów niestandardowych (ZMODYFIKOWANA) ---
+            # --- 4. Populacja filtrów niestandardowych (Custom Columns) ---
+            # (Bez zmian, ponieważ opierają się na col_id z konfiguracji)
             debug_print("[Filtracja] Rozpoczynam populację filtrów niestandardowych...")
-
-            # Pobierz aktualny rok i miesiąc
             current_data = self.date_combo.currentData()
             curr_year, curr_month = current_data if current_data else (self.year, self.month)
             suffix = f"|{curr_year}|{curr_month}"
 
             for col_id, col_data in self.custom_columns.items():
                 container_widget = self.filter_widget_map.get(col_id)
-                if not container_widget:
-                    continue
+                if not container_widget: continue
                 combo = container_widget.findChild(CustomMultiComboBox)
-                if not combo:
-                    log_error(f"[Filtracja] Nie znaleziono CustomMultiComboBox dla {col_id}")
-                    continue
+                if not combo: continue
 
-                # Filtrujemy wartości tylko dla bieżącego miesiąca/roku
                 unique_values = set()
                 for storage_key, val in col_data.get('values', {}).items():
                     if val and storage_key.endswith(suffix):
@@ -6580,9 +7002,7 @@ class WorkScheduleWindow(QMainWindow):
                 combo.add_items(sorted(list(unique_values)))
                 combo.select_items(selected_items)
 
-            debug_print("[Filtracja] Zakończono populację filtrów niestandardowych.")
-
-            debug_print("Zakończono pełną aktualizację wszystkich filtrów.")
+            debug_print("[Filtracja] Zakończono pełną aktualizację wszystkich filtrów.")
 
         except Exception as e:
             log_error(f"Błąd podczas aktualizacji filtrów: {e}", exception=e)
@@ -6913,85 +7333,42 @@ class WorkScheduleWindow(QMainWindow):
             self.events_table.viewport().update()
 
     def _convert_dp_event_to_local(self, dp_event):
-        """Konwertuje format zdarzenia z DataProvider na lokalny format UI."""
+        """Konwertuje format zdarzenia z DataProvider na format modelu UI."""
         try:
-            date_key = dp_event.get('date_key', dp_event.get('date', ''))
+            # Używamy 'evt_date' (z bazy) lub 'date' (jeśli stare)
+            raw_date = dp_event.get('evt_date') or dp_event.get('date')
+            date_key = self.data_provider._standardize_date(raw_date)
+
             display_date = ".".join(reversed(date_key.split("-"))) if date_key and '-' in date_key else date_key
 
-            # Użyj klucza 'UzytkownikDane' jeśli jest dostępny, w przeciwnym razie 'user_name'
-            user_name = dp_event.get('UzytkownikDane') or dp_event.get('user_name', f"ID: {dp_event.get('user_id')}")
-
+            # Zapewniamy spójność kluczy dla EventsTableModel
             local_event = {
-                'type': dp_event.get('type', ''),
-                'topic': dp_event.get('topic', ''),
-                'name': dp_event.get('name', ''),
-                'user_id': dp_event.get('user_id'),
-                'user_name': user_name,
-                'date': display_date,
+                'evt_type': dp_event.get('evt_type') or dp_event.get('type', ''),
+                'evt_id': dp_event.get('evt_id') or dp_event.get('id'),
+                'evt_topic': dp_event.get('evt_topic') or dp_event.get('topic', ''),
+                'evt_name': dp_event.get('evt_name') or dp_event.get('name', ''),
+                'evt_user_id': dp_event.get('evt_user_id') or dp_event.get('user_id'),
+                'evt_user_display': dp_event.get('evt_user_display') or dp_event.get('UzytkownikDane') or dp_event.get(
+                    'user_name', ''),
+
+                'evt_time_from': dp_event.get('evt_time_from') or dp_event.get('time_from', ''),
+                'evt_time_to': dp_event.get('evt_time_to') or dp_event.get('time_to', ''),
+                'evt_status': dp_event.get('evt_status') or dp_event.get('status', ''),
+                'evt_modified_date': dp_event.get('evt_modified_date') or dp_event.get('DataModyfikacji', ''),
+
+                # Klucze pomocnicze (używane w logice main.py, np. delete_event)
+                'id': dp_event.get('evt_id') or dp_event.get('id'),
+                'user_id': dp_event.get('evt_user_id') or dp_event.get('user_id'),
+                'type': dp_event.get('evt_type') or dp_event.get('type'),
                 'date_key': date_key,
-                'time_from': dp_event.get('time_from', ''),
-                'time_to': dp_event.get('time_to', ''),
-                'status': dp_event.get('status', ''),
-                'DataModyfikacji': dp_event.get('DataModyfikacji', ''),
-                'id': dp_event.get('id')
+                'date': display_date
             }
             return local_event
         except Exception as e:
             log_error(f"Błąd konwersji zdarzenia: {e}")
             return dp_event
 
-    # def temporarily_disable_filters(self):
-    #     """Tymczasowo wyłącza filtry zdarzeń aby zapewnić wyświetlenie wszystkich danych"""
-    #     # Zapamiętaj obecny stan filtrów
-    #     self._saved_filters = {
-    #         'meetings': self.meetings_checkbox.isChecked() if hasattr(self, 'meetings_checkbox') else True,
-    #         'trainings': self.trainings_checkbox.isChecked() if hasattr(self, 'trainings_checkbox') else True,
-    #         'overtime': self.overtime_checkbox.isChecked() if hasattr(self, 'overtime_checkbox') else True,
-    #         'topic': self.topic_filter.text() if hasattr(self, 'topic_filter') else "",
-    #         'name': self.name_filter.text() if hasattr(self, 'name_filter') else "",
-    #         'date_from': self.date_from.date() if hasattr(self, 'date_from') else None,
-    #         'date_to': self.date_to.date() if hasattr(self, 'date_to') else None
-    #     }
-    #
-    #     # Ustaw wszystkie filtry na wartości, które pokazują wszystkie dane
-    #     if hasattr(self, 'meetings_checkbox'):
-    #         self.meetings_checkbox.setChecked(True)
-    #     if hasattr(self, 'trainings_checkbox'):
-    #         self.trainings_checkbox.setChecked(True)
-    #     if hasattr(self, 'overtime_checkbox'):
-    #         self.overtime_checkbox.setChecked(True)
-    #     if hasattr(self, 'topic_filter'):
-    #         self.topic_filter.setText("")
-    #     if hasattr(self, 'name_filter'):
-    #         self.name_filter.setText("")
-    #
-    #     # Daty zostawiamy bez zmian, filtrowanie będzie nadpisane przez model
-    #
-    #     debug_print("Tymczasowo wyłączono filtry zdarzeń")
 
-    # def restore_filters(self):
-    #     """Przywraca filtry zdarzeń do ich poprzedniego stanu"""
-    #     if not hasattr(self, '_saved_filters'):
-    #         return
-    #
-    #     # Przywróć filtry do ich poprzedniego stanu
-    #     if hasattr(self, 'meetings_checkbox') and 'meetings' in self._saved_filters:
-    #         self.meetings_checkbox.setChecked(self._saved_filters['meetings'])
-    #     if hasattr(self, 'trainings_checkbox') and 'trainings' in self._saved_filters:
-    #         self.trainings_checkbox.setChecked(self._saved_filters['trainings'])
-    #     if hasattr(self, 'overtime_checkbox') and 'overtime' in self._saved_filters:
-    #         self.overtime_checkbox.setChecked(self._saved_filters['overtime'])
-    #     if hasattr(self, 'topic_filter') and 'topic' in self._saved_filters:
-    #         self.topic_filter.setText(self._saved_filters['topic'])
-    #     if hasattr(self, 'name_filter') and 'name' in self._saved_filters:
-    #         self.name_filter.setText(self._saved_filters['name'])
-    #
-    #     # Nie przywracamy dat, aby zapewnić spójność z zaznaczonymi komórkami
-    #
-    #     debug_print("Przywrócono filtry zdarzeń")
-    #
-    #     # Wymuś odświeżenie z nowymi filtrami
-    #     self.filter_events_table()
 
     def send_email_to_selection(self):
         """Zbiera dane zaznaczonych pracowników i otwiera okno nowej wiadomości w Outlook."""
@@ -8138,7 +8515,7 @@ class WorkScheduleWindow(QMainWindow):
 
     def _apply_special_symbol_to_selection(self, special_symbol: str):
         """
-        Aplikuje symbol specjalny do zaznaczonych komórek, używając mechanizmu masowej aktualizacji.
+        Aplikuje symbol specjalny do zaznaczonych komórek z uwzględnieniem nowej logiki Lidera.
         """
         selected_cells_data = self.table.get_data_for_selected_cells()
         if not selected_cells_data:
@@ -8148,127 +8525,93 @@ class WorkScheduleWindow(QMainWindow):
         if not self._can_modify_cells(selected_cells_data):
             return
 
-        # --- NOWA ZMIANA: Sprawdzenie, czy zmieniamy urlop na inny symbol ---
-        contains_vacation_symbol_change = any(
-            (parse_symbol(cell.get('symbol', '')).get('special_symbol') or '').upper() in ['U', 'UZ']
-            and special_symbol.upper() not in ['U', 'UZ']
-            for cell in selected_cells_data
-        )
+        special_symbol_upper = special_symbol.upper()
+        user_role = self.current_user_app_role
 
-        view_state = self._save_view_state()
+        # Flaga do wyświetlenia komunikatu o planach urlopowych
+        show_vacation_plan_warning = False
 
-        processed_cells_to_modify = []
+        # --- FILTROWANIE KOMÓREK WG NOWEJ LOGIKI ---
+        cells_to_process = []
+        skipped_restricted_symbol = []  # Lista osób pominiętych przy wstawianiu U/OS
+
         for cell_data in selected_cells_data:
-            parsed_symbol = parse_symbol(cell_data.get('symbol', ''))
-            is_empty_cell = parsed_symbol.get('work_hours') is None
+            permissions = self._get_permission_for_cell(cell_data)
+            if not permissions['can_edit_symbol']:
+                continue
 
-            if is_empty_cell:
-                if self.current_user_app_role in ['Lider', 'Pracownik WPR']:
-                    continue
-                elif self.current_user_app_role == 'Lider OUT':
-                    try:
-                        work_hours = int(float(cell_data.get('etat')))
-                    except (ValueError, TypeError):
-                        work_hours = 8
+            target_role = cell_data.get('rola_nazwa', '')
+            current_symbol_str = cell_data.get('symbol', '')
+            parsed_current = parse_symbol(current_symbol_str)
+            current_special = (parsed_current.get('special_symbol') or '').upper()
 
-                    default_shift_symbol = build_symbol(
-                        location=cell_data.get('lokalizacja_domyslna'),
-                        start_hour=9,
-                        work_hours=work_hours,
-                        special_symbol=None
-                    )
-                    modified_cell = cell_data.copy()
-                    modified_cell['symbol'] = default_shift_symbol
-                    processed_cells_to_modify.append(modified_cell)
-                else:
-                    processed_cells_to_modify.append(cell_data)
-            else:
-                processed_cells_to_modify.append(cell_data)
+            # --- LOGIKA DLA LIDERA: BLOKADA WSTAWIANIA 'U' i 'OS' ---
+            if user_role == 'Lider':
+                # Zasada: Lider może wstawić "U" lub "OS" TYLKO osobie w roli Lider.
+                if special_symbol_upper in ['U', 'OS']:
+                    # Jeśli cel to nie Lider -> BLOKUJEMY WSTAWIENIE
+                    if target_role != 'Lider':
+                        skipped_restricted_symbol.append(cell_data.get('uzytkownik_dane', 'Nieznany'))
+                        continue
 
-        if not processed_cells_to_modify:
-            QMessageBox.information(self, "Informacja",
-                                    "Brak prawidłowych komórek do modyfikacji dla Twojej roli i zaznaczenia.")
+            # --- LOGIKA OSTRZEŻENIA PRZY ZMIANIE 'U' NA COŚ INNEGO ---
+            # Lider zmienia symbol specjalny na inny (z wyłączeniem OS, co jest obsłużone wyżej jako wstawienie OS)
+            if current_special in ['U', 'UZ'] and special_symbol_upper not in ['U', 'UZ'] and special_symbol_upper:
+                # Jeśli zmieniamy istniejący urlop na coś innego -> ustalamy flagę ostrzeżenia
+                show_vacation_plan_warning = True
+
+            cells_to_process.append(cell_data)
+
+        # Wyświetl komunikat o pominięciu (Próba wstawienia U/OS zwykłemu pracownikowi)
+        if skipped_restricted_symbol:
+            QMessageBox.warning(self, "Ograniczenia uprawnień",
+                                f"Symbol '{special_symbol_upper}' może być wstawiony przez Lidera TYLKO innemu Liderowi.<br>"
+                                f"Pominięto zmiany dla:<br>- {', '.join(set(skipped_restricted_symbol))}")
+
+        if not cells_to_process:
             return
 
-        cells_to_modify_final = []
-        skipped_for_dtn = []
-        if self.current_user_app_role in ['Lider', 'Lider OUT']:
-            for cell in processed_cells_to_modify:
-                target_dept = cell.get('wydzial', '').strip().lower()
-                if target_dept == 'dtn' and special_symbol.upper() != 'CO':
-                    skipped_for_dtn.append(cell.get('uzytkownik_dane', 'Nieznany'))
-                else:
-                    cells_to_modify_final.append(cell)
-        else:
-            cells_to_modify_final = processed_cells_to_modify
-
-        if skipped_for_dtn:
-            QMessageBox.warning(self, "Operacja zablokowana",
-                                f"Dla wydziału DTN dozwolony jest tylko symbol 'CO'.<br>"
-                                f"Pominięto zmiany dla: {', '.join(set(skipped_for_dtn))}")
-
-        if not cells_to_modify_final:
-            return
 
         events_to_cancel = []
-        if special_symbol.upper() in app_settings.get_absence_symbols():
-            user_date_pairs = {(c.get('uzytkownik_id'), c.get('date_str')) for c in cells_to_modify_final}
+        if special_symbol_upper in app_settings.get_absence_symbols():
+            user_date_pairs = {(c.get('uzytkownik_id'), c.get('date_str')) for c in cells_to_process}
             events_to_cancel = self._find_events_to_cancel(user_date_pairs)
 
         reply = QMessageBox.Yes
         if self._should_ask_for_confirmation():
-            grouped_changes = self._group_cells_for_symbol_changes(cells_to_modify_final)
+            grouped_changes = self._group_cells_for_symbol_changes(cells_to_process)
             changes_info = self._prepare_symbol_changes_description(grouped_changes, special_symbol)
             complete_info = f"Czy na pewno chcesz wprowadzić następujące zmiany?{changes_info}"
+
+            # Dodajemy ostrzeżenie o planach urlopowych do dialogu potwierdzenia
+            if show_vacation_plan_warning:
+                complete_info += "<br><br><b><font color='orange'>UWAGA:</font> Zmieniasz 'U' na inny symbol. Pamiętaj o usunięciu urlopu z planów urlopowych!</b>"
+
             if events_to_cancel:
                 grouped_events = self._group_events_by_user_date(events_to_cancel)
                 delegations_info = self._prepare_delegations_description(grouped_events)
                 complete_info += f"<br>{delegations_info}"
+
             reply = show_confirmation_dialog(self, "Potwierdzenie wstawienia symbolu", complete_info)
 
         if reply != QMessageBox.Yes:
-            self.statusBar().showMessage("Operacja anulowana przez użytkownika.", 3000)
             return
 
         if events_to_cancel:
             self.cancel_delegations(ask_for_confirmation=False)
 
         change_requests = []
-        skipped_employees = []
-
-        for cell_data in cells_to_modify_final:
-            if self.current_user_app_role == 'Lider' and special_symbol.upper() == 'U':
-                target_role = cell_data.get('rola_nazwa', '')
-                target_dept = cell_data.get('wydzial', '')
-                if not (target_role == 'Lider' and target_dept == self.current_user_app_department):
-                    skipped_employees.append(
-                        f"{cell_data.get('uzytkownik_dane', 'Nieznany')} (nie jest Liderem w tym samym wydziale)")
-                    continue
-
-            permissions = self._get_permission_for_cell(cell_data)
-            if not permissions['can_edit_symbol']:
-                skipped_employees.append(cell_data.get('uzytkownik_dane', 'Nieznany'))
-                continue
-
+        for cell_data in cells_to_process:
+            # Tutaj predict_new_symbol zachowuje godziny jeśli to symbol pracy
             new_symbol = self._predict_new_symbol(cell_data.get('symbol', ''), special_symbol, cell_data)
-            try:
-                user_id, date_str, nr_kadrowy = cell_data.get('uzytkownik_id'), cell_data.get(
-                    'date_str'), cell_data.get('nr_kadrowy')
-                year, month, _ = date_str.split('-')
-
-                change_requests.append((ChangeType.APPLY_SPECIAL_SYMBOL, cell_data, special_symbol))
-            except Exception as e:
-                log_error(f"Błąd krytyczny podczas przygotowywania żądania w _apply_special_symbol_to_selection: {e}",
-                          exception=e)
-
-        if skipped_employees:
-            QMessageBox.information(self, "Pominięto",
-                                    f"Pominięto zmiany dla następujących osób z powodu braku uprawnień:<br>"
-                                    f"- {', '.join(set(skipped_employees))}")
+            change_requests.append((ChangeType.APPLY_SPECIAL_SYMBOL, cell_data, special_symbol))
 
         if change_requests:
-            # Użyj partial, aby przekazać dodatkowy argument do callbacka po zakończeniu BatchUpdater
             self.schedule_change_processor.start_changes(change_requests)
+            # Jeśli po operacji trzeba wyświetlić dodatkowe info (np. o planach, jeśli nie było w confirmie)
+            if show_vacation_plan_warning and not self._should_ask_for_confirmation():
+                QMessageBox.information(self, "Przypomnienie",
+                                        "Zmieniono symbol urlopu. Pamiętaj o usunięciu go z planów urlopowych.")
 
     def _matches_user_search(self, item_text, item_id, item_login, search_text):
         """
@@ -8336,13 +8679,23 @@ class WorkScheduleWindow(QMainWindow):
 
     def apply_theme_settings(self, theme, font_family, font_size):
         """Stosuje wybrane ustawienia motywu z wykorzystaniem centralnych stylów"""
+
+        # --- NOWOŚĆ: Obsługa profili (jeśli argumenty są puste) ---
+        # Zabezpiecza to sytuację startu aplikacji lub przeładowania ustawień
+        if not font_family or not font_size:
+            profiles = self.user_app_settings.get('layout_profiles', {})
+            active = self.user_app_settings.get('active_profile', 'Podstawowy')
+            prof = profiles.get(active, {})
+            font_family = prof.get('font_family', 'Segoe UI')
+            font_size = prof.get('font_size', 9)
+
         # Zapamiętaj wybrane ustawienia
         self.is_dark_theme = (theme == "dark")
         self.current_font = font_family
-        self.current_font_size = font_size
+        self.current_font_size = int(font_size)  # Upewniamy się, że to int
 
         # Zastosuj czcionkę do całej aplikacji
-        font = QFont(font_family, font_size)
+        font = QFont(font_family, self.current_font_size)
         QApplication.setFont(font)
 
         # Dodano styl dla QCalendarWidget
@@ -8350,7 +8703,7 @@ class WorkScheduleWindow(QMainWindow):
         self.setStyleSheet(AppStyles.get_main_window_style(theme) + calendar_style)
 
         # Definicje stylów
-        button_style = AppStyles.get_button_style(theme, font_family, font_size)
+        button_style = AppStyles.get_button_style(theme, font_family, self.current_font_size)
         combo_style = AppStyles.get_combobox_style(theme)
         line_edit_style = AppStyles.get_line_edit_style(theme)
         list_style = AppStyles.get_list_style(theme)
@@ -8380,6 +8733,10 @@ class WorkScheduleWindow(QMainWindow):
         if hasattr(self, 'edit_filter_button'):
             icon_buttons.append(self.edit_filter_button)
 
+        # --- NOWOŚĆ: Dodanie przycisku powiadomień do stylowania ---
+        if hasattr(self, 'notification_btn'):
+            icon_buttons.append(self.notification_btn)
+
         for button in icon_buttons:
             if button:
                 button.setStyleSheet(icon_button_style)
@@ -8393,14 +8750,15 @@ class WorkScheduleWindow(QMainWindow):
         for button in self.findChildren(QPushButton, "FilterClearButton"):
             button.setIcon(new_icon)
 
-        # Pola wyboru (ComboBox)
+        # Pola wyboru (ComboBox) - w tym nowe filtry (grafik za pkt, brak nocki)
         combos_to_style = [
             getattr(self, name, None) for name in [
                 'date_combo', 'grupa_main_filter_combo', 'wydzial_combo',
                 'default_location_combo', 'system_czasu_pracy_combo',
                 'rola_combo', 'jezyk_combo', 'etat_combo', 'dtn_combo',
                 'rka_combo', 'podrola_combo', 'presence_location_combo',
-                'presence_hour_combo', 'status_filter_combo', 'saved_filters_combo'
+                'presence_hour_combo', 'status_filter_combo', 'saved_filters_combo',
+                'grafik_za_punkty_combo', 'brak_nocki_combo'  # <-- Nowe filtry
             ]
         ]
         for combo in combos_to_style:
@@ -8437,31 +8795,23 @@ class WorkScheduleWindow(QMainWindow):
             if hasattr(self.table, 'schedule_view'): self.table.schedule_view.setStyleSheet(table_style)
         if hasattr(self, 'events_table'): self.events_table.setStyleSheet(table_style)
 
-        # --- POCZĄTEK ZMIANY: Aktualizacja otwartych okien ---
-
-        # Aktualizacja okna "Obsada"
+        # Aktualizacja otwartych okien pomocniczych
         if self.staffing_details_win and not self.staffing_details_win.isHidden():
             self.staffing_details_win.set_current_theme(self.is_dark_theme)
 
-        # Aktualizacja okna "Zarządzaj grafikiem"
         if self.schedule_control_win and not self.schedule_control_win.isHidden():
             try:
                 self.schedule_control_win.set_current_theme(self.is_dark_theme)
-                debug_print("Odświeżono motyw dla okna 'Zarządzaj grafikiem'.")
-
-                # --- POCZĄTEK NOWEJ LOGIKI ---
-                # Jeśli okno błędów jest otwarte i należy do okna "Zarządzaj",
-                # jemu też zaktualizuj motyw.
                 if hasattr(self.schedule_control_win, 'error_dialog') and self.schedule_control_win.error_dialog:
                     self.schedule_control_win.error_dialog.set_current_theme(self.is_dark_theme)
-                    debug_print("Odświeżono motyw dla okna 'Błędy importu'.")
-                # --- KONIEC NOWEJ LOGIKI ---
+            except RuntimeError:
+                self.schedule_control_win = None
 
-            except RuntimeError as e:
-                log_error(f"Błąd przy odświeżaniu motywu okna 'Zarządzaj': {e}")
-                self.schedule_control_win = None  # Wyczyść referencję, jeśli okno nie istnieje
-        # --- KONIEC ZMIANY ---
+        # --- NOWOŚĆ: Aktualizacja motywu Centrum Powiadomień (jeśli istnieje) ---
+        if hasattr(self, 'notification_drawer') and self.notification_drawer:
+            self.notification_drawer.set_current_theme(self.is_dark_theme)
 
+        # Na koniec aplikujemy dynamiczne rozmiary (z profilu)
         if hasattr(self, 'table'):
             self._apply_dynamic_sizes()
 
@@ -8511,7 +8861,7 @@ class WorkScheduleWindow(QMainWindow):
         # `selectedIndexes()` dla prawej tabeli będzie puste, jeśli użytkownik nie kliknął w nią bezpośrednio.
         if selection_model_employees.hasSelection() and not selection_model_schedule.selectedIndexes():
             debug_print("Wykryto zaznaczenie tylko w tabeli pracowników. Kopiowanie tylko danych pracowników.")
-            
+
             selected_indexes = selection_model_employees.selectedIndexes()
             if not selected_indexes:
                 return
@@ -8543,13 +8893,14 @@ class WorkScheduleWindow(QMainWindow):
 
         # Krok 1: Zbierz unikalne, posortowane indeksy wierszy i kolumn
         selected_rows = sorted(list(set(index.row() for index in selection_model_employees.selectedIndexes())))
-        selected_schedule_cols = sorted(list(set(index.column() for index in selection_model_schedule.selectedIndexes())))
+        selected_schedule_cols = sorted(
+            list(set(index.column() for index in selection_model_schedule.selectedIndexes())))
 
         if not selected_rows or not selected_schedule_cols:
             return
 
         clipboard_string = ""
-        
+
         # Przygotuj nagłówki
         employee_headers = []
         visible_employee_cols_ids = self.schedule_model.get_visible_columns()
@@ -8611,11 +8962,11 @@ class WorkScheduleWindow(QMainWindow):
 
         # --- Sekcja kolorowania wierszy ---
         color_menu = context_menu.addMenu("Pokoloruj wiersz")
-        
+
         # --- NOWA, ROZSZERZONA PALETA KOLORÓW ---
         # Kluczem jest nazwa, wartością jest bazowy kolor HEX. Model sam dobierze
         # odpowiedni odcień dla jasnego i ciemnego motywu.
-        colors = { # Nazwa koloru : bazowy HEX
+        colors = {  # Nazwa koloru : bazowy HEX
             "Czerwony": "#e57373",
             "Różowy": "#f06292",
             "Fioletowy": "#ba68c8",
@@ -8645,7 +8996,7 @@ class WorkScheduleWindow(QMainWindow):
 
             for col_id, col_data in self.custom_columns.items():
                 col_menu = custom_cols_main_menu.addMenu(col_data['name'])
-                
+
                 set_value_action = col_menu.addAction("Ustaw wartość...")
                 set_value_action.triggered.connect(functools.partial(self.set_custom_column_value, col_id))
 
@@ -8653,11 +9004,11 @@ class WorkScheduleWindow(QMainWindow):
                 clear_value_action.triggered.connect(functools.partial(self.set_custom_column_value, col_id, None))
 
                 col_menu.addSeparator()
-                
+
                 # Dodaj szybkie akcje dla najczęstszych wartości
                 unique_values = set(col_data['values'].values())
                 if unique_values:
-                    for value in sorted(list(unique_values))[:5]: # Pokaż do 5 najczęstszych
+                    for value in sorted(list(unique_values))[:5]:  # Pokaż do 5 najczęstszych
                         quick_action = col_menu.addAction(f"Ustaw na: '{value}'")
                         quick_action.triggered.connect(functools.partial(self.set_custom_column_value, col_id, value))
 
@@ -8794,8 +9145,6 @@ class WorkScheduleWindow(QMainWindow):
         QApplication.clipboard().setText(clipboard_string)
         self.statusBar().showMessage(f"Skopiowano dane z {len(selected_indexes)} komórek.", 3000)
 
-
-
     def _synchronize_custom_filter_widgets(self):
         """
         Tworzy widgety filtrów dla nowych kolumn niestandardowych i usuwa widgety
@@ -8902,6 +9251,12 @@ class WorkScheduleWindow(QMainWindow):
         """Wyświetla wiadomość od administratora."""
         if message:
             QMessageBox.information(self, "Wiadomość od Administratora", message)
+
+    def resizeEvent(self, event):
+        """Aktualizuje pozycję panelu powiadomień przy zmianie rozmiaru okna."""
+        if hasattr(self, 'notification_drawer') and self.notification_drawer:
+            self.notification_drawer.update_geometry()
+        super().resizeEvent(event)
 
     def closeEvent(self, event):
         """Obsługuje zamknięcie aplikacji i zapisuje ustawienia."""
