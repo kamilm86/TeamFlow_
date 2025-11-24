@@ -1,3 +1,4 @@
+# column_definitions.py
 from dataclasses import dataclass
 from typing import Dict, List, Any, Optional
 from enum import Enum
@@ -18,155 +19,166 @@ class DataType(Enum):
 
 @dataclass
 class ColumnDefinition:
-    id: str
-    name: str
+    id: str           # Unikalne ID w Pythonie (np. 'sched_user_id')
+    name: str         # Nazwa kolumny w SQL (np. 'Uzytkownik')
     data_type: DataType
     default_value: Any
-    description: str
+    description: str  # Opis dla użytkownika (tooltip/nagłówek)
     width: Optional[int] = 100
     required: bool = False
     selectable_in_ui: bool = True
 
 
 class ColumnDefinitions:
-    # Słownik definicji kolumn ODCZYTYWANYCH Z `fn_GetScheduleData`
-    SCHEDULE_COLUMNS = {
-        'wydzial': ColumnDefinition(
-            id='wydzial', name='WydzialGrafik', data_type=DataType.STRING,
-            default_value='', description='WydzialGrafik', width=150, required=True, selectable_in_ui=True
-        ),
-        'przelozony': ColumnDefinition(
-            id='przelozony', name='PrzelozonyDane', data_type=DataType.STRING,
-            default_value='', description='PrzelozonyDane', width=150, selectable_in_ui=True
-        ),
-        'przelozony_nazwisko_imie': ColumnDefinition(
-            id='przelozony_nazwisko_imie', name='PrzelozonyNazwiskoImie', data_type=DataType.STRING,
-            default_value='', description='PrzelozonyNazwiskoImie', width=100, selectable_in_ui=True
-        ),
-        'nazwisko_imie': ColumnDefinition(
-            id='nazwisko_imie', name='NazwiskoImie', data_type=DataType.STRING,
-            default_value='', description='NazwiskoImie', width=150, required=True, selectable_in_ui=True
-        ),
-        'uzytkownik_dane': ColumnDefinition(
-            id='uzytkownik_dane', name='UzytkownikDane', data_type=DataType.STRING,
-            default_value='', description='UzytkownikDane', width=150, required=True, selectable_in_ui=True
-        ),
-        'uzytkownik_id': ColumnDefinition(
-            id='uzytkownik_id', name='Uzytkownik', data_type=DataType.INTEGER,
-            default_value=0, description='Uzytkownik', width=80, required=True, selectable_in_ui=True
-        ),
-        'login_windows': ColumnDefinition(
-            id='login_windows', name='LoginWindows', data_type=DataType.STRING,
-            default_value='', description='LoginWindows', width=100,
-            selectable_in_ui=True,  required=False
-        ),
-        'nr_kadrowy': ColumnDefinition(
-            id='nr_kadrowy', name='NumerKadrowy', data_type=DataType.STRING,
-            default_value='', description='NumerKadrowy', width=100, selectable_in_ui=True
-        ),
-        'rola_nazwa': ColumnDefinition(
-            id='rola_nazwa', name='RolaNazwa', data_type=DataType.STRING,
-            default_value='', description='RolaNazwa', width=120, selectable_in_ui=True
-        ),
-        'pod_rola_nazwa': ColumnDefinition(
-            id='pod_rola_nazwa', name='PodRolaNazwa', data_type=DataType.STRING,
-            default_value='', description='PodRolaNazwa', width=120, selectable_in_ui=True
-        ),
-        'etat': ColumnDefinition(
-            id='etat', name='Etat', data_type=DataType.FLOAT,
-            default_value=8, description='Etat', width=60, selectable_in_ui=True
-        ),
-        'jezyk': ColumnDefinition(
-            id='jezyk', name='Jezyk', data_type=DataType.STRING,
-            default_value='', description='Jezyk', width=60, selectable_in_ui=True
-        ),
-        'korekta': ColumnDefinition(
-            id='korekta', name='Korekta', data_type=DataType.FLOAT,
-            default_value=0, description='Korekta', width=60, selectable_in_ui=True
-        ),
-        'dtn': ColumnDefinition(
-            id='dtn', name='DTN', data_type=DataType.INTEGER,
-            default_value=0, description='DTN', width=50, selectable_in_ui=True
-        ),
-        'email': ColumnDefinition(
-            id='email', name='Email', data_type=DataType.STRING,
-            default_value='', description='Email', selectable_in_ui=False, required=False
-        ),
-        'lokalizacja_domyslna': ColumnDefinition(
-            id='lokalizacja_domyslna', name='LokalizacjaDomyslna', data_type=DataType.STRING,
-            default_value='', description='LokalizacjaDomyslna', width=100, selectable_in_ui=True
-        ),
-        'system_czasu_pracy': ColumnDefinition(
-            id='system_czasu_pracy', name='System Pracy', data_type=DataType.STRING,
-            default_value='', description='System Pracy', width=120, selectable_in_ui=True
-        ),
-        'rka': ColumnDefinition(
-            id='rka', name='Rka', data_type=DataType.STRING,  # Załóżmy, że kolumna w bazie to 'Rka'
-            default_value='', description='NumerRekrutacji', width=50,  # Dostosuj szerokość
-            required=False, selectable_in_ui=True  # Czy ma być wybieralna w tabeli?
-        )
-        # ,
-        # 'data_modyfikacji': ColumnDefinition(
-        #     id='data_modyfikacji', name='DataModyfikacji', data_type=DataType.STRING,
-        #     default_value=None, description='DataModyfikacji', width=None
-        # )
+    """
+    Centralna definicja kolumn.
+    Atrybut 'name' MUSI pasować idealnie (wielkość liter, polskie znaki) do nazw z bazy SQL.
+    """
 
+    # --- KOLUMNY GRAFIKU (Prefix: sched_) ---
+    SCHEDULE_COLUMNS = {
+        'sched_wydzial': ColumnDefinition(
+            id='sched_wydzial', name='WydzialGrafik', data_type=DataType.STRING,
+            default_value='', description='Wydział', width=150, required=True
+        ),
+        'sched_przelozony': ColumnDefinition(
+            id='sched_przelozony', name='PrzelozonyDane', data_type=DataType.STRING,
+            default_value='', description='Przełożony (Dane)', width=150
+        ),
+        'sched_przelozony_nazwisko': ColumnDefinition(
+            id='sched_przelozony_nazwisko', name='PrzelozonyNazwiskoImie', data_type=DataType.STRING,
+            default_value='', description='Przełożony', width=100
+        ),
+        'sched_user_name': ColumnDefinition(
+            id='sched_user_name', name='NazwiskoImie', data_type=DataType.STRING,
+            default_value='', description='Imię i Nazwisko', width=150, required=True
+        ),
+        'sched_user_display': ColumnDefinition(
+            id='sched_user_display', name='UzytkownikDane', data_type=DataType.STRING,
+            default_value='', description='Pracownik', width=150, required=True
+        ),
+        'sched_user_id': ColumnDefinition(
+            id='sched_user_id', name='Uzytkownik', data_type=DataType.INTEGER,
+            default_value=0, description='ID Pracownika', width=80, required=True
+        ),
+        'sched_login': ColumnDefinition(
+            id='sched_login', name='LoginWindows', data_type=DataType.STRING,
+            default_value='', description='Login', width=100, selectable_in_ui=True
+        ),
+        'sched_nr_kadrowy': ColumnDefinition(
+            id='sched_nr_kadrowy', name='NumerKadrowy', data_type=DataType.STRING,
+            default_value='', description='Nr Kadrowy', width=80
+        ),
+        'sched_rola': ColumnDefinition(
+            id='sched_rola', name='RolaNazwa', data_type=DataType.STRING,
+            default_value='', description='Rola', width=120
+        ),
+        'sched_podrola': ColumnDefinition(
+            id='sched_podrola', name='PodRolaNazwa', data_type=DataType.STRING,
+            default_value='', description='Podrola', width=120
+        ),
+        'sched_etat': ColumnDefinition(
+            id='sched_etat', name='Etat', data_type=DataType.FLOAT,
+            default_value=1.0, description='Etat', width=60
+        ),
+        'sched_jezyk': ColumnDefinition(
+            # POPRAWKA: Zmiana 'Jezyk' na 'Język' (polski znak zgodny z bazą)
+            id='sched_jezyk', name='Język', data_type=DataType.STRING,
+            default_value='', description='Język', width=60
+        ),
+        'sched_korekta': ColumnDefinition(
+            id='sched_korekta', name='Korekta', data_type=DataType.FLOAT,
+            default_value=0, description='Korekta', width=60
+        ),
+        'sched_dtn': ColumnDefinition(
+            id='sched_dtn', name='DTN', data_type=DataType.INTEGER,
+            default_value=0, description='DTN', width=50
+        ),
+        'sched_email': ColumnDefinition(
+            id='sched_email', name='Email', data_type=DataType.STRING,
+            default_value='', description='Email', selectable_in_ui=False
+        ),
+        'sched_lokalizacja': ColumnDefinition(
+            id='sched_lokalizacja', name='LokalizacjaDomyslna', data_type=DataType.STRING,
+            default_value='', description='Lokalizacja Dom.', width=100
+        ),
+        'sched_system_pracy': ColumnDefinition(
+            id='sched_system_pracy', name='SystemCzasuPracy', data_type=DataType.STRING,
+            default_value='', description='System Pracy', width=120
+        ),
+        'sched_grafik_za_punkty': ColumnDefinition(
+            id='sched_grafik_za_punkty', name='GrafikZaPunkty', data_type=DataType.STRING,
+            default_value='', description='Grafik za punkty', width=80
+        ),
+        'sched_brak_nocki': ColumnDefinition(
+            id='sched_brak_nocki', name='BrakNocki', data_type=DataType.STRING,
+            default_value='', description='Brak nocki', width=80
+        ),
+        'sched_rka': ColumnDefinition(
+            id='sched_rka', name='Rka', data_type=DataType.STRING,
+            default_value='', description='RKA', width=50
+        ),
+        'sched_komentarz': ColumnDefinition(
+            id='sched_komentarz', name='KomentarzGrafik', data_type=DataType.STRING,
+            default_value='', description='Komentarz', width=200, selectable_in_ui=False
+        )
     }
 
+    # --- KOLUMNY ZDARZEŃ (Prefix: evt_) ---
+    # Te nazwy pochodzą z funkcji fn_GetEventsData - sprawdź czy tam też nie ma różnic!
     EVENTS_COLUMNS = {
-        'event_type': ColumnDefinition(
-            id='event_type', name='Typ zdarzenia', data_type=DataType.STRING,
+        'evt_type': ColumnDefinition(
+            id='evt_type', name='EventType', data_type=DataType.STRING,
             default_value='', description='Typ zdarzenia', required=True
         ),
-        'event_id': ColumnDefinition(
-            id='event_id', name='ID zdarzenia', data_type=DataType.INTEGER,
+        'evt_id': ColumnDefinition(
+            id='evt_id', name='Id', data_type=DataType.INTEGER,
             default_value=0, description='ID zdarzenia', required=True
         ),
-        'topic': ColumnDefinition(
-            id='topic', name='Temat', data_type=DataType.STRING,
+        'evt_topic': ColumnDefinition(
+            id='evt_topic', name='Temat', data_type=DataType.STRING,
             default_value='', description='Temat'
         ),
-        'name': ColumnDefinition(
-            id='name', name='Nazwa', data_type=DataType.STRING,
+        'evt_name': ColumnDefinition(
+            id='evt_name', name='Nazwa', data_type=DataType.STRING,
             default_value='', description='Nazwa'
         ),
-        'user_id': ColumnDefinition(
-            id='user_id', name='ID użytkownika', data_type=DataType.INTEGER,
-            default_value=0, description='ID użytkownika', required=True
+        'evt_user_id': ColumnDefinition(
+            id='evt_user_id', name='Uzytkownik', data_type=DataType.INTEGER,
+            default_value=0, description='ID Użytkownika', required=True
         ),
-        'user_name': ColumnDefinition(
-            id='user_name', name='UzytkownikDane', data_type=DataType.STRING,
-            default_value='', description='UzytkownikDane', required=True
+        'evt_user_display': ColumnDefinition(
+            id='evt_user_display', name='UzytkownikDane', data_type=DataType.STRING,
+            default_value='', description='Pracownik', required=True
         ),
-        'date': ColumnDefinition(
-            id='date', name='Data zdarzenia', data_type=DataType.STRING,
-            default_value='', description='Data zdarzenia', required=True
+        'evt_date': ColumnDefinition(
+            id='evt_date', name='Data', data_type=DataType.STRING,
+            default_value='', description='Data', required=True
         ),
-        'time_from': ColumnDefinition(
-            id='time_from', name='Czas od', data_type=DataType.STRING,
+        'evt_time_from': ColumnDefinition(
+            id='evt_time_from', name='DataOd', data_type=DataType.STRING,
             default_value='', description='Czas od'
         ),
-        'time_to': ColumnDefinition(
-            id='time_to', name='Czas do', data_type=DataType.STRING,
+        'evt_time_to': ColumnDefinition(
+            id='evt_time_to', name='DataDo', data_type=DataType.STRING,
             default_value='', description='Czas do'
         ),
-        'status': ColumnDefinition(
-            id='status', name='Status zdarzenia', data_type=DataType.STRING,
-            default_value='', description='Status zdarzenia'
+        'evt_status': ColumnDefinition(
+            id='evt_status', name='StatusNazwa', data_type=DataType.STRING,
+            default_value='', description='Status'
         ),
-        'data_modyfikacji': ColumnDefinition(
-            id='data_modyfikacji', name='DataModyfikacji', data_type=DataType.STRING,
-            default_value=None, description='DataModyfikacji', width=None
+        'evt_modified_date': ColumnDefinition(
+            id='evt_modified_date', name='DataModyfikacji', data_type=DataType.STRING,
+            default_value=None, description='Data Modyfikacji'
         )
     }
 
-    DEFAULT_VISIBLE_COLUMNS = ['wydzial', 'przelozony_nazwisko_imie', 'uzytkownik_dane']
+    # Domyślne kolumny widoczne
+    DEFAULT_VISIBLE_COLUMNS = ['sched_wydzial', 'sched_przelozony_nazwisko', 'sched_user_display']
 
     @classmethod
     def get_ui_display_columns(cls):
-        # Ta metoda zwraca teraz tylko kolumny zdefiniowane w SCHEDULE_COLUMNS, co jest poprawne.
-        # Kolumna 'komentarz_grafik' jest zarządzana oddzielnie.
-        return [(col_def.id, col_def.name, col_def.width)
+        return [(col_def.id, col_def.description, col_def.width)
                 for col_def in cls.SCHEDULE_COLUMNS.values()
                 if col_def.width is not None and col_def.selectable_in_ui]
 
