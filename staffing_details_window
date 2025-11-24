@@ -13,7 +13,7 @@ import datetime as dt
 from debug_utils import log_error, debug_print
 from symbol_parser import parse_symbol
 from styles import AppStyles
-
+from app_settings import app_settings
 
 class HourlyStaffingTableModel(QAbstractTableModel):
     """
@@ -68,23 +68,29 @@ class HourlyStaffingTableModel(QAbstractTableModel):
         return self._days_in_month
 
     def data(self, index, role=Qt.DisplayRole):
+        """
+        Zwraca dane dla modelu, w tym logikę kolorowania tła (mapa ciepła).
+        Poprawiono obsługę niskich wartości, aby każda komórka z danymi > 0 miała kolor.
+        """
         if not index.isValid(): return None
         row, col = index.row(), index.column()
 
+        # Obsługa wiersza sumy (bez zmian)
         is_total_row = (row == 24)
         if is_total_row:
             if role == Qt.DisplayRole:
                 total = self._daily_totals[col]
                 return str(int(round(total))) if total != 0 else ""
             if role == Qt.FontRole:
-                font = QFont();
-                font.setBold(True);
+                font = QFont()
+                font.setBold(True)
                 return font
             if role == Qt.BackgroundRole:
                 return QBrush(QColor(225, 225, 235) if not self._is_dark_theme else QColor(55, 55, 65))
             if role == Qt.TextAlignmentRole: return Qt.AlignCenter
             return None
 
+        # Pobranie wartości dla komórki
         value = 0.0
         if row < len(self._data) and col < len(self._data[row]):
             value = self._data[row][col] or 0.0
@@ -93,30 +99,37 @@ class HourlyStaffingTableModel(QAbstractTableModel):
             return str(int(round(value))) if value != 0 else ""
         if role == Qt.TextAlignmentRole: return Qt.AlignCenter
 
-        # --- POCZĄTEK NOWEJ LOGIKI KOLOROWANIA ---
+        # --- POPRAWIONA LOGIKA KOLOROWANIA ---
         if role == Qt.BackgroundRole and value > 0:
+            # Oblicz procent względem maksymalnej wartości w tabeli
             percentage = (value / self._max_value) * 100 if self._max_value > 0 else 0
 
+            # Zastosowano gradient zieleni.
+            # Zmieniono pierwszy warunek, aby zwracał bardzo jasny zielony zamiast None.
             if percentage <= 14:
-                # Do 14% - biały (lub tło motywu)
-                return None  # Brak specjalnego tła
+                # Do 14% - Bardzo jasny zielony (zamiast białego)
+                return QBrush(QColor("#E0FFE0"))
             elif percentage <= 32:
-                return QBrush(QColor("#00FF00"))  # Jasny zielony
+                return QBrush(QColor("#90EE90"))  # Jasny zielony (LightGreen)
             elif percentage <= 57:
-                return QBrush(QColor("#00C000"))  # Ciemniejszy zielony
+                return QBrush(QColor("#32CD32"))  # Średni zielony (LimeGreen)
             elif percentage <= 90:
-                return QBrush(QColor("#008000"))  # Ciemny zielony
+                return QBrush(QColor("#008000"))  # Ciemny zielony (Green)
             else:
                 # Powyżej 90%
-                return QBrush(QColor("#003300"))  # Bardzo ciemny zielony
-        # --- KONIEC NOWEJ LOGIKI KOLOROWANIA ---
+                return QBrush(QColor("#004d00"))  # Bardzo ciemny zielony
+        # --- KONIEC POPRAWIONEJ LOGIKI ---
 
+        # Ustawienie koloru czcionki dla kontrastu
         if role == Qt.ForegroundRole and value > 0:
             bg_brush = self.data(index, Qt.BackgroundRole)
             if bg_brush:
                 bg_color = bg_brush.color()
+                # Wylicz jasność koloru tła (wzór na luminancję)
                 luminance = 0.299 * bg_color.red() + 0.587 * bg_color.green() + 0.114 * bg_color.blue()
+                # Jeśli tło jest ciemne (< 128), czcionka biała, w przeciwnym razie czarna
                 return QBrush(QColor(Qt.GlobalColor.white if luminance < 128 else Qt.GlobalColor.black))
+
         return None
 
     def headerData(self, section, orientation, role):
@@ -1320,11 +1333,10 @@ class StaffingDetailsWindow(QDialog):
         events_map = self._get_events_duration_per_hour(all_events)
         location_map = self._get_daily_location_map(schedule_data)
 
+        # 1. Obliczanie godzin z grafiku (Standardowe zmiany)
         for user_key, user_schedule in schedule_data.items():
-            # ### POCZĄTEK ZMIANY ###
             if user_schedule.get('dtn') == 1:
                 continue
-            # ### KONIEC ZMIANY ###
 
             korekta = float(user_schedule.get('korekta', 0.0) or 0.0)
 
@@ -1345,52 +1357,73 @@ class StaffingDetailsWindow(QDialog):
                     final_hours = base_hours + korekta
                     if final_hours > 0:
                         for h in range(int(final_hours)):
-                            # --- POCZĄTEK POPRAWKI ---
                             total_hour_offset = start + h
                             hour = total_hour_offset % 24
                             day_offset = total_hour_offset // 24
                             current_day_idx = day_idx + day_offset
 
-                            # Sprawdź, czy obliczony dzień jest nadal w bieżącym miesiącu
                             if current_day_idx >= days:
-                                continue  # Pomiń godziny, które wypadają w następnym miesiącu
+                                continue
 
                             schedule_matrix[hour][current_day_idx] += 1.0
 
-                            # Sprawdź zdarzenia dla poprawnego dnia (day + day_offset)
                             if events_map.get(user_key[3], {}).get(day + day_offset, {}).get(hour, 0) > 30:
                                 events_matrix[hour][current_day_idx] += 1.0
-                            # --- KONIEC POPRAWKI ---
 
+        # 2. Obliczanie godzin z nadgodzin (POPRAWIONE PARSOWANIE DATY)
         user_ids_in_view = {k[3] for k in schedule_data.keys()}
         for event in all_events:
             if event.get('type') == 'Nadgodziny' and event.get('user_id') in user_ids_in_view:
                 try:
                     user_id = event.get('user_id')
-                    # ### POCZĄTEK ZMIANY ###
+
                     # Sprawdzenie DTN dla osoby z nadgodzinami
                     user_data = next((data for key, data in schedule_data.items() if key[3] == user_id), None)
                     if user_data and user_data.get('dtn') == 1:
                         continue
-                    # ### KONIEC ZMIANY ###
-                    day = int(event.get('date_key', '0-0-0').split('-')[2])
-                    if location_filter and location_filter != "-Wszystkie-" and location_map.get(
-                            (user_id, day)) != location_filter:
+
+                    # Pobierz czasy jako stringi
+                    time_from_str = event.get('time_from')
+                    time_to_str = event.get('time_to')
+
+                    if not time_from_str or not time_to_str:
                         continue
-                    day_idx = day - 1
-                    t_from = dt.datetime.strptime(event.get('time_from', '00:00'), '%H:%M')
-                    t_to = dt.datetime.strptime(event.get('time_to', '00:00'), '%H:%M')
-                    duration_s = (t_to - t_from).total_seconds()
-                    if duration_s < 0: duration_s += 86400
+
+                    # --- POPRAWKA: Parsowanie pełnej daty i czasu ---
+                    t_from = dt.datetime.strptime(time_from_str, '%Y-%m-%d %H:%M')
+                    t_to = dt.datetime.strptime(time_to_str, '%Y-%m-%d %H:%M')
+
+                    # Sprawdzenie lokalizacji (dla nadgodzin bierzemy dzień rozpoczęcia)
+                    day_start = t_from.day
+                    if location_filter and location_filter != "-Wszystkie-" and location_map.get(
+                            (user_id, day_start)) != location_filter:
+                        continue
+
+                    # Iteracja po czasie trwania nadgodzin
                     current_time = t_from
-                    while duration_s > 1:
-                        hour, minutes_in_slot = current_time.hour, 60 - current_time.minute
-                        seconds_in_slot = min(minutes_in_slot * 60, duration_s)
-                        if 0 <= hour < 24 and 0 <= day_idx < days:
-                            overtime_matrix[hour][day_idx] += seconds_in_slot / 3600.0
-                        duration_s -= seconds_in_slot
-                        current_time += dt.timedelta(seconds=seconds_in_slot)
-                except (ValueError, IndexError):
+                    while current_time < t_to:
+                        # Wyznacz koniec bieżącego "slota" godzinowego (pełna godzina)
+                        next_hour_mark = (current_time + dt.timedelta(hours=1)).replace(minute=0, second=0)
+                        end_of_slot = min(t_to, next_hour_mark)
+
+                        # Oblicz ile sekund nadgodzin przypada na tę godzinę (np. 30 min = 0.5h)
+                        seconds_in_slot = (end_of_slot - current_time).total_seconds()
+
+                        if seconds_in_slot > 0:
+                            c_hour = current_time.hour
+                            c_day = current_time.day
+                            c_month = current_time.month
+
+                            # Dodaj tylko jeśli mieści się w analizowanym miesiącu
+                            if c_month == self._month:
+                                day_idx = c_day - 1
+                                if 0 <= day_idx < days:
+                                    overtime_matrix[c_hour][day_idx] += seconds_in_slot / 3600.0
+
+                        current_time = end_of_slot
+
+                except (ValueError, IndexError, TypeError) as e:
+                    log_error(f"Błąd przetwarzania nadgodzin w obsadzie godzinowej: {e}")
                     continue
 
         if option == "schedule_only": return schedule_matrix
@@ -1579,28 +1612,29 @@ class StaffingDetailsWindow(QDialog):
 
     def _calculate_actual_staffing_matrix(self) -> dict:
         """
-        Oblicza macierz obsady rzeczywistej, uwzględniając pole 'korekta'
-        i ignorując godziny ze symbolami specjalnymi.
+        Oblicza macierz obsady rzeczywistej z zabezpieczeniem przed błędami typów danych.
         """
         schedule_data = self.parent_widget.filter_processed_data()
         all_events = self.data_provider.get_events_data(self._year, self._month, self.parent_widget.import_grupa,
                                                         self.parent_widget.import_funkcja)
         events_map = self._get_events_duration_per_hour(all_events)
         days_in_month = self._days_in_month
+
         granular_staffing = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
 
+        # 1. Zliczanie osób (bez zmian)
         for user_key, user_data in schedule_data.items():
-            # ### POCZĄTEK ZMIANY ###
             if user_data.get('dtn') == 1:
                 continue
-            # ### KONIEC ZMIANY ###
 
             user_id = user_key[3]
             user_info = {
-                'WydzialGrafik': user_key[0], 'RolaNazwa': user_data.get('rola_nazwa', ''),
+                'WydzialGrafik': user_key[0],
+                'RolaNazwa': user_data.get('rola_nazwa', ''),
                 'JęzykNazwa': user_data.get('jezyk', ''),
                 'SystemCzasuPracyNazwa': user_data.get('system_czasu_pracy', '')
             }
+
             try:
                 korekta = float(user_data.get('korekta', 0.0) or 0.0)
             except (ValueError, TypeError):
@@ -1625,57 +1659,60 @@ class StaffingDetailsWindow(QDialog):
 
                 for h in range(max(0, int(final_work_hours))):
                     current_hour = (start_hour + h) % 24
-                    event_minutes = events_map.get(user_id, {}).get(day, {}).get(current_hour, 0)
-                    if event_minutes > 30:
+                    if events_map.get(user_id, {}).get(day, {}).get(current_hour, 0) > 30:
                         continue
 
                     grouping_key = (
-                        user_info['WydzialGrafik'], user_info['RolaNazwa'], user_info['JęzykNazwa'],
+                        user_info['WydzialGrafik'],
+                        user_info['RolaNazwa'],
+                        user_info['JęzykNazwa'],
                         user_info['SystemCzasuPracyNazwa'],
                         parsed_symbol.get('location') or user_data.get('lokalizacja_domyslna', 'h')
                     )
                     granular_staffing[day][current_hour][grouping_key] += 1
 
-        # Reszta metody pozostaje bez zmian...
-        final_group_names = [
-            "MASS+WELCAMER+GOLD", "NUMEN+FIRMA", "CZAT", "WELCOMER", "GOLD",
-            "NUMEN+FIRMA_VOICE", "WELCOMER VOICE", "TOTAL", "TOTAL VOICE"
-        ]
+        # 2. Agregacja wyników (NAPRAWIONA LOGIKA KOMPATYBILNOŚCI)
+        group_mapping = app_settings.GROUP_MAPPING
+
+        final_group_names = list(group_mapping.keys())
+        if "TOTAL" not in final_group_names:
+            final_group_names.append("TOTAL")
+
         aggregated_results = {name: [[0.0] * days_in_month for _ in range(24)] for name in final_group_names}
 
         for day in range(1, days_in_month + 1):
             for hour in range(24):
                 if day not in granular_staffing or hour not in granular_staffing[day]:
                     continue
+
                 sums = defaultdict(float)
+
                 for grouping_key, count in granular_staffing[day][hour].items():
-                    wydzial, rola, jezyk, system_pracy, lokalizacja = grouping_key
+                    wydzial = grouping_key[0]  # Wydział jest na indeksie 0
+
                     sums['TOTAL'] += count
-                    if wydzial in ['WNT', 'WZK1v', 'WZK2v']: sums['TOTAL_VOICE'] += count
-                    if wydzial in ['WZK3v', 'WZK3w']: sums['TOTAL_VOICE'] += count * 0.6
-                    if wydzial == 'WZFv': sums['TOTAL_VOICE'] += count * 0.8
-                    if wydzial in ['WZKv', 'WZK3w']: sums['MASS_WELC_GOLD_A'] += count * 0.6
-                    if wydzial in ['WNT', 'WZK1v', 'WZK2v', 'WZK3v']: sums['MASS_WELC_GOLD_B'] += count
-                    if wydzial in ['WZFv', 'WZFc']: sums['NUMEN_FIRMA'] += count
-                    if wydzial == 'WZFv': sums['CZAT_A'] += count * 0.2
-                    if wydzial in ['WZK3v', 'WZK3w']: sums['CZAT_B'] += count * 0.4
-                    if wydzial in ['WZK1c', 'WZK2c', 'WZK3c', 'WZFc', 'OBDc']: sums['CZAT_C'] += count
-                    if wydzial in ['WZK3v', 'WZK3c', 'WZK3w']: sums['WELCOMER'] += count
-                    if wydzial in ['WZK2v', 'WZK2c']: sums['GOLD'] += count
-                    if wydzial == 'WZFv': sums['NUMEN_FIRMA_VOICE'] += count * 0.8
-                    if wydzial in ['WZK3v', 'WZK3w']: sums['WELCOMER_VOICE'] += count * 0.6
+
+                    # --- BEZPIECZNE SPRAWDZANIE KONFIGURACJI ---
+                    for group_name, config in group_mapping.items():
+                        weight = 0.0
+
+                        # Przypadek 1: Nowa konfiguracja (Słownik wag)
+                        if isinstance(config, dict):
+                            if wydzial in config:
+                                weight = float(config[wydzial])
+
+                        # Przypadek 2: Stara konfiguracja (Lista wydziałów) - zapobiega Crashowi
+                        elif isinstance(config, list):
+                            if wydzial in config:
+                                weight = 1.0
+
+                        if weight > 0:
+                            sums[group_name] += count * weight
 
                 day_idx = day - 1
-                aggregated_results["TOTAL"][hour][day_idx] = sums['TOTAL']
-                aggregated_results["TOTAL VOICE"][hour][day_idx] = sums['TOTAL_VOICE']
-                aggregated_results["MASS+WELCAMER+GOLD"][hour][day_idx] = sums['MASS_WELC_GOLD_A'] + sums[
-                    'MASS_WELC_GOLD_B']
-                aggregated_results["NUMEN+FIRMA"][hour][day_idx] = sums['NUMEN_FIRMA']
-                aggregated_results["CZAT"][hour][day_idx] = sums['CZAT_A'] + sums['CZAT_B'] + sums['CZAT_C']
-                aggregated_results["WELCOMER"][hour][day_idx] = sums['WELCOMER']
-                aggregated_results["GOLD"][hour][day_idx] = sums['GOLD']
-                aggregated_results["NUMEN+FIRMA_VOICE"][hour][day_idx] = sums['NUMEN_FIRMA_VOICE']
-                aggregated_results["WELCOMER VOICE"][hour][day_idx] = sums['WELCOMER_VOICE']
+                for group_name in final_group_names:
+                    if group_name in sums:
+                        aggregated_results[group_name][hour][day_idx] = sums[group_name]
 
         return aggregated_results
 
