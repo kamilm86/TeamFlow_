@@ -11,7 +11,7 @@ from typing import Dict, List, Tuple, Optional, Any, Set
 from functools import lru_cache
 from symbol_parser import parse_symbols_batch, parse_symbol
 from config import SQL_OBJECTS
-
+from column_definitions import ColumnDefinitions
 
 @dataclass
 class MonthlyDataContainer:
@@ -565,36 +565,52 @@ class DataProvider(QObject):
         """
         Przetwarza dane z już spivotowanego zapytania SQL.
         WERSJA FINALNA UI: Wyświetla TYLKO GODZINY (Start;Czas).
-        Lokalizacja i Symbol są ukryte w danych (dla Delegata).
         """
         if not self._current_year or not self._current_month or not schedule_data:
             return {}
 
         from app_settings import app_settings
+        # Upewnij się, że ColumnDefinitions jest zaimportowane na górze pliku!
+        cols = ColumnDefinitions.SCHEDULE_COLUMNS
 
         processed_data = {}
         absence_set = app_settings.get_absence_symbols()
 
         for row_dict in schedule_data:
-            uzytkownik_id = row_dict.get('Uzytkownik', 0)
+            # --- POPRAWKA: Używamy .name, aby pobrać dane po nazwie SQL ---
+            uzytkownik_id = row_dict.get(cols['sched_user_id'].name, 0)
+
             key = (
-                row_dict.get('WydzialGrafik', ''), row_dict.get('PrzelozonyDane', ''),
-                row_dict.get('UzytkownikDane', ''), uzytkownik_id
+                row_dict.get(cols['sched_wydzial'].name, ''),  # WydzialGrafik
+                row_dict.get(cols['sched_przelozony'].name, ''),  # PrzelozonyDane
+                row_dict.get(cols['sched_user_display'].name, ''),  # UzytkownikDane
+                uzytkownik_id
             )
+            # ---------------------------------------------------------------
 
             processed_data[key] = {
-                'days': {}, 'total_hours': 0, 'rola_nazwa': row_dict.get('RolaNazwa'),
-                'pod_rola_nazwa': row_dict.get('PodRolaNazwa'), 'etat': row_dict.get('Etat', 0),
-                'jezyk': row_dict.get('Jezyk'), 'korekta': row_dict.get('Korekta', 0),
-                'dtn': row_dict.get('DTN', 0), 'nazwisko_imie': row_dict.get('NazwiskoImie'),
-                'przelozony': row_dict.get('PrzelozonyDane'),
-                'przelozony_nazwisko_imie': row_dict.get('PrzelozonyNazwiskoImie'),
-                'nr_kadrowy': row_dict.get('NumerKadrowy', ''),
-                'lokalizacja_domyslna': row_dict.get('LokalizacjaDomyslna'),
-                'komentarz_grafik': row_dict.get('KomentarzGrafik'),
-                'system_czasu_pracy': row_dict.get('SystemCzasuPracy'),
-                'uzytkownik_id': row_dict.get('Uzytkownik'), 'login_windows': row_dict.get('LoginWindows', ''),
-                'rka': row_dict.get('Rka', ''), 'email': row_dict.get('Email', '')
+                'days': {},
+                'total_hours': 0,
+                # Tutaj już było poprawnie, ale dla pewności pełna lista:
+                'sched_rola': row_dict.get(cols['sched_rola'].name),
+                'sched_podrola': row_dict.get(cols['sched_podrola'].name),
+                'sched_etat': row_dict.get(cols['sched_etat'].name, 0),
+                'sched_jezyk': row_dict.get(cols['sched_jezyk'].name),
+                'sched_korekta': row_dict.get(cols['sched_korekta'].name, 0),
+                'sched_dtn': row_dict.get(cols['sched_dtn'].name, 0),
+                'sched_user_name': row_dict.get(cols['sched_user_name'].name),
+                'sched_przelozony': row_dict.get(cols['sched_przelozony'].name),
+                'sched_przelozony_nazwisko': row_dict.get(cols['sched_przelozony_nazwisko'].name),
+                'sched_nr_kadrowy': row_dict.get(cols['sched_nr_kadrowy'].name, ''),
+                'sched_lokalizacja': row_dict.get(cols['sched_lokalizacja'].name),
+                'sched_komentarz': row_dict.get(cols['sched_komentarz'].name),
+                'sched_system_pracy': row_dict.get(cols['sched_system_pracy'].name),
+                'sched_grafik_za_punkty': row_dict.get(cols['sched_grafik_za_punkty'].name),
+                'sched_brak_nocki': row_dict.get(cols['sched_brak_nocki'].name),
+                'sched_user_id': uzytkownik_id,
+                'sched_login': row_dict.get(cols['sched_login'].name, ''),
+                'sched_rka': row_dict.get(cols['sched_rka'].name, ''),
+                'sched_email': row_dict.get(cols['sched_email'].name, '')
             }
 
             calculated_total_hours = 0
@@ -609,35 +625,26 @@ class DataProvider(QObject):
                     spec = parsed_symbol.get('special_symbol')
                     spec_upper = spec.upper() if spec else ""
 
-                    # --- LOGIKA WYŚWIETLANIA (Tylko Godziny) ---
                     display_value = ""
                     if start_hour is not None:
                         if work_h is not None:
-                            # Bezpieczne formatowanie float->int
                             val_float = float(work_h)
                             val_str = str(int(val_float)) if val_float.is_integer() else str(val_float)
                             display_value = f"{start_hour};{val_str}"
                         else:
                             display_value = str(start_hour)
-                    # Jeśli nie ma godziny startu (np. sam urlop 'U'), tekst komórki pozostaje PUSTY.
-                    # Symbol 'U' zostanie narysowany przez Delegata w rogu.
 
-                    # --- LOGIKA KOLOROWANIA (Background Color) ---
                     bg_color = None
-
-                    # PRIORYTET 1: Absencje (Specjalne symbole)
                     if spec_upper and (spec_upper in absence_set or spec_upper in ["OS", "U", "UZ"]):
                         if spec_upper in ["OS", "U", "UZ"]:
-                            bg_color = "#FFFF00"  # Żółty
+                            bg_color = "#FFFF00"
                         else:
-                            bg_color = "#9370DB"  # Fioletowy
-
-                    # PRIORYTET 2: Zmiany robocze (Godziny)
+                            bg_color = "#9370DB"
                     elif start_hour is not None:
                         try:
                             bg_color = app_settings.SHIFT_COLOR_MAP.get(int(start_hour), "#FFFFFF")
                         except (ValueError, TypeError):
-                            bg_color = None #"#FFFFFF"
+                            bg_color = None
 
                     processed_data[key]['days'][day] = {
                         'symbol': symbol, 'hours': work_h, 'start_hour': start_hour,
@@ -692,13 +699,22 @@ class DataProvider(QObject):
         query = f"SELECT * FROM {SQL_OBJECTS['fn_getscheduledata']}(?, ?, ?, ?)"
         cursor.execute(query, (year, month, grupa, funkcja))
         columns = [column[0] for column in cursor.description]
+
+        # --- DIAGNOSTYKA: Wypisz dostępne kolumny ---
+        debug_print(f"DataProvider: Kolumny z bazy SQL: {columns}")
+        # --------------------------------------------
+
         schedule_data = [dict(zip(columns, row)) for row in cursor.fetchall()]
         debug_print(f"DataProvider: Pobrane dane grafiku (nowy format): {len(schedule_data)} wierszy.")
         return schedule_data
 
     def _fetch_events_data(self, year: int, month: int, conn) -> List[Dict]:
-        """Pobiera i mapuje zdarzenia, używając istniejącego połączenia."""
+        """Pobiera i mapuje zdarzenia, używając ColumnDefinitions."""
         cursor = conn.cursor()
+        # Import lokalny, aby uniknąć cyklicznych zależności
+        from column_definitions import ColumnDefinitions
+        cols = ColumnDefinitions.EVENTS_COLUMNS
+
         query = f"SELECT * FROM {SQL_OBJECTS['fn_geteventsdata']}(?, ?)"
         cursor.execute(query, (year, month))
 
@@ -710,27 +726,39 @@ class DataProvider(QObject):
         processed_events = []
         for raw_event in raw_events_as_dicts:
             try:
+                # MAPOWANIE: Klucz Python (evt_*) -> Wartość z SQL (pobrana przez cols[...].name)
                 event = {
-                    'type': raw_event.get('EventType'),
-                    'id': raw_event.get('Id'),
-                    'topic': raw_event.get('Temat'),
-                    'name': raw_event.get('Nazwa'),
-                    'user_id': raw_event.get('Uzytkownik'),
-                    'UzytkownikDane': raw_event.get('UzytkownikDane'),
-                    'date': raw_event.get('Data'),
-                    'time_from': raw_event.get('DataOd'),
-                    'time_to': raw_event.get('DataDo'),
-                    'status': raw_event.get('StatusNazwa'),
-                    'DataModyfikacji': raw_event.get('DataModyfikacji')
+                    'evt_type': raw_event.get(cols['evt_type'].name),
+                    'evt_id': raw_event.get(cols['evt_id'].name),
+                    'evt_topic': raw_event.get(cols['evt_topic'].name),
+                    'evt_name': raw_event.get(cols['evt_name'].name),
+                    'evt_user_id': raw_event.get(cols['evt_user_id'].name),
+                    'evt_user_display': raw_event.get(cols['evt_user_display'].name),  # UzytkownikDane
+                    'evt_date': raw_event.get(cols['evt_date'].name),  # Data
+                    'evt_time_from': raw_event.get(cols['evt_time_from'].name),  # DataOd
+                    'evt_time_to': raw_event.get(cols['evt_time_to'].name),  # DataDo
+                    'evt_status': raw_event.get(cols['evt_status'].name),  # StatusNazwa
+                    'evt_modified_date': raw_event.get(cols['evt_modified_date'].name)  # DataModyfikacji
                 }
 
-                if event.get('date'):
-                    event['date_key'] = self._standardize_date(event['date'])
+                # Dodatkowe klucze pomocnicze (dla logiki DataProvidera)
+                # DataProvider wewnętrznie używa 'user_id' i 'date_key' do budowania cache
+                event['user_id'] = event['evt_user_id']
+                event['date_key'] = self._standardize_date(event['evt_date'])
 
-                for key in ['time_from', 'time_to', 'DataModyfikacji']:
+                # Dodatkowo 'id' i 'type' dla kompatybilności wstecznej z niektórymi funkcjami
+                event['id'] = event['evt_id']
+                event['type'] = event['evt_type']
+
+                # Formatowanie dat/godzin
+                for key in ['evt_time_from', 'evt_time_to', 'evt_modified_date']:
                     value = event.get(key)
                     if hasattr(value, 'strftime'):
                         event[key] = value.strftime('%Y-%m-%d %H:%M')
+
+                # Mapowanie starych kluczy czasowych (dla kompatybilności main.py)
+                event['time_from'] = event['evt_time_from']
+                event['time_to'] = event['evt_time_to']
 
                 processed_events.append(event)
             except Exception as e:
