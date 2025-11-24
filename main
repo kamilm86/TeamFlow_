@@ -2866,74 +2866,93 @@ class WorkScheduleWindow(QMainWindow):
 
     def apply_custom_sort(self):
         """
-        Sortuje dane w modelu na podstawie preferencji użytkownika, używając
-        dedykowanej, wielopoziomowej funkcji porównującej.
+        Sortuje dane w modelu. Jeśli użytkownik nie ma własnych preferencji,
+        stosuje domyślne sortowanie biznesowe.
         """
         if not hasattr(self, 'schedule_model') or not self.schedule_model._processed_data:
             return
 
+        # 1. Pobierz preferencje użytkownika
         sort_prefs = self.user_sort_preferences
-        keys_to_sort = self.schedule_model._keys
 
+        # 2. DEFINICJA DOMYŚLNEGO SORTOWANIA (FALLBACK)
+        # Jeśli użytkownik nic nie ustawił, sortujemy logicznie:
+        # DTN (rosnąco) -> Wydział -> Przełożony -> Pracownik
+        if not sort_prefs:
+            sort_prefs = [
+                ('sched_dtn', 'asc'),
+                ('sched_wydzial', 'asc'),
+                ('sched_przelozony_nazwisko', 'asc'),
+                ('sched_user_display', 'asc')
+            ]
+            debug_print("[Sortowanie] Brak preferencji użytkownika. Zastosowano sortowanie domyślne.")
+        else:
+            debug_print(f"[Sortowanie] Zastosowano preferencje użytkownika: {sort_prefs}")
+
+        keys_to_sort = self.schedule_model._keys
         self.schedule_model.layoutAboutToBeChanged.emit()
 
-        if sort_prefs:
-            debug_print(f"Aplikowanie sortowania niestandardowego (compare func): {sort_prefs}")
+        # Definicja funkcji porównującej
+        def compare_rows(key_a, key_b):
+            """Funkcja porównująca, która analizuje wszystkie kryteria sortowania naraz."""
+            for col_id, direction in sort_prefs:
+                val_a = self.schedule_model._get_sort_key(key_a, col_id)
+                val_b = self.schedule_model._get_sort_key(key_b, col_id)
 
-            def compare_rows(key_a, key_b):
-                """Funkcja porównująca, która analizuje wszystkie kryteria sortowania naraz."""
-                for col_id, direction in sort_prefs:
-                    val_a = self.schedule_model._get_sort_key(key_a, col_id)
-                    val_b = self.schedule_model._get_sort_key(key_b, col_id)
+                # Normalizacja typów (zabezpieczenie przed porównywaniem int vs str)
+                try:
+                    if val_a is None: val_a = ""
+                    if val_b is None: val_b = ""
 
-                    # Zabezpieczenie na wypadek porównywania różnych typów (np. None i string)
-                    if type(val_a) is not type(val_b):
-                        val_a, val_b = str(val_a), str(val_b)
+                    # Jeśli oba są liczbami (int/float), porównaj liczbowo
+                    if isinstance(val_a, (int, float)) and isinstance(val_b, (int, float)):
+                        pass  # Porównanie naturalne
+                    else:
+                        # W przeciwnym razie tekstowo
+                        val_a, val_b = str(val_a).lower(), str(val_b).lower()
+                except Exception:
+                    val_a, val_b = str(val_a), str(val_b)
 
-                    result = 0
-                    try:
-                        if val_a < val_b:
-                            result = -1
-                        elif val_a > val_b:
-                            result = 1
-                    except TypeError:  # Dodatkowe zabezpieczenie
-                        val_a, val_b = str(val_a), str(val_b)
-                        if val_a < val_b:
-                            result = -1
-                        elif val_a > val_b:
-                            result = 1
+                # Porównanie
+                if val_a < val_b:
+                    return -1 if direction == 'asc' else 1
+                elif val_a > val_b:
+                    return 1 if direction == 'asc' else -1
 
-                    # Jeśli wartości nie są równe, zwracamy wynik (z uwzględnieniem kierunku)
-                    # i kończymy porównywanie.
-                    if result != 0:
-                        return result * -1 if direction == 'desc' else result
+                # Jeśli równe, przejdź do kolejnego kryterium w pętli
 
-                # Jeśli po sprawdzeniu wszystkich kryteriów wiersze są równe, zwracamy 0.
-                return 0
+            return 0
 
+        # Wykonanie sortowania
+        try:
             keys_to_sort.sort(key=functools.cmp_to_key(compare_rows))
+        except Exception as e:
+            from debug_utils import log_error
+            log_error(f"Błąd krytyczny podczas sortowania: {e}", exception=e)
 
         self.schedule_model.layoutChanged.emit()
 
-        # Ustaw wskaźnik wizualny w nagłówku, aby odzwierciedlał sortowanie
+        # Ustaw wskaźnik wizualny w nagłówku (strzałkę)
         emp_header = self.table.employees_view.horizontalHeader()
         sched_header = self.table.schedule_view.horizontalHeader()
 
+        # Reset wskaźników
         emp_header.setSortIndicator(-1, Qt.AscendingOrder)
         sched_header.setSortIndicator(-1, Qt.AscendingOrder)
 
+        # Jeśli sortujemy, pokaż strzałkę na pierwszej kolumnie z listy priorytetów, która jest widoczna
         if sort_prefs:
             first_col_id, first_direction = sort_prefs[0]
             order = Qt.DescendingOrder if first_direction == 'desc' else Qt.AscendingOrder
 
+            # Sprawdź, czy ta kolumna jest widoczna, aby ustawić strzałkę
             if hasattr(self, 'visible_columns'):
                 try:
-                    col_index = self.visible_columns.index(first_col_id)
-                    emp_header.setSortIndicator(col_index, order)
+                    if first_col_id in self.visible_columns:
+                        col_index = self.visible_columns.index(first_col_id)
+                        emp_header.setSortIndicator(col_index, order)
                 except ValueError:
                     pass
-
-        debug_print("Zakończono sortowanie niestandardowe (compare func).")
 
     def _apply_dynamic_sizes(self):
         """
@@ -7341,6 +7360,17 @@ class WorkScheduleWindow(QMainWindow):
 
             display_date = ".".join(reversed(date_key.split("-"))) if date_key and '-' in date_key else date_key
 
+            # --- LOGIKA POBIERANIA NAZWY UŻYTKOWNIKA ---
+            # Próbujemy wszystkich możliwych kluczy, pod którymi może kryć się nazwa
+            user_display = (
+                    dp_event.get('evt_user_display') or
+                    dp_event.get('UzytkownikDane') or
+                    dp_event.get('user_name') or
+                    dp_event.get('evt_user_name') or
+                    ""
+            )
+            # -------------------------------------------
+
             # Zapewniamy spójność kluczy dla EventsTableModel
             local_event = {
                 'evt_type': dp_event.get('evt_type') or dp_event.get('type', ''),
@@ -7348,8 +7378,7 @@ class WorkScheduleWindow(QMainWindow):
                 'evt_topic': dp_event.get('evt_topic') or dp_event.get('topic', ''),
                 'evt_name': dp_event.get('evt_name') or dp_event.get('name', ''),
                 'evt_user_id': dp_event.get('evt_user_id') or dp_event.get('user_id'),
-                'evt_user_display': dp_event.get('evt_user_display') or dp_event.get('UzytkownikDane') or dp_event.get(
-                    'user_name', ''),
+                'evt_user_display': user_display,
 
                 'evt_time_from': dp_event.get('evt_time_from') or dp_event.get('time_from', ''),
                 'evt_time_to': dp_event.get('evt_time_to') or dp_event.get('time_to', ''),
@@ -7361,7 +7390,10 @@ class WorkScheduleWindow(QMainWindow):
                 'user_id': dp_event.get('evt_user_id') or dp_event.get('user_id'),
                 'type': dp_event.get('evt_type') or dp_event.get('type'),
                 'date_key': date_key,
-                'date': display_date
+                'date': display_date,
+
+                # Zachowaj user_name też w starej konwencji dla kompatybilności
+                'user_name': user_display
             }
             return local_event
         except Exception as e:
