@@ -1,0 +1,237 @@
+# group_config_dialog.py
+from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QListWidget,
+                               QPushButton, QLabel, QInputDialog, QMessageBox,
+                               QGroupBox, QDoubleSpinBox, QListWidgetItem, QWidget)
+from PySide6.QtCore import Qt
+from styles import AppStyles
+import json
+import copy  # Ważny import do robienia kopii danych
+
+
+class GroupConfigDialog(QDialog):
+    def __init__(self, parent=None, current_mapping=None, is_dark_theme=True):
+        super().__init__(parent)
+        self.setWindowTitle("Konfiguracja Grup i Wag RBH")
+        self.resize(900, 600)
+        self.is_dark_theme = is_dark_theme
+
+        # --- NAPRAWA 1: Normalizacja i Kopia danych ---
+        # Konwertujemy wszystko na format { "Grupa": { "Wydzial": 1.0 } }
+        # i robimy deepcopy, aby nie psuć oryginalnych danych przy Anulowaniu.
+
+        raw_data = current_mapping if current_mapping else {}
+        self.mapping = {}
+
+        for group, content in raw_data.items():
+            if isinstance(content, list):
+                # Migracja starego formatu (lista) -> nowy (słownik z wagą 1.0)
+                self.mapping[group] = {dept: 1.0 for dept in content}
+            elif isinstance(content, dict):
+                # Nowy format - kopiujemy głęboko
+                self.mapping[group] = copy.deepcopy(content)
+            else:
+                self.mapping[group] = {}
+
+        self.setup_ui()
+        self.apply_styles()
+        self.refresh_groups()
+
+    def setup_ui(self):
+        main_layout = QHBoxLayout(self)
+
+        # --- LEWA STRONA: GRUPY ---
+        left_group = QGroupBox("1. Zdefiniowane Grupy")
+        left_layout = QVBoxLayout(left_group)
+
+        self.groups_list = QListWidget()
+        self.groups_list.itemClicked.connect(self.on_group_selected)
+
+        btn_layout_groups = QHBoxLayout()
+        self.add_group_btn = QPushButton("Dodaj Grupę")
+        self.del_group_btn = QPushButton("Usuń Grupę")
+        self.add_group_btn.clicked.connect(self.add_group)
+        self.del_group_btn.clicked.connect(self.delete_group)
+
+        btn_layout_groups.addWidget(self.add_group_btn)
+        btn_layout_groups.addWidget(self.del_group_btn)
+
+        left_layout.addWidget(self.groups_list)
+        left_layout.addLayout(btn_layout_groups)
+
+        # --- PRAWA STRONA: WYDZIAŁY I WAGI ---
+        right_group = QGroupBox("2. Wydziały i Udział RBH")
+        right_layout = QVBoxLayout(right_group)
+
+        # Nagłówek
+        header_layout = QHBoxLayout()
+        header_layout.addWidget(QLabel("Wydział"), 1)
+        header_layout.addWidget(QLabel("Waga (1.0 = 100%)"), 0)
+        right_layout.addLayout(header_layout)
+
+        self.depts_list = QListWidget()
+
+        btn_layout_depts = QHBoxLayout()
+        self.add_dept_btn = QPushButton("Dodaj Wydział")
+        self.del_dept_btn = QPushButton("Usuń Wydział")
+        self.add_dept_btn.clicked.connect(self.add_department)
+        self.del_dept_btn.clicked.connect(self.delete_department)
+
+        # Domyślnie wyłączone
+        self.add_dept_btn.setEnabled(False)
+        self.del_dept_btn.setEnabled(False)
+
+        btn_layout_depts.addWidget(self.add_dept_btn)
+        btn_layout_depts.addWidget(self.del_dept_btn)
+
+        right_layout.addWidget(self.depts_list)
+        right_layout.addLayout(btn_layout_depts)
+
+        main_layout.addWidget(left_group, 1)
+        main_layout.addWidget(right_group, 2)
+
+        # Kontener główny
+        content_widget = QWidget()
+        content_widget.setLayout(main_layout)
+
+        # Layout całego okna z przyciskami na dole
+        window_layout = QVBoxLayout(self)
+        window_layout.addWidget(content_widget)
+
+        bottom_btns = QHBoxLayout()
+        self.save_btn = QPushButton("Zapisz Zmiany")
+        self.cancel_btn = QPushButton("Anuluj")
+        self.save_btn.clicked.connect(self.accept)
+        self.cancel_btn.clicked.connect(self.reject)
+
+        bottom_btns.addStretch()
+        bottom_btns.addWidget(self.save_btn)
+        bottom_btns.addWidget(self.cancel_btn)
+
+        window_layout.addLayout(bottom_btns)
+
+    def apply_styles(self):
+        theme = "dark" if self.is_dark_theme else "light"
+        self.setStyleSheet(AppStyles.get_dialog_style(theme))
+        self.groups_list.setStyleSheet(AppStyles.get_list_style(theme))
+        self.depts_list.setStyleSheet(AppStyles.get_list_style(theme))
+
+        btn_style = AppStyles.get_button_style(theme)
+        for btn in self.findChildren(QPushButton):
+            btn.setStyleSheet(btn_style)
+
+    def refresh_groups(self):
+        current_row = self.groups_list.currentRow()
+        self.groups_list.clear()
+        for group in sorted(self.mapping.keys()):
+            self.groups_list.addItem(group)
+
+        if current_row >= 0 and current_row < self.groups_list.count():
+            self.groups_list.setCurrentRow(current_row)
+        else:
+            self.depts_list.clear()
+            self.add_dept_btn.setEnabled(False)
+            self.del_dept_btn.setEnabled(False)
+
+    def on_group_selected(self, item):
+        if not item: return
+        group_name = item.text()
+        self.refresh_departments(group_name)
+        self.add_dept_btn.setEnabled(True)
+        self.del_dept_btn.setEnabled(True)
+
+    def refresh_departments(self, group_name):
+        self.depts_list.clear()
+        if group_name not in self.mapping: return
+
+        depts = self.mapping[group_name]
+
+        for dept, weight in sorted(depts.items()):
+            item = QListWidgetItem()
+
+            widget = QWidget()
+            layout = QHBoxLayout(widget)
+            layout.setContentsMargins(5, 2, 5, 2)
+
+            lbl = QLabel(dept)
+            if self.is_dark_theme:
+                lbl.setStyleSheet("color: white; font-weight: bold;")
+
+            spin = QDoubleSpinBox()
+            spin.setRange(0.0, 5.0)
+            spin.setSingleStep(0.1)
+            spin.setValue(float(weight))
+            spin.setFixedWidth(80)
+
+            # Używamy lambda z domyślnymi argumentami, aby uniknąć problemu "lazy binding"
+            spin.valueChanged.connect(lambda val, g=group_name, d=dept: self.update_weight(g, d, val))
+
+            layout.addWidget(lbl)
+            layout.addStretch()
+            layout.addWidget(spin)
+
+            item.setSizeHint(widget.sizeHint())
+            self.depts_list.addItem(item)
+            self.depts_list.setItemWidget(item, widget)
+
+    def update_weight(self, group, dept, value):
+        if group in self.mapping and dept in self.mapping[group]:
+            self.mapping[group][dept] = value
+
+    def add_group(self):
+        name, ok = QInputDialog.getText(self, "Nowa Grupa", "Podaj nazwę grupy:")
+        if ok and name:
+            name = name.strip()
+            if not name: return
+            if name in self.mapping:
+                QMessageBox.warning(self, "Błąd", "Taka grupa już istnieje!")
+                return
+            self.mapping[name] = {}
+            self.refresh_groups()
+            # Zaznacz nową grupę
+            items = self.groups_list.findItems(name, Qt.MatchExactly)
+            if items:
+                self.groups_list.setCurrentItem(items[0])
+                self.on_group_selected(items[0])
+
+    def delete_group(self):
+        curr = self.groups_list.currentItem()
+        if not curr: return
+        group = curr.text()
+
+        if QMessageBox.question(self, "Potwierdzenie", f"Usunąć grupę '{group}'?") == QMessageBox.Yes:
+            del self.mapping[group]
+            self.refresh_groups()
+
+    def add_department(self):
+        curr_group_item = self.groups_list.currentItem()
+        if not curr_group_item: return
+        group = curr_group_item.text()
+
+        dept, ok = QInputDialog.getText(self, "Nowy Wydział", "Podaj nazwę wydziału (np. WZK1):")
+        if ok and dept:
+            dept = dept.strip()
+            if not dept: return
+            # Domyślna waga 1.0
+            self.mapping[group][dept] = 1.0
+            self.refresh_departments(group)
+
+    def delete_department(self):
+        curr_group_item = self.groups_list.currentItem()
+        if not curr_group_item: return
+        group = curr_group_item.text()
+
+        curr_row = self.depts_list.currentRow()
+        if curr_row < 0:
+            QMessageBox.warning(self, "Wybór", "Zaznacz wydział do usunięcia.")
+            return
+
+        # Pobieramy nazwę z kluczy (kolejność jest ta sama bo użyliśmy sorted przy wyświetlaniu)
+        dept_name = sorted(self.mapping[group].keys())[curr_row]
+
+        if QMessageBox.question(self, "Usuń", f"Usunąć wydział '{dept_name}' z grupy '{group}'?") == QMessageBox.Yes:
+            del self.mapping[group][dept_name]
+            self.refresh_departments(group)
+
+    def get_mapping_json(self):
+        """Zwraca konfigurację jako JSON gotowy do zapisu."""
+        return json.dumps(self.mapping, ensure_ascii=False, indent=4)
