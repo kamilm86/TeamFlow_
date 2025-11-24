@@ -134,11 +134,16 @@ class SplitTableView(QWidget):
             # Dynamiczne indeksy dla opcjonalnych kolumn
             current_idx = base_idx + 2
             percent_morning_col = -1
+            percent_ho_col = -1
             comment_col = -1
 
             # WAŻNE: Kolejność musi być identyczna jak w schedule_model._update_column_structure
             if self._model._show_percent_morning_column:
                 percent_morning_col = current_idx
+                current_idx += 1
+
+            if self._model._show_percent_ho_column:
+                percent_ho_col = current_idx
                 current_idx += 1
 
             if self._model._show_comment_column:
@@ -163,6 +168,9 @@ class SplitTableView(QWidget):
 
             elif logical_index == percent_morning_col:
                 col_id_to_sort = "percent_morning"
+
+            elif logical_index == percent_ho_col:
+                col_id_to_sort = "percent_ho"
 
             elif logical_index == comment_col:
                 col_id_to_sort = "komentarz_grafik"
