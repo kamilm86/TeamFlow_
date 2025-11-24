@@ -173,14 +173,21 @@ class AppSettingsDialog(QDialog):
         self.day_width_spin.setRange(20, 200)
         self.day_width_spin.setSuffix(" px")
 
+        self.staffing_row_height_spin = QSpinBox()
+        self.staffing_row_height_spin.setRange(10, 100)
+        self.staffing_row_height_spin.setSuffix(" px")
+
         params_layout.addWidget(QLabel("Wysokość wiersza tabeli:"), 3, 0)
         params_layout.addWidget(self.row_height_spin, 3, 1)
 
-        params_layout.addWidget(QLabel("Wysokość nagłówka:"), 4, 0)
-        params_layout.addWidget(self.header_height_spin, 4, 1)
+        params_layout.addWidget(QLabel("Wysokość wiersza tabeli (Obsada):"), 4, 0)
+        params_layout.addWidget(self.staffing_row_height_spin, 4, 1)
 
-        params_layout.addWidget(QLabel("Szerokość kolumny dnia:"), 5, 0)
-        params_layout.addWidget(self.day_width_spin, 5, 1)
+        params_layout.addWidget(QLabel("Wysokość nagłówka:"), 5, 0)
+        params_layout.addWidget(self.header_height_spin, 5, 1)
+
+        params_layout.addWidget(QLabel("Szerokość kolumny dnia:"), 6, 0)
+        params_layout.addWidget(self.day_width_spin, 6, 1)
 
         layout.addWidget(params_group)
 
@@ -190,6 +197,7 @@ class AppSettingsDialog(QDialog):
         self.font_size_spin.valueChanged.connect(self._update_current_profile_data)
         self.row_height_spin.valueChanged.connect(self._update_current_profile_data)
         self.header_height_spin.valueChanged.connect(self._update_current_profile_data)
+        self.staffing_row_height_spin.valueChanged.connect(self._update_current_profile_data)
         self.day_width_spin.valueChanged.connect(self._update_current_profile_data)
 
         group.setLayout(layout)
@@ -246,6 +254,7 @@ class AppSettingsDialog(QDialog):
         self.font_combo.setCurrentFont(QFont(data.get('font_family', 'Segoe UI')))
         self.font_size_spin.setValue(int(data.get('font_size', 9)))
         self.row_height_spin.setValue(int(data.get('row_height', 25)))
+        self.staffing_row_height_spin.setValue(int(data.get('staffing_row_height', 22)))
         self.header_height_spin.setValue(int(data.get('header_height', 35)))
         self.day_width_spin.setValue(int(data.get('day_col_width', 45)))
 
@@ -270,6 +279,7 @@ class AppSettingsDialog(QDialog):
             'font_family': self.font_combo.currentFont().family(),
             'font_size': self.font_size_spin.value(),
             'row_height': self.row_height_spin.value(),
+            'staffing_row_height': self.staffing_row_height_spin.value(),
             'header_height': self.header_height_spin.value(),
             'day_col_width': self.day_width_spin.value()
         }
