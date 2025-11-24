@@ -23,7 +23,6 @@ from ui_utils import show_confirmation_dialog
 from ui_components import DigitSelectionDialog
 
 
-# (Klasy DateTableWidgetItem i DayOfWeekItem pozostają bez zmian)
 class DateTableWidgetItem(QTableWidgetItem):
     """Niestandardowy element tabeli do sortowania dat chronologicznie."""
 
@@ -47,7 +46,6 @@ class DayOfWeekItem(QTableWidgetItem):
         return self.day_of_week < other.day_of_week
 
 
-# (Klasa ThemeSettingsDialog pozostaje bez zmian)
 class ThemeSettingsDialog(QDialog):
     settings_changed = Signal(str, str, int)
 
@@ -145,13 +143,13 @@ class ThemeSettingsDialog(QDialog):
         return self.current_theme
 
 
-# (Klasa InsertSymbolDialog pozostaje bez zmian)
 class InsertSymbolDialog(QDialog):
     symbol_selected = Signal(str)
 
     def __init__(self, parent=None, selected_cells_data=None):
         super().__init__(parent)
         self.parent_widget = parent
+        self.selected_cells_data = selected_cells_data or []
         self.setWindowTitle("Wstaw symbol")
         self.setMinimumWidth(300);
         self.setMinimumHeight(250)
@@ -220,16 +218,16 @@ class InsertSymbolDialog(QDialog):
         self.input_label.setFont(self.parent_font)
         self.symbol_input = QLineEdit()
         self.symbol_input.setMaxLength(5)
-        font = QFont(self.parent_font);
-        font.setBold(True);
+        font = QFont(self.parent_font)
+        font.setBold(True)
         font.setPointSize(font.pointSize() + 2)
         self.symbol_input.setFont(font)
         self.symbol_input.textChanged.connect(self.on_symbol_input_changed)
         self.symbol_input.returnPressed.connect(self.check_and_accept)
-        input_layout.addWidget(self.input_label);
+        input_layout.addWidget(self.input_label)
         input_layout.addWidget(self.symbol_input)
         main_layout.addLayout(input_layout)
-        self.tabs = QTabWidget();
+        self.tabs = QTabWidget()
         self.tabs.setFont(self.parent_font)
         self.valid_symbols.clear()
         symbol_categories = app_settings.SYMBOL_CATEGORIES
@@ -239,47 +237,71 @@ class InsertSymbolDialog(QDialog):
             for symbol_key in symbols_dict.keys():
                 self.valid_symbols.add(symbol_key)
         buttons_layout = QHBoxLayout()
-        self.cancel_button = QPushButton("Anuluj");
+        self.cancel_button = QPushButton("Anuluj")
         self.cancel_button.setFont(self.parent_font)
         self.cancel_button.clicked.connect(self.reject)
-        self.validation_label = QLabel("");
+        self.validation_label = QLabel("")
         self.validation_label.setFont(self.parent_font)
-        buttons_layout.addWidget(self.validation_label);
+        buttons_layout.addWidget(self.validation_label)
         buttons_layout.addStretch()
         buttons_layout.addWidget(self.cancel_button)
-        main_layout.addWidget(self.tabs);
+        main_layout.addWidget(self.tabs)
         main_layout.addLayout(buttons_layout)
         self.symbol_input.setFocus()
 
     def add_tab_with_symbols(self, symbols, tab_name):
-        tab = QWidget();
-        tab_layout = QGridLayout(tab);
+        tab = QWidget()
+        tab_layout = QGridLayout(tab)
         tab_layout.setSpacing(5)
-        debug_print(
-            f"InsertSymbolDialog: Budowanie zakładki '{tab_name}'. Rola użytkownika: '{self.user_role}', Tryb DTN: {self.dtn_co_only_mode}")
+
+        # Sprawdzamy warunki dla Lidera i wybranych komórek
+        has_non_lider_selection = False
+        if self.user_role == 'Lider':
+            for cell in self.selected_cells_data:
+                if cell.get('rola_nazwa') != 'Lider':
+                    has_non_lider_selection = True
+                    break
+
         for idx, (symbol, desc) in enumerate(symbols):
-            button = QPushButton(symbol);
+            button = QPushButton(symbol)
             button.setFont(self.parent_font)
-            button.setProperty("symbol", symbol);
+            button.setProperty("symbol", symbol)
             button.setFocusPolicy(Qt.NoFocus)
             button.clicked.connect(self.on_symbol_button_clicked)
+
             is_generally_allowed = app_settings.has_symbol_permission(self.user_role, symbol)
+
+            # --- NOWA LOGIKA BLOKOWANIA PRZYCISKÓW ---
+            is_disabled_by_logic = False
+            tooltip_suffix = ""
+
+            if is_generally_allowed and self.user_role == 'Lider':
+                # Jeśli Lider zaznaczył kogoś kto nie jest Liderem
+                if has_non_lider_selection:
+                    if symbol.upper() in ['U', 'OS']:
+                        is_disabled_by_logic = True
+                        tooltip_suffix = "\n(Dostępne tylko dla Liderów w Twoim wydziale)"
+
+            # Logika DTN (zachowana)
             if self.dtn_co_only_mode:
                 if symbol.upper() == 'CO' and is_generally_allowed:
-                    button.setEnabled(True);
-                    button.setToolTip(desc)
+                    pass  # OK
                 else:
-                    button.setEnabled(False);
-                    button.setToolTip(f"Dla wydziału DTN dozwolony jest tylko symbol 'CO'.")
-            elif is_generally_allowed:
-                button.setEnabled(True);
+                    is_disabled_by_logic = True
+                    tooltip_suffix = "\n(Dla DTN dozwolone tylko CO)"
+
+            if is_generally_allowed and not is_disabled_by_logic:
+                button.setEnabled(True)
                 button.setToolTip(desc)
             else:
-                button.setEnabled(False);
-                button.setToolTip(f"{desc}\n(Brak uprawnień dla Twojej roli)")
-            row = idx // 4;
+                button.setEnabled(False)
+                reason = tooltip_suffix if tooltip_suffix else "\n(Brak uprawnień dla Twojej roli)"
+                button.setToolTip(f"{desc}{reason}")
+
+            row = idx // 4
             col = idx % 4
             tab_layout.addWidget(button, row, col)
+
         tab_layout.addItem(QSpacerItem(10, 10, QSizePolicy.Expanding, QSizePolicy.Expanding), (len(symbols) // 4) + 1,
                            0, 1, 4)
         self.tabs.addTab(tab, tab_name)
