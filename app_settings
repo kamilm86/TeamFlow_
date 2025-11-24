@@ -1,7 +1,7 @@
 # app_settings.py
 import json
 from collections import defaultdict
-from debug_utils import log_error
+from debug_utils import log_error, debug_print
 from _version import __version__ as APP_VERSION
 
 class AppSettings:
@@ -18,27 +18,54 @@ class AppSettings:
         self.WORK_LIKE_SYMBOLS = set()
         self.LOGGING_USERS_FILE = set()
         self.LOGGING_USERS_CONSOLE = set()
-        self.SUPER_LIDER_LOGINS = set() # <-- NOWY ATRYBUT
+        self.SUPER_LIDER_LOGINS = set()
+        self.ENABLE_NOTIFICATION_CENTER = True
 
     def parse_and_apply(self, key, value):
         """Paruje i ustawia wartość dla danego klucza."""
         try:
-            if key == 'current_version': self.REQUIRED_VERSION = value
-            elif key == 'force_update': self.FORCE_UPDATE = value.lower() == 'true'
+            if key == 'current_version':
+                self.REQUIRED_VERSION = value
+            elif key == 'force_update':
+                self.FORCE_UPDATE = value.lower() == 'true'
             elif key == 'AppPermissions':
                 self.PERMISSIONS = defaultdict(set, {k: set(v) for k, v in json.loads(value).items()})
-            elif key == 'SymbolCategoriesDialog': self.SYMBOL_CATEGORIES = json.loads(value)
-            elif key == 'AbsenceSymbolsLogic': self.ABSENCE_SYMBOLS = set(json.loads(value))
+            elif key == 'SymbolCategoriesDialog':
+                self.SYMBOL_CATEGORIES = json.loads(value)
+            elif key == 'AbsenceSymbolsLogic':
+                self.ABSENCE_SYMBOLS = set(json.loads(value))
             elif key == 'GroupMapping':
-                self.GROUP_MAPPING = {k: set(v) for k,v in json.loads(value).items()}
+                # ZMIANA: Teraz oczekujemy słownika słowników: { "Grupa": { "Wydzial": waga } }
+                # Jeśli w bazie są stare dane (lista), musimy to obsłużyć (migracja w locie na wagę 1.0)
+                raw_data = json.loads(value)
+                self.GROUP_MAPPING = {}
+
+                for group, content in raw_data.items():
+                    if isinstance(content, list):
+                        # Kompatybilność wsteczna: lista zamienia się na wagi 1.0
+                        self.GROUP_MAPPING[group] = {dept: 1.0 for dept in content}
+                    elif isinstance(content, dict):
+                        # Nowy format: słownik z wagami
+                        self.GROUP_MAPPING[group] = {k: float(v) for k, v in content.items()}
             elif key == 'ShiftColorMap':
                 self.SHIFT_COLOR_MAP = {int(k): v for k, v in json.loads(value).items()}
+
+            elif key == 'NotificationCenterEnabled':
+                self.ENABLE_NOTIFICATION_CENTER = value.lower() == 'true'
+                from debug_utils import debug_print
+                debug_print(
+                    f"AppSettings: Centrum Powiadomień jest {'WŁĄCZONE' if self.ENABLE_NOTIFICATION_CENTER else 'WYŁĄCZONE'}")
             elif key == 'SymbolPermissions':
                 self.SYMBOL_PERMISSIONS = json.loads(value)
+                # Używamy debug_print z modułu debug_utils
+                from debug_utils import debug_print
+                debug_print(
+                    f"AppSettings: Załadowano SymbolPermissions. Liczba kluczy: {len(self.SYMBOL_PERMISSIONS)}. Uprawnienia dla 'U': {self.SYMBOL_PERMISSIONS.get('U')}")
+            # --- KONIEC ZMIANY ---
+
             elif key == 'WorkLikeSymbols':
                 self.WORK_LIKE_SYMBOLS = set(json.loads(value))
             elif key == 'LoggingUserFile':
-                # Tworzy zbiór małych liter z loginów, ignorując puste wpisy
                 self.LOGGING_USERS_FILE = {user.strip().lower() for user in value.split(',') if user.strip()}
             elif key == 'LoggingUserConsole':
                 self.LOGGING_USERS_CONSOLE = {user.strip().lower() for user in value.split(',') if user.strip()}
@@ -49,6 +76,47 @@ class AppSettings:
 
         except (json.JSONDecodeError, TypeError) as e:
             log_error(f"BŁĄD: Nie udało się sparsować ustawienia '{key}' z bazy danych. Błąd: {e}")
+
+    def has_symbol_permission(self, role: str, symbol: str) -> bool:
+        """Sprawdza, czy dana rola ma uprawnienia do użycia konkretnego symbolu."""
+        from debug_utils import debug_print  # Import na poziomie metody
+        if not role or not symbol:
+            return False
+
+        # --- POCZĄTEK ZMIANY: Logowanie diagnostyczne ---
+        if not self.SYMBOL_PERMISSIONS:
+            # Ten log pojawi się tylko raz, jeśli słownik jest całkowicie pusty
+            debug_print(
+                f"has_symbol_permission: BŁĄD KRYTYCZNY: Słownik 'SYMBOL_PERMISSIONS' jest pusty. Uruchom export_settings_to_db.py.")
+            return False
+
+        allowed_roles = self.SYMBOL_PERMISSIONS.get(symbol)
+
+        if allowed_roles is None:
+            # Loguj tylko raz na symbol, aby nie spamować
+            if symbol not in getattr(self, '_symbol_permission_log_cache', set()):
+                debug_print(
+                    f"has_symbol_permission: BRAK UPRAWNIEŃ (symbol '{symbol}' nie znaleziony w SYMBOL_PERMISSIONS)")
+                if not hasattr(self, '_symbol_permission_log_cache'):
+                    self._symbol_permission_log_cache = set()
+                self._symbol_permission_log_cache.add(symbol)
+            return False
+
+        result = role in allowed_roles
+
+        # Loguj tylko raz na kombinację, aby nie spamować
+        log_key = (symbol, role)
+        if log_key not in getattr(self, '_symbol_permission_log_cache', set()):
+            debug_print(
+                f"has_symbol_permission: Symbol: '{symbol}', Rola: '{role}', Dozwolone: {allowed_roles}, Wynik: {result}")
+            if not hasattr(self, '_symbol_permission_log_cache'):
+                self._symbol_permission_log_cache = set()
+            self._symbol_permission_log_cache.add(log_key)
+        # --- KONIEC ZMIANY ---
+
+        return result
+
+    # --- KONIEC NOWEJ METODY ---
 
     def has_permission(self, role: str, feature_key: str) -> bool:
         if not role or not feature_key: return False
