@@ -19,7 +19,7 @@ class ColumnSelectDialog(QDialog):
 
     def __init__(self, parent=None, available_columns=None, visible_columns=None,
                  default_columns=None, user_role=None, is_comment_column_checked=False,
-                 is_percent_morning_checked=False,  # <--- TUTAJ BYŁ BRAKUJĄCY ARGUMENT
+                 is_percent_morning_checked=False,  is_percent_ho_checked=False,
                  sort_preferences=None):
         super().__init__(parent)
         self.parent_widget = parent
@@ -39,11 +39,11 @@ class ColumnSelectDialog(QDialog):
 
         # Poprawna kolejność inicjalizacji
         # Przekazujemy oba parametry do setup_ui
-        self.setup_ui(is_comment_column_checked, is_percent_morning_checked)
+        self.setup_ui(is_comment_column_checked, is_percent_morning_checked, is_percent_ho_checked)
         self.populate_lists()
         self.apply_dialog_theme()
 
-    def setup_ui(self, is_comment_checked, is_percent_checked):
+    def setup_ui(self, is_comment_checked, is_percent_checked, is_ho_checked):
         main_layout = QVBoxLayout(self)
 
         # --- Sekcja widoczności kolumn (bez zmian) ---
@@ -109,6 +109,12 @@ class ColumnSelectDialog(QDialog):
         self.percent_morning_checkbox.setVisible(
             app_settings.has_permission(self.user_role, 'view_schedule_percent_morning_column'))
 
+        # --- NOWY CHECKBOX DLA PROCENT HO ---
+        self.percent_ho_checkbox = QCheckBox("Pokaż kolumnę 'Procent HO'")
+        self.percent_ho_checkbox.setChecked(is_ho_checked)
+        # Opcjonalnie możesz dodać uprawnienie
+        # self.percent_ho_checkbox.setVisible(app_settings.has_permission(self.user_role, 'view_schedule_percent_ho_column'))
+
         # --- CHECKBOX DLA KOMENTARZA ---
         self.komentarz_checkbox = QCheckBox("Pokaż kolumnę 'Komentarz do Grafiku'")
         self.komentarz_checkbox.setChecked(is_comment_checked)
@@ -126,6 +132,7 @@ class ColumnSelectDialog(QDialog):
         main_layout.addWidget(separator)
         # Dodajemy oba checkboxy do layoutu
         main_layout.addWidget(self.percent_morning_checkbox)
+        main_layout.addWidget(self.percent_ho_checkbox)
         main_layout.addWidget(self.komentarz_checkbox)
         main_layout.addLayout(buttons_layout)
 
@@ -245,11 +252,11 @@ class ColumnSelectDialog(QDialog):
             QMessageBox.information(self, "Informacja", "Można usuwać tylko kolumny własne.")
             return
 
-        # --- POCZĄTEK ZMIANY: Użycie polskiego dialogu 'show_confirmation_dialog' ---
+        # --- Użycie polskiego dialogu 'show_confirmation_dialog' ---
         reply = show_confirmation_dialog(self, "Potwierdzenie",
                                          f"Czy na pewno chcesz usunąć kolumnę '{self.column_map[col_id]}' i wszystkie jej dane?",
-                                         QMessageBox.No)  # Domyślny przycisk "Nie"
-        # --- KONIEC ZMIANY ---
+                                         QMessageBox.No)
+        # -----------------------------------------------------------
 
         if reply == QMessageBox.Yes:
             # Usuń ze struktur danych
@@ -258,19 +265,22 @@ class ColumnSelectDialog(QDialog):
             if col_id in self.column_map:
                 del self.column_map[col_id]
 
-            # --- NOWY KOD: Usuń z available_columns ---
+            # --- Usuń z available_columns ---
             self.available_columns = [col for col in self.available_columns if col[0] != col_id]
-            # --- KONIEC NOWEGO KODU ---
 
-            # --- NOWY KOD: Usuń z preferencji sortowania ---
-            # Usuwamy wszystkie odniesienia do tej kolumny z zapisanych preferencji
+            # --- Usuń z listy widocznych (jeśli tam była) ---
+            if col_id in self.visible_columns:
+                self.visible_columns.remove(col_id)
+
+            # --- Usuń z preferencji sortowania ---
             self.sort_preferences = [pref for pref in self.sort_preferences if pref[0] != col_id]
-            # Przeładuj tabelę sortowania, aby odzwierciedlić zmianę
-            self.populate_lists()
-            # --- KONIEC NOWEGO KODU ---
 
-            # Usuń z listy UI
-            self.columns_list.takeItem(self.columns_list.row(current_item))
+            # Przeładuj tabelę sortowania I LISTĘ KOLUMN, aby odzwierciedlić zmianę
+            # UWAGA: Ta metoda czyści self.columns_list, więc 'current_item' przestaje istnieć!
+            self.populate_lists()
+
+            # USUNIĘTO LINIE: self.columns_list.takeItem(...)
+            # Ponieważ populate_lists() już wyczyściło i zbudowało listę od nowa bez usuniętej kolumny.
 
         self._update_sort_buttons_state()
 
@@ -292,7 +302,8 @@ class ColumnSelectDialog(QDialog):
         # --- DODANIE KOLUMN SPECJALNYCH DO SORTOWANIA ---
         combo_column.addItem("Suma Godzin", "total_hours")
         combo_column.addItem("Bilans Godzin", "balance_hours")
-        combo_column.addItem("Procent rano", "percent_morning")  # <-- DODANE
+        combo_column.addItem("Procent rano", "percent_morning")
+        combo_column.addItem("Procent HO", "percent_ho")
         # -----------------------------------------------
 
         if col_id:
@@ -421,3 +432,7 @@ class ColumnSelectDialog(QDialog):
         checkbox_style = AppStyles.get_checkbox_style(actual_theme)
         self.komentarz_checkbox.setStyleSheet(checkbox_style)
         self.percent_morning_checkbox.setStyleSheet(checkbox_style)
+        self.percent_ho_checkbox.setStyleSheet(checkbox_style)
+
+    def get_percent_ho_column_state(self):
+        return self.percent_ho_checkbox.isChecked()
