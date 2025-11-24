@@ -2,13 +2,13 @@
 # -*- coding: utf-8 -*-
 from db_connector import DatabaseConnector
 import getpass
-import json  # Import do obsługi JSON
+import json
 from debug_utils import debug_print, log_warning, log_error
 from config import SQL_OBJECTS
 
 
 class SettingsDatabase:
-    """Klasa do obsugi bazy danych ustawień użytkownika w formacie JSON."""
+    """Klasa do obsługi bazy danych ustawień użytkownika w formacie JSON."""
 
     def get_current_login_windows(self):
         try:
@@ -22,37 +22,48 @@ class SettingsDatabase:
             login_windows = self.get_current_login_windows()
 
         try:
-            # Serializuj słownik do stringa JSON
             settings_json = json.dumps(settings_dict, indent=4)
-
             conn = DatabaseConnector.get_connection()
             cursor = conn.cursor()
-
-            # Wywołaj nową, uproszczoną procedurę
             sql_query = f"EXEC {SQL_OBJECTS['p_saveusersettingsjson']} @login_windows=?, @settings_json=?"
             cursor.execute(sql_query, (login_windows, settings_json))
             conn.commit()
             conn.close()
-            debug_print(f"Ustawienia JSON zapisane dla {login_windows}")
             return True
         except Exception as e:
             log_error(f"Błąd podczas zapisywania ustawień JSON: {e}", exception=e)
             return False
 
     def load_settings(self, login_windows: str = None) -> dict:
-        """Ładuje ustawienia z JSON i łączy je z domyślnymi wartościami."""
+        """Ładuje ustawienia z JSON, migruje stare klucze i łączy z domyślnymi wartościami."""
         if login_windows is None:
             login_windows = self.get_current_login_windows()
 
-        # Domyślne ustawienia, które zapewnią, że aplikacja zawsze ma potrzebne klucze
+        # Definicja profilu "Podstawowy" (odpowiada obecnemu font size 9)
+        default_profile = {
+            'name': 'Podstawowy',
+            'font_family': 'Segoe UI',
+            'font_size': 9,
+            'row_height': 25,
+            'header_height': 35,
+            'day_col_width': 45
+        }
+        # Domyślne ustawienia z NOWYMI kluczami
         defaults = {
-            'theme': 'dark', 'font_family': 'Segoe UI', 'font_size': 9,
-            'visible_columns': ['wydzial', 'przelozony_nazwisko_imie', 'uzytkownik_dane'],
+            'theme': 'dark',
+            'font_family': 'Segoe UI',
+            'font_size': 9,
+            'active_profile': 'Podstawowy',
+            'layout_profiles': {
+                'Podstawowy': default_profile
+            },
+            'visible_columns': ['sched_wydzial', 'sched_przelozony_nazwisko', 'sched_user_display',
+                                'sched_lokalizacja'],
             'show_schedule_comment': False,
             'show_schedule_percent_morning': False,
             'import_grupa': 3, 'import_funkcja': 1,
             'is_maximized': True, 'window_size': (1600, 800),
-            'column_widths': {}, 'last_filters': {},  'sort_preferences': [],
+            'column_widths': {}, 'last_filters': {}, 'sort_preferences': [],
             'outlook_template_path': '', 'saved_filters': {},
             'visible_filters': None, 'row_colors': {},
             'schedule_splitter_sizes': None, 'custom_columns': {}
@@ -61,15 +72,24 @@ class SettingsDatabase:
         try:
             conn = DatabaseConnector.get_connection()
             cursor = conn.cursor()
-            # Proste zapytanie do odczytu pola JSON
             cursor.execute(f"SELECT SettingsJSON FROM {SQL_OBJECTS['usersettings']} WHERE LoginWindows=?",
                            (login_windows,))
             result = cursor.fetchone()
             conn.close()
 
             if result and result[0]:
-                # Deserializuj JSON i zaktualizuj domyślne wartości
                 loaded_settings = json.loads(result[0])
+                loaded_settings = self._migrate_legacy_settings(loaded_settings)
+
+                # Zabezpieczenie: upewnij się, że struktura profili istnieje po wczytaniu starego JSONa
+                if 'layout_profiles' not in loaded_settings:
+                    loaded_settings['layout_profiles'] = defaults['layout_profiles']
+                    loaded_settings['active_profile'] = defaults['active_profile']
+
+                # Zabezpieczenie: upewnij się, że profil Podstawowy zawsze istnieje
+                if 'Podstawowy' not in loaded_settings['layout_profiles']:
+                    loaded_settings['layout_profiles']['Podstawowy'] = default_profile
+
                 defaults.update(loaded_settings)
 
             return defaults
@@ -77,3 +97,76 @@ class SettingsDatabase:
             log_error(f"Błąd podczas ładowania ustawień JSON dla '{login_windows}'. Używam ustawień domyślnych.",
                       exception=e)
             return defaults
+
+    def _migrate_legacy_settings(self, settings: dict) -> dict:
+        """
+        Zamienia stare nazwy kolumn na nowe (sched_*) w ustawieniach.
+        Dotyczy: visible_columns, column_widths, sort_preferences.
+        """
+        # Mapa: Stara nazwa -> Nowa nazwa
+        migration_map = {
+            'wydzial': 'sched_wydzial',
+            'przelozony': 'sched_przelozony',  # To był pełny ciąg danych
+            'przelozony_nazwisko_imie': 'sched_przelozony_nazwisko',
+            'nazwisko_imie': 'sched_user_name',
+            'uzytkownik_dane': 'sched_user_display',
+            'uzytkownik_id': 'sched_user_id',
+            'login_windows': 'sched_login',
+            'nr_kadrowy': 'sched_nr_kadrowy',
+            'rola_nazwa': 'sched_rola',
+            'pod_rola_nazwa': 'sched_podrola',
+            'etat': 'sched_etat',
+            'jezyk': 'sched_jezyk',
+            'korekta': 'sched_korekta',
+            'dtn': 'sched_dtn',
+            'email': 'sched_email',
+            'lokalizacja_domyslna': 'sched_lokalizacja',
+            'system_czasu_pracy': 'sched_system_pracy',
+            'rka': 'sched_rka',
+            'komentarz_grafik': 'sched_komentarz'
+        }
+
+        # 1. Migracja visible_columns
+        if 'visible_columns' in settings:
+            new_visible = []
+            for col in settings['visible_columns']:
+                # Jeśli to kolumna custom (zaczyna się od custom_), zostaw bez zmian
+                if col.startswith('custom_'):
+                    new_visible.append(col)
+                # Jeśli to nowa nazwa (już zmigrowana), zostaw
+                elif col.startswith('sched_'):
+                    new_visible.append(col)
+                # Jeśli stara, zamień
+                elif col in migration_map:
+                    new_visible.append(migration_map[col])
+                # Jeśli nieznana, pomiń lub zostaw (zostawiamy dla bezpieczeństwa)
+                else:
+                    new_visible.append(col)
+            settings['visible_columns'] = new_visible
+
+        # 2. Migracja column_widths
+        if 'column_widths' in settings:
+            new_widths = {}
+            for col, width in settings['column_widths'].items():
+                if col.startswith('custom_') or col.startswith('sched_'):
+                    new_widths[col] = width
+                elif col in migration_map:
+                    new_widths[migration_map[col]] = width
+                else:
+                    new_widths[col] = width
+            settings['column_widths'] = new_widths
+
+        # 3. Migracja sort_preferences (lista list lub krotek: [[col, dir], ...])
+        if 'sort_preferences' in settings:
+            new_sort = []
+            for item in settings['sort_preferences']:
+                if len(item) == 2:
+                    col, direction = item
+                    if col.startswith('custom_') or col.startswith('sched_') or col in ['total_hours', 'balance_hours',
+                                                                                        'percent_morning']:
+                        new_sort.append([col, direction])
+                    elif col in migration_map:
+                        new_sort.append([migration_map[col], direction])
+            settings['sort_preferences'] = new_sort
+
+        return settings
