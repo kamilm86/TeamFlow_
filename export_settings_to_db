@@ -18,51 +18,58 @@ def export_settings():
     permissions = {
         # Klucz: 'app_access'
         # Opis: Ogólny dostęp do uruchomienia i korzystania z aplikacji. Role niewymienione tutaj nie będą mogły otworzyć programu.
-        'app_access': ['Pracownik WPR', 'Lider', 'Menadżer', 'Lider OUT'],
+        'app_access': ['Pracownik WPR', 'Lider', 'Menadżer', 'Lider OUT', 'Administrator'],
 
         # Klucz: 'schedule_keyboard_edit'
         # Opis: Zezwala na edycję komórek grafiku z klawiatury (wpisywanie godzin, symboli, modyfikacja godzin klawiszami +/-).
-        'schedule_keyboard_edit': ['Pracownik WPR', 'Lider OUT', 'Lider'],
+        'schedule_keyboard_edit': ['Pracownik WPR', 'Lider OUT', 'Lider', 'Administrator'],
 
         # Klucz: 'schedule_cell_actions'
         # Opis: Dostęp do głównych przycisków akcji modyfikujących grafik, czyli "Wstaw zmianę" i "Wstaw nieobecność".
-        'schedule_cell_actions': ['Pracownik WPR', 'Lider OUT','Lider'],
+        'schedule_cell_actions': ['Pracownik WPR', 'Lider OUT','Lider', 'Administrator'],
 
         # Klucz: 'button_add_overtime'
         # Opis: Kontroluje widoczność przycisku "Dodaj nadgodziny".
-        'button_add_overtime': ['Pracownik WPR'],
+        'button_add_overtime': ['Pracownik WPR', 'Administrator'],
 
         # Klucz: 'button_staffing_details'
         # Opis: Kontroluje widoczność przycisku "Obsada", który otwiera okno szczegółowych analiz.
-        'button_staffing_details': ['Pracownik WPR'],
+        'button_staffing_details': ['Pracownik WPR', 'Administrator'],
 
         # Klucz: 'button_show_audit'
         # Opis: Kontroluje widoczność przycisku "Historia Zmian".
-        'button_show_audit': ['Pracownik WPR', 'Lider OUT', 'Lider'],
+        'button_show_audit': ['Pracownik WPR', 'Lider OUT', 'Lider', 'Administrator'],
 
         # Klucz: 'button_schedule_control'
         # Opis: Kontroluje widoczność przycisku "Zarządzaj Grafikiem", który pozwala na blokowanie i publikację grafiku.
-        'button_schedule_control': ['Pracownik WPR', 'Lider OUT'],
+        'button_schedule_control': ['Pracownik WPR', 'Lider OUT', 'Administrator'],
 
         # Klucz: 'action_delete_symbol'
         # Opis: Zezwala na usuwanie symboli z komórek za pomocą klawiszy Delete lub Backspace.
-        'action_delete_symbol': ['Pracownik WPR', 'Lider OUT', 'Lider'],
+        'action_delete_symbol': ['Pracownik WPR', 'Lider OUT', 'Lider', 'Administrator'],
 
         # Klucz: 'view_schedule_comment_column'
         # Opis: Sprawia, że w oknie wyboru kolumn pojawia się opcja włączenia kolumny "Komentarz do Grafiku".
-        'view_schedule_comment_column': ['Pracownik WPR'],
+        'view_schedule_comment_column': ['Pracownik WPR', 'Administrator'],
 
         # Klucz: 'action_clear_special_symbol'
         # Opis: Zezwala na użycie funkcji (domyślnie F12) do usunięcia tylko symbolu specjalnego (np. urlopu) bez usuwania godzin pracy.
-        'action_clear_special_symbol': ['Pracownik WPR', 'Lider OUT', 'Lider'],
+        'action_clear_special_symbol': ['Pracownik WPR', 'Lider OUT', 'Lider', 'Administrator'],
 
         # Klucz: 'button_send_email'
         # Opis: Kontroluje widoczność przycisku "Wyślij e-mail" do zaznaczonych pracowników.
-        'button_send_email': ['Pracownik WPR', 'Lider OUT', 'Lider'],
+        'button_send_email': ['Pracownik WPR', 'Lider OUT', 'Lider', 'Administrator'],
 
         # Klucz: 'view_schedule_percent_morning_column'
         # Opis: Sprawia, że w oknie wyboru kolumn pojawia się opcja włączenia kolumny "Procent rano".
-        'view_schedule_percent_morning_column': ['Pracownik WPR']
+        'view_schedule_percent_morning_column': ['Pracownik WPR', 'Administrator'],
+
+        # --- NOWE UPRAWNIENIE ADMINISTRACYJNE ---
+        # Pozwala widzieć zakładkę "Administracja" w ustawieniach i zmieniać globalne flagi
+        'manage_app_configuration': ['Administrator'],
+
+
+        'manage_group_definitions': ['Administrator', 'Pracownik WPR']
     }
 
     # Definicja symboli, które oznaczają świadczenie pracy (nie absencję)
@@ -119,33 +126,31 @@ def export_settings():
     # --- NOWA SEKCJA: Definicja uprawnień do poszczególnych symboli ---
     symbol_permissions = {
         # Urlopy
-        "U": ["Pracownik WPR", "Lider OUT", "Lider"], "UZ": ["Pracownik WPR", "Lider OUT", "Lider"],
-        "UB": ["Pracownik WPR", "Lider OUT", "Lider"], "UM": ["Pracownik WPR", "Lider OUT", "Lider"],
-        "UO": ["Pracownik WPR", "Lider OUT", "Lider"], "UOD": ["Pracownik WPR", "Lider OUT", "Lider"],
-        "US": ["Pracownik WPR", "Lider OUT", "Lider"], "UT": ["Pracownik WPR", "Lider OUT", "Lider"],
-        "UW": ["Pracownik WPR", "Lider OUT", "Lider"], "UOP": ["Pracownik WPR", "Lider OUT", "Lider"],
-        "USW": ["Pracownik WPR", "Lider OUT", "Lider"],  # Przeniesiono z "Inne" dla spójności
+        "U": ["Pracownik WPR", "Lider OUT", "Lider", 'Administrator'], "UZ": ["Pracownik WPR", "Lider OUT", "Lider", 'Administrator'],
+        "UB": ["Pracownik WPR", "Lider OUT", "Lider", 'Administrator'], "UM": ["Pracownik WPR", "Lider OUT", "Lider", 'Administrator'],
+        "UO": ["Pracownik WPR", "Lider OUT", "Lider", 'Administrator'], "UOD": ["Pracownik WPR", "Lider OUT", "Lider", 'Administrator'],
+        "US": ["Pracownik WPR", "Lider OUT", "Lider", 'Administrator'], "UT": ["Pracownik WPR", "Lider OUT", "Lider", 'Administrator'],
+        "UW": ["Pracownik WPR", "Lider OUT", "Lider", 'Administrator'], "UOP": ["Pracownik WPR", "Lider OUT", "Lider", 'Administrator'],
+        "USW": ["Pracownik WPR", "Lider OUT", "Lider", 'Administrator'],  # Przeniesiono z "Inne" dla spójności
 
         # Zwolnienia
-        "CO": ["Pracownik WPR", "Lider", "Lider OUT"], "CR": ["Pracownik WPR", "Lider", "Lider OUT"],
-        "CRW": ["Pracownik WPR", "Lider", "Lider OUT"], "CSR": ["Pracownik WPR", "Lider OUT", "Lider"],
-        "ZO": ["Pracownik WPR", "Lider OUT", "Lider"], "ZS": ["Pracownik WPR", "Lider OUT", "Lider"],
+        "CO": ["Pracownik WPR", "Lider", "Lider OUT"], "CR": ["Pracownik WPR", "Lider", "Lider OUT", 'Administrator'],
+        "CRW": ["Pracownik WPR", "Lider", "Lider OUT"], "CSR": ["Pracownik WPR", "Lider OUT", "Lider", 'Administrator'],
+        "ZO": ["Pracownik WPR", "Lider OUT", "Lider"], "ZS": ["Pracownik WPR", "Lider OUT", "Lider", 'Administrator'],
 
         # Delegacje i Inne
-        "DK": ["Pracownik WPR", "Lider OUT", "Lider"], "DZ": ["Pracownik WPR", "Lider OUT", "Lider"],
-        "HO": ["Pracownik WPR", "Lider OUT", "Lider"], "P": ["Pracownik WPR", "Lider OUT", "Lider"],
-        "PD": ["Pracownik WPR", "Lider OUT", "Lider"], "BC": ["Pracownik WPR", "Lider OUT", "Lider"],
-        "BK": ["Pracownik WPR", "Lider OUT", "Lider"], "BO": ["Pracownik WPR", "Lider OUT", "Lider"],
-        "CW": ["Pracownik WPR", "Lider OUT", "Lider"], "DYS": ["Pracownik WPR", "Lider OUT", "Lider"],
-        "MW": ["Pracownik WPR", "Lider OUT", "Lider"], "NN": ["Pracownik WPR", "Lider OUT", "Lider"],
-        "NU": ["Pracownik WPR", "Lider OUT", "Lider"], "NW": ["Pracownik WPR", "Lider OUT", "Lider"],
-        "O": ["Pracownik WPR", "Lider OUT", "Lider"], "OS": ["Pracownik WPR", "Lider OUT", "Lider"],
-        "S": ["Pracownik WPR", "Lider OUT", "Lider"], "T": ["Pracownik WPR", "Lider OUT", "Lider"],
-        "Z": ["Pracownik WPR", "Lider OUT", "Lider"],
+        "DK": ["Pracownik WPR", "Lider OUT", "Lider", 'Administrator'], "DZ": ["Pracownik WPR", "Lider OUT", "Lider", 'Administrator'],
+        "HO": ["Pracownik WPR", "Lider OUT", "Lider", 'Administrator'], "P": ["Pracownik WPR", "Lider OUT", "Lider", 'Administrator'],
+        "PD": ["Pracownik WPR", "Lider OUT", "Lider", 'Administrator'], "BC": ["Pracownik WPR", "Lider OUT", "Lider", 'Administrator'],
+        "BK": ["Pracownik WPR", "Lider OUT", "Lider", 'Administrator'], "BO": ["Pracownik WPR", "Lider OUT", "Lider", 'Administrator'],
+        "CW": ["Pracownik WPR", "Lider OUT", "Lider", 'Administrator'], "DYS": ["Pracownik WPR", "Lider OUT", "Lider", 'Administrator'],
+        "MW": ["Pracownik WPR", "Lider OUT", "Lider", 'Administrator'], "NN": ["Pracownik WPR", "Lider OUT", "Lider", 'Administrator'],
+        "NU": ["Pracownik WPR", "Lider OUT", "Lider", 'Administrator'], "NW": ["Pracownik WPR", "Lider OUT", "Lider", 'Administrator'],
+        "O": ["Pracownik WPR", "Lider OUT", "Lider", 'Administrator'], "OS": ["Pracownik WPR", "Lider OUT", "Lider", 'Administrator'],
+        "S": ["Pracownik WPR", "Lider OUT", "Lider", 'Administrator'], "T": ["Pracownik WPR", "Lider OUT", "Lider", 'Administrator'],
+        "Z": ["Pracownik WPR", "Lider OUT", "Lider", 'Administrator'],
+        "PR": ["Pracownik WPR", "Lider OUT", "Lider", 'Administrator']
 
-        # --- POCZĄTEK POPRAWKI: Dodanie brakującego symbolu ---
-        "PR": ["Pracownik WPR", "Lider OUT", "Lider"]
-        # --- KONIEC POPRAWKI ---
     }
 
     # 3. Definicje logiki biznesowej (wcześniej w BusinessRules)
@@ -185,6 +190,8 @@ def export_settings():
     settings_to_export = {
         "current_version": APP_VERSION,
         "force_update": "false",
+        # --- NOWA GLOBALNA FLAGA ---
+        "NotificationCenterEnabled": "true",
         "LoggingUserFile": ",".join(logging_users_for_file),
         "LoggingUserConsole": ",".join(logging_users_for_console),
         "AppPermissions": get_config_as_json(permissions),
