@@ -60,6 +60,7 @@ class ScheduleTableModel(QAbstractTableModel):
         # INICJALIZACJA FLAG PRZED BUDOWANIEM KOLUMN
         self._show_comment_column = False
         self._show_percent_morning_column = False
+        self._show_percent_ho_column = False
 
         self._visible_columns = []
         self._year = None
@@ -118,11 +119,16 @@ class ScheduleTableModel(QAbstractTableModel):
         else:
             debug_print("[DEBUG] ScheduleModel: Wartość bez zmian, pomijam reset.")
 
+    def set_show_percent_ho_column(self, visible: bool):
+        if self._show_percent_ho_column != visible:
+            self.beginResetModel()
+            self._show_percent_ho_column = visible
+            self._update_column_structure()
+            self.endResetModel()
+
     def _update_column_structure(self):
         """Buduje nagłówki kolumn w zależności od widoczności opcji."""
         # Debug przed budowaniem
-        debug_print(
-            f"[DEBUG] ScheduleModel._update_column_structure START. Flagi: Comment={self._show_comment_column}, Percent={self._show_percent_morning_column}")
 
         self._column_headers = [self.column_map.get(cid, cid) for cid in self._visible_columns]
 
@@ -142,6 +148,9 @@ class ScheduleTableModel(QAbstractTableModel):
             debug_print("[DEBUG] Dodano nagłówek 'Procent rano'")
         else:
             debug_print("[DEBUG] POMINIĘTO nagłówek 'Procent rano' (flaga False)")
+
+        if self._show_percent_ho_column:
+            self._column_headers.append("Procent\nHO")
 
         if self._show_comment_column:
             self._column_headers.append("Komentarz")
@@ -199,13 +208,15 @@ class ScheduleTableModel(QAbstractTableModel):
                     storage_key = f"{user_id}|{self._year}|{self._month}"
                     return self._custom_columns.get(col_id, {}).get('values', {}).get(storage_key, "")
                 else:
-                    if col_id == 'wydzial':
+                    # Mapowanie specjalne dla kluczy z krotki (tuple)
+                    if col_id == 'sched_wydzial':
                         return key[0] or ""
-                    elif col_id == 'przelozony_nazwisko_imie':
-                        return row_data.get('przelozony_nazwisko_imie', '')
-                    elif col_id == 'uzytkownik_dane':
+                    elif col_id == 'sched_przelozony_nazwisko':
+                        return row_data.get('sched_przelozony_nazwisko', '')  # Tu pobieramy ze słownika
+                    elif col_id == 'sched_user_display':
                         return key[2] or ""
                     else:
+                        # Dla reszty po prostu pobierz wartość ze słownika używając col_id
                         return str(row_data.get(col_id, ''))
             else:
                 schedule_col = col - len(self._visible_columns)
@@ -237,6 +248,12 @@ class ScheduleTableModel(QAbstractTableModel):
                         return self._calculate_morning_percentage_display(row_data)
                     current_check_idx += 1
 
+                # Procent HO
+                if self._show_percent_ho_column:
+                    if schedule_col == current_check_idx:
+                        return self._calculate_ho_percentage_display(row_data)
+                    current_check_idx += 1
+
                 # Komentarz
                 if self._show_comment_column:
                     if schedule_col == current_check_idx:
@@ -256,14 +273,45 @@ class ScheduleTableModel(QAbstractTableModel):
 
             if not is_employee_column:
                 schedule_col = col - len(self._visible_columns)
-                if day_data.get('is_suggested_off', False): return QBrush(QColor("#006400"))
 
-                if schedule_col < self._days_in_month:
+                # Kolorowanie dla dni (0..30)
+                if schedule_col < 31:
+                    if day_data.get('is_suggested_off', False): return QBrush(QColor("#006400"))
+
                     bg_hex = day_data.get('_bg_color_hex')
                     if bg_hex:
                         return QBrush(QColor(bg_hex))
                     if day_data.get('symbol'):
                         return QBrush(QColor(65, 65, 65) if self._is_dark_theme else QColor(225, 225, 225))
+
+                # --- PRZYWRÓCONE KOLOROWANIE DLA KOLUMN OBLICZENIOWYCH ---
+
+                # 1. Suma RBH (zawsze na indeksie 31)
+                elif schedule_col == 31:
+                    # Możesz tu przywrócić logikę kolorowania sumy, jeśli była (np. przekroczenia)
+                    # Obecnie standardowe tło (lub brak, co daje domyślne)
+                    return None
+
+                    # 2. Bilans RBH (zawsze na indeksie 32)
+                elif schedule_col == 32:
+                    try:
+                        etat = float(row_data.get('etat', 0) or 0)
+                        total = float(row_data.get('total_hours', 0) or 0)
+                        wd = self._working_days if hasattr(self, '_working_days') and self._working_days > 0 else 21
+                        balance = (etat * wd) - total
+
+                        # Logika kolorowania bilansu:
+                        if balance > 0:
+                            # Niedobór godzin (czerwony/różowy)
+                            return QBrush(QColor("#662222") if self._is_dark_theme else QColor("#ffcccc"))
+                        elif balance < 0:
+                            # Nadgodziny w bilansie (zielony)
+                            return QBrush(QColor("#225522") if self._is_dark_theme else QColor("#ccffcc"))
+                        else:
+                            # Idealnie (szary/przezroczysty)
+                            return None
+                    except:
+                        return None
 
         if role == Qt.ToolTipRole: return get_symbol_description(day_data.get('symbol', '')) if day_data.get(
             'symbol') else None
@@ -282,6 +330,44 @@ class ScheduleTableModel(QAbstractTableModel):
             return Qt.AlignBottom | Qt.AlignHCenter
 
         return None
+
+    def _calculate_ho_percentage_display(self, row_data):
+        """Zwraca sformatowany string (np. '50%') udziału pracy zdalnej."""
+        val = self._calculate_ho_percentage_value(row_data)
+        return f"{int(val)}%"
+
+    def _calculate_ho_percentage_value(self, row_data):
+        """Oblicza wartość liczbową udziału HO (0-100)."""
+        ho_shifts = 0
+        total_working_shifts = 0
+
+        for day in range(1, 32):
+            day_data = row_data.get('days', {}).get(day, {})
+            symbol = day_data.get('symbol', '')
+            if not symbol: continue
+
+            parsed = parse_symbol(symbol)
+            # Jeśli to absencja (nie będąca 'pracująca' jak np. DYS), pomijamy w mianowniku
+            if parsed.get('special_symbol') and parsed.get(
+                    'special_symbol').upper() not in app_settings.WORK_LIKE_SYMBOLS:
+                continue
+
+            start_hour = parsed.get('start_hour')
+            # Traktujemy jako dzień pracujący jeśli ma godzinę rozpoczęcia
+            if start_hour is not None:
+                total_working_shifts += 1
+                # Sprawdzamy lokalizację 'h' (Home Office)
+                location = parsed.get('location')
+                # Jeśli lokalizacja w symbolu to 'h', LUB brak w symbolu ale domyślna to 'h'
+                default_loc = row_data.get('lokalizacja_domyslna', '')
+
+                if location == 'h':
+                    ho_shifts += 1
+                elif not location and default_loc == 'h':
+                    ho_shifts += 1
+
+        if total_working_shifts == 0: return 0.0
+        return (ho_shifts / total_working_shifts) * 100.0
 
     def _calculate_morning_percentage_display(self, row_data):
         """Oblicza procent zmian porannych (start 0-13) względem wszystkich zmian roboczych."""
@@ -331,6 +417,9 @@ class ScheduleTableModel(QAbstractTableModel):
         if col_id == 'percent_morning':
             return self._calculate_morning_percentage_value(row_data)
 
+        if col_id == 'percent_ho':
+            return self._calculate_ho_percentage_value(row_data)
+
         if col_id.startswith("custom_"):
             user_id = str(key[3])
             if hasattr(self, '_custom_columns') and self._custom_columns:
@@ -343,14 +432,16 @@ class ScheduleTableModel(QAbstractTableModel):
             else:
                 return ""
 
-        if col_id == 'wydzial': return key[0] or ""
-        if col_id == 'przelozony': return key[1] or ""
-        if col_id == 'uzytkownik_dane': return key[2] or ""
-        if col_id == 'uzytkownik_id': return int(key[3] or 0)
+        # Mapowanie dla kluczy z krotki
+        if col_id == 'sched_wydzial': return key[0] or ""
+        if col_id == 'sched_przelozony': return key[1] or ""
+        if col_id == 'sched_user_display': return key[2] or ""
+        if col_id == 'sched_user_id': return int(key[3] or 0)
 
         value = row_data.get(col_id, '')
 
-        if col_id in ['etat', 'dtn', 'korekta']:
+        # Lista kolumn liczbowych (zaktualizowane klucze)
+        if col_id in ['sched_etat', 'sched_dtn', 'sched_korekta']:
             return float(value or 0)
 
         if col_id == 'total_hours':
@@ -519,16 +610,24 @@ class ScheduleTableModel(QAbstractTableModel):
 
     def _get_user_data(self, row_data, key, col, is_employee_column):
         base_data = {
-            'wydzial': key[0] or '', 'przelozony': key[1] or '',
-            'przelozony_nazwisko_imie': row_data.get('przelozony_nazwisko_imie', ''),
-            'nazwisko_imie': row_data.get('nazwisko_imie', ''), 'uzytkownik_dane': key[2] or '',
-            'uzytkownik_id': key[3] or 0, 'nr_kadrowy': row_data.get('nr_kadrowy', ''),
-            'rola_nazwa': row_data.get('rola_nazwa', ''), 'pod_rola_nazwa': row_data.get('pod_rola_nazwa', ''),
-            'etat': row_data.get('etat', ''), 'jezyk': row_data.get('jezyk', ''),
-            'korekta': row_data.get('korekta', ''), 'dtn': row_data.get('dtn', ''),
-            'lokalizacja_domyslna': row_data.get('lokalizacja_domyslna', ''),
-            'komentarz_grafik': row_data.get('komentarz_grafik', ''),
-            'system_czasu_pracy': row_data.get('system_czasu_pracy', ''), 'column_type': 'employee'
+            'wydzial': key[0] or '',
+            'przelozony': key[1] or '',
+            'uzytkownik_dane': key[2] or '',
+            'uzytkownik_id': key[3] or 0,
+            # ZMIANA: Używamy kluczy sched_*
+            'przelozony_nazwisko_imie': row_data.get('sched_przelozony_nazwisko', ''),
+            'nazwisko_imie': row_data.get('sched_user_name', ''),
+            'nr_kadrowy': row_data.get('sched_nr_kadrowy', ''),
+            'rola_nazwa': row_data.get('sched_rola', ''),
+            'pod_rola_nazwa': row_data.get('sched_podrola', ''),
+            'etat': row_data.get('sched_etat', ''),
+            'jezyk': row_data.get('sched_jezyk', ''),
+            'korekta': row_data.get('sched_korekta', ''),
+            'dtn': row_data.get('sched_dtn', ''),
+            'lokalizacja_domyslna': row_data.get('sched_lokalizacja', ''),
+            'komentarz_grafik': row_data.get('sched_komentarz', ''),
+            'system_czasu_pracy': row_data.get('sched_system_pracy', ''),
+            'column_type': 'employee'
         }
         if is_employee_column:
             return base_data
