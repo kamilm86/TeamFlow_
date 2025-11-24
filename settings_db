@@ -44,9 +44,10 @@ class SettingsDatabase:
             'name': 'Podstawowy',
             'font_family': 'Segoe UI',
             'font_size': 9,
-            'row_height': 25,
-            'header_height': 35,
-            'day_col_width': 45
+            'row_height': 25,       # Dla głównego grafiku
+            'header_height': 35,    # Dla nagłówków
+            'day_col_width': 45,    # Dla kolumn dni
+            'staffing_row_height': 22 # <--- NOWOŚĆ: Dla okna Obsady
         }
         # Domyślne ustawienia z NOWYMI kluczami
         defaults = {
@@ -57,12 +58,12 @@ class SettingsDatabase:
             'layout_profiles': {
                 'Podstawowy': default_profile
             },
-            'visible_columns': ['sched_wydzial', 'sched_przelozony_nazwisko', 'sched_user_display',
-                                'sched_lokalizacja'],
+            'visible_columns': ['sched_wydzial', 'sched_przelozony_nazwisko', 'sched_user_display'],
             'show_schedule_comment': False,
             'show_schedule_percent_morning': False,
             'import_grupa': 3, 'import_funkcja': 1,
             'is_maximized': True, 'window_size': (1600, 800),
+            'staffing_window_size': (1300, 800),
             'column_widths': {}, 'last_filters': {}, 'sort_preferences': [],
             'outlook_template_path': '', 'saved_filters': {},
             'visible_filters': None, 'row_colors': {},
