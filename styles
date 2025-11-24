@@ -900,3 +900,68 @@ class AppStyles:
                 background-color: transparent;
             }}
         """
+
+    @staticmethod
+    def get_notification_drawer_style(theme="dark"):
+        """Zwraca styl dla głównego kontenera powiadomień."""
+        if theme == "dark":
+            bg_color = "#202225"
+            border_color = "#18191c"
+            header_bg = "#292b2f"
+            text_color = "white"
+            scrollbar_bg = "#202225"
+            scrollbar_handle = "#40444b"
+        else:  # Light theme
+            bg_color = "#f8f9fa"      # Jasne tło
+            border_color = "#dee2e6"  # Szara ramka
+            header_bg = "#e9ecef"     # Nieco ciemniejszy nagłówek
+            text_color = "#212529"    # Ciemny tekst
+            scrollbar_bg = "#f1f1f1"
+            scrollbar_handle = "#c1c1c1"
+
+        return f"""
+            QWidget#Drawer {{ background-color: {bg_color}; border-left: 1px solid {border_color}; }}
+            QFrame#Header {{ background-color: {header_bg}; border-bottom: 1px solid {border_color}; }}
+            QLabel {{ color: {text_color}; }}
+            QScrollArea {{ border: none; background: transparent; }}
+            QScrollBar:vertical {{ width: 6px; background: {scrollbar_bg}; }}
+            QScrollBar::handle:vertical {{ background: {scrollbar_handle}; border-radius: 3px; }}
+        """
+
+    @staticmethod
+    def get_notification_item_style(theme="dark", border_color="#3498db"):
+        """Zwraca styl dla pojedynczego kafelka powiadomienia."""
+        if theme == "dark":
+            bg_color = "#2f3136"
+            title_color = "white"
+            msg_color = "#b9bbbe"
+            time_color = "#72767d"
+            close_color = "#72767d"
+            close_hover = "#dcddde"
+        else:  # Light theme
+            bg_color = "#ffffff"
+            title_color = "#212529"   # Prawie czarny
+            msg_color = "#495057"     # Ciemnoszary
+            time_color = "#868e96"    # Szary
+            close_color = "#adb5bd"
+            close_hover = "#495057"
+
+        return f"""
+            QFrame#NotifItem {{
+                background-color: {bg_color}; 
+                border-radius: 4px;
+                border-left: 3px solid {border_color};
+                /* Subtelny cień w CSS Qt jest trudny, używamy borderu dla separacji w light mode */
+                border-right: 1px solid {bg_color if theme == 'dark' else '#dee2e6'};
+                border-top: 1px solid {bg_color if theme == 'dark' else '#dee2e6'};
+                border-bottom: 1px solid {bg_color if theme == 'dark' else '#dee2e6'};
+            }}
+            QLabel {{ border: none; background: transparent; }}
+            QLabel#Title {{ font-weight: bold; font-size: 9pt; color: {title_color}; }}
+            QLabel#Msg {{ font-size: 8pt; color: {msg_color}; }}
+            QLabel#Time {{ font-size: 7pt; color: {time_color}; }}
+            QPushButton#CloseBtn {{ 
+                border: none; background: transparent; color: {close_color}; font-weight: bold; 
+            }}
+            QPushButton#CloseBtn:hover {{ color: {close_hover}; }}
+        """
