@@ -1,34 +1,101 @@
 # settings_dialog.py
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                                QPushButton, QComboBox, QGroupBox, QRadioButton,
-                               QFontComboBox, QSpinBox, QCheckBox, QGridLayout, QLineEdit, QFileDialog, QFormLayout)
+                               QFontComboBox, QSpinBox, QCheckBox, QGridLayout, QLineEdit, QFileDialog, QFormLayout,
+                               QTabWidget, QWidget, QMessageBox, QInputDialog)
 from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QFont
 from styles import AppStyles
 from debug_utils import debug_print
+from app_settings import app_settings
+
 
 class AppSettingsDialog(QDialog):
     """Dialog do konfiguracji ustawień aplikacji, w tym motywu i importu."""
     live_theme_changed = Signal(str, str, int)
-    import_requested = Signal(int, int) # Sygnał emitowany z (grupa, funkcja)
+    import_requested = Signal(int, int)  # Sygnał emitowany z (grupa, funkcja)
 
-    def __init__(self, parent=None, settings=None):
+    # Dodajemy sygnał do zapisu ustawień globalnych (SQL)
+    save_global_settings_requested = Signal(dict)
+
+    def __init__(self, parent=None, settings=None, user_role=None):
         super().__init__(parent)
         self.parent_widget = parent
         self.current_settings = settings if settings else {}
+        self.user_role = user_role
         self.setWindowTitle("Ustawienia")
-        self.setMinimumWidth(450)
+        self.setMinimumWidth(600)
+
+        # --- POPRAWKA: Inicjalizacja profili PRZED utworzeniem UI ---
+        # Zapobiega błędowi AttributeError, gdy setup_ui -> setChecked wyzwala sygnał
+        self.profiles = self.current_settings.get('layout_profiles', {}).copy()
+
+        # Zabezpieczenie przed brakiem profili (profil domyślny)
+        if not self.profiles:
+            self.profiles = {'Podstawowy': {
+                'font_family': 'Segoe UI', 'font_size': 9,
+                'row_height': 25, 'header_height': 35, 'day_col_width': 45
+            }}
+        # -----------------------------------------------------------
+
         self.setup_ui()
         self.apply_dialog_theme()
         self.connect_signals()
 
     def setup_ui(self):
         main_layout = QVBoxLayout(self)
-        theme_group = self._create_theme_group()
-        import_group = self._create_import_group()
-        outlook_group = self._create_outlook_group()
-        display_options_group = self._create_display_options_group()
 
-        self.save_settings_checkbox = QCheckBox("Zapamiętaj ustawienia na stałe")
+        # Używamy QTabWidget dla porządku
+        self.tabs = QTabWidget()
+
+        # --- 1. Zakładka Ogólne ---
+        general_tab = QWidget()
+        general_layout = QVBoxLayout(general_tab)
+
+        theme_group = self._create_theme_group()
+        display_options_group = self._create_display_options_group()
+        outlook_group = self._create_outlook_group()
+
+        general_layout.addWidget(theme_group)
+        general_layout.addWidget(display_options_group)
+        general_layout.addWidget(outlook_group)
+        general_layout.addStretch()
+
+        self.tabs.addTab(general_tab, "Ogólne")
+
+        # --- 2. Zakładka Import Danych ---
+        import_tab = QWidget()
+        import_layout = QVBoxLayout(import_tab)
+        import_group = self._create_import_group()
+        import_layout.addWidget(import_group)
+        import_layout.addStretch()
+        self.tabs.addTab(import_tab, "Import Danych")
+
+        # --- 3. Zakładka Konfiguracja Grup (OSOBNA) ---
+        has_group_access = (app_settings.has_permission(self.user_role, 'manage_app_configuration') or
+                            app_settings.has_permission(self.user_role, 'manage_group_definitions'))
+
+        if has_group_access:
+            groups_tab = QWidget()
+            groups_layout = QVBoxLayout(groups_tab)
+            groups_config_group = self._create_groups_config_group()
+            groups_layout.addWidget(groups_config_group)
+            groups_layout.addStretch()
+            self.tabs.addTab(groups_tab, "Grupy i Wagi")
+
+        # --- 4. Zakładka Administracja (Globalne flagi) ---
+        if app_settings.has_permission(self.user_role, 'manage_app_configuration'):
+            admin_tab = QWidget()
+            admin_layout = QVBoxLayout(admin_tab)
+            admin_group = self._create_admin_group()
+            admin_layout.addWidget(admin_group)
+            admin_layout.addStretch()
+            self.tabs.addTab(admin_tab, "Administracja")
+
+        main_layout.addWidget(self.tabs)
+
+        # Checkbox zapisu użytkownika i przyciski (na dole, poza zakładkami)
+        self.save_settings_checkbox = QCheckBox("Zapamiętaj moje ustawienia na stałe")
         self.save_settings_checkbox.setChecked(True)
 
         buttons_layout = QHBoxLayout()
@@ -38,147 +105,236 @@ class AppSettingsDialog(QDialog):
         buttons_layout.addWidget(self.ok_button)
         buttons_layout.addWidget(self.cancel_button)
 
-        main_layout.addWidget(theme_group)
-        main_layout.addWidget(import_group)
-        main_layout.addWidget(outlook_group)
-        main_layout.addWidget(display_options_group)
-        main_layout.addLayout(buttons_layout)
         main_layout.addWidget(self.save_settings_checkbox, 0, Qt.AlignRight)
+        main_layout.addLayout(buttons_layout)
 
         self._load_settings_to_widgets()
 
-    def _create_outlook_group(self):
-        """Tworzy grupę kontrolek dla ustawień Outlooka."""
-        group = QGroupBox("Ustawienia Outlook")
-        layout = QGridLayout()
-
-        layout.addWidget(QLabel("Folder z szablonami (.oft):"), 0, 0)
-        self.template_path_edit = QLineEdit()
-        self.template_path_edit.setReadOnly(True)
-        layout.addWidget(self.template_path_edit, 1, 0)
-
-        self.browse_button = QPushButton("Przeglądaj...")
-        layout.addWidget(self.browse_button, 1, 1)
-
-        group.setLayout(layout)
-        return group
-
-    def _browse_for_template_folder(self):
-        """Otwiera dialog wyboru folderu."""
-        folder_path = QFileDialog.getExistingDirectory(self, "Wybierz folder z szablonami .oft")
-        if folder_path:
-            self.template_path_edit.setText(folder_path)
-
     def _create_theme_group(self):
-        """Tworzy grupę kontrolek do zmiany motywu i czcionki."""
-        group = QGroupBox("Wygląd i motyw")
-        layout = QGridLayout()
+        """Tworzy zaawansowaną grupę zarządzania profilami wyglądu."""
+        group = QGroupBox("Profile Wyglądu i Układu")
+        layout = QVBoxLayout()
 
+        # --- Sekcja wyboru profilu ---
+        profile_select_layout = QHBoxLayout()
+        profile_select_layout.addWidget(QLabel("Aktywny profil:"))
+
+        self.profile_combo = QComboBox()
+        self.profile_combo.currentIndexChanged.connect(self._on_profile_changed)
+
+        self.add_profile_btn = QPushButton("+ Nowy")
+        self.add_profile_btn.setFixedWidth(60)
+        self.add_profile_btn.clicked.connect(self._add_new_profile)
+
+        self.delete_profile_btn = QPushButton("Usuń")
+        self.delete_profile_btn.setFixedWidth(60)
+        self.delete_profile_btn.clicked.connect(self._delete_profile)
+
+        profile_select_layout.addWidget(self.profile_combo, 1)
+        profile_select_layout.addWidget(self.add_profile_btn)
+        profile_select_layout.addWidget(self.delete_profile_btn)
+
+        layout.addLayout(profile_select_layout)
+
+        # --- Sekcja parametrów (Grid) ---
+        params_group = QGroupBox("Parametry profilu")
+        params_layout = QGridLayout(params_group)
+
+        # Motyw (Dark/Light)
         self.dark_theme_radio = QRadioButton("Ciemny")
         self.light_theme_radio = QRadioButton("Jasny")
-        layout.addWidget(self.dark_theme_radio, 0, 0)
-        layout.addWidget(self.light_theme_radio, 0, 1)
 
-        self.font_combo = QComboBox()
-        preferred_fonts = ["Segoe UI", "Calibri", "Arial", "Tahoma", "Verdana", "Trebuchet MS"]
-        self.font_combo.addItems(preferred_fonts)
-        layout.addWidget(QLabel("Czcionka:"), 1, 0)
-        layout.addWidget(self.font_combo, 1, 1)
+        theme_layout = QHBoxLayout()
+        theme_layout.addWidget(self.dark_theme_radio)
+        theme_layout.addWidget(self.light_theme_radio)
+        params_layout.addWidget(QLabel("Motyw kolorystyczny:"), 0, 0)
+        params_layout.addLayout(theme_layout, 0, 1)
 
+        # Parametry czcionki
+        self.font_combo = QFontComboBox()
         self.font_size_spin = QSpinBox()
-        # --- ZMIANA: Rozszerzenie zakresu rozmiaru czcionki ---
-        self.font_size_spin.setRange(7, 12)
-        layout.addWidget(QLabel("Rozmiar:"), 2, 0)
-        layout.addWidget(self.font_size_spin, 2, 1)
+        self.font_size_spin.setRange(6, 24)
 
-        group.setLayout(layout)
-        return group
+        params_layout.addWidget(QLabel("Czcionka:"), 1, 0)
+        params_layout.addWidget(self.font_combo, 1, 1)
+        params_layout.addWidget(QLabel("Rozmiar czcionki:"), 2, 0)
+        params_layout.addWidget(self.font_size_spin, 2, 1)
 
-    def _create_import_group(self):
-        """Tworzy grupę kontrolek dla parametrów importu grafiku."""
-        group = QGroupBox("Ustawienia Importu Grafiku")
-        layout = QGridLayout()
+        # Parametry wymiarów
+        self.row_height_spin = QSpinBox()
+        self.row_height_spin.setRange(15, 100)
+        self.row_height_spin.setSuffix(" px")
 
-        # Etykiety i ComboBoxy
-        layout.addWidget(QLabel("Importuj grupę:"), 0, 0)
-        self.grupa_combo = QComboBox()
-        self.grupa_combo.addItem("INBOUND", 1)
-        self.grupa_combo.addItem("OUTBOUND", 2)
-        self.grupa_combo.addItem("WSZYSCY", 3)
-        layout.addWidget(self.grupa_combo, 0, 1)
+        self.header_height_spin = QSpinBox()
+        self.header_height_spin.setRange(20, 100)
+        self.header_height_spin.setSuffix(" px")
 
-        layout.addWidget(QLabel("Importuj funkcję:"), 1, 0)
-        self.funkcja_combo = QComboBox()
-        self.funkcja_combo.addItem("wszyscy", 1)
-        self.funkcja_combo.addItem("tylko konsultanci", 2)
-        self.funkcja_combo.addItem("tylko koordynatorzy", 3)
-        self.funkcja_combo.addItem("grupa WZK2h", 4)
-        self.funkcja_combo.addItem("cały DBZ", 5)
-        self.funkcja_combo.addItem("inne wydziały wsparcia", 6)
-        layout.addWidget(self.funkcja_combo, 1, 1)
+        self.day_width_spin = QSpinBox()
+        self.day_width_spin.setRange(20, 200)
+        self.day_width_spin.setSuffix(" px")
 
-        # Nowy przycisk "Importuj teraz"
-        self.import_now_button = QPushButton("Importuj teraz")
-        layout.addWidget(self.import_now_button, 2, 0, 1, 2)  # Rozciągnięty na dwie kolumny
+        params_layout.addWidget(QLabel("Wysokość wiersza tabeli:"), 3, 0)
+        params_layout.addWidget(self.row_height_spin, 3, 1)
 
-        group.setLayout(layout)
-        return group
+        params_layout.addWidget(QLabel("Wysokość nagłówka:"), 4, 0)
+        params_layout.addWidget(self.header_height_spin, 4, 1)
 
-    def _create_display_options_group(self):
-        """Tworzy grupę kontrolek do konfiguracji wyglądu ikon w grafiku."""
-        group = QGroupBox("Wygląd ikon w komórkach grafiku")
-        layout = QFormLayout()
-        layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        params_layout.addWidget(QLabel("Szerokość kolumny dnia:"), 5, 0)
+        params_layout.addWidget(self.day_width_spin, 5, 1)
 
-        self.show_special_symbol_check = QCheckBox("Pokaż symbol specjalny (np. U, CO)")
-        self.special_symbol_pos_combo = QComboBox()
-        # ZMIANA: Nowe opcje pozycji
-        self.special_symbol_pos_combo.addItems(["Lewy górny róg", "Prawy górny róg"])
+        layout.addWidget(params_group)
 
-        self.show_location_symbol_check = QCheckBox("Pokaż symbol lokalizacji (np. h, s)")
-        self.location_symbol_pos_combo = QComboBox()
-        # ZMIANA: Nowe opcje pozycji
-        self.location_symbol_pos_combo.addItems(["Lewy górny róg", "Prawy górny róg"])
-
-        layout.addRow(self.show_special_symbol_check)
-        layout.addRow("Pozycja symbolu specjalnego:", self.special_symbol_pos_combo)
-        layout.addRow(self.show_location_symbol_check)
-        layout.addRow("Pozycja symbolu lokalizacji:", self.location_symbol_pos_combo)
+        # Podłączenie sygnałów podglądu na żywo
+        self.dark_theme_radio.toggled.connect(self._emit_live_preview_changes)
+        self.font_combo.currentTextChanged.connect(self._update_current_profile_data)
+        self.font_size_spin.valueChanged.connect(self._update_current_profile_data)
+        self.row_height_spin.valueChanged.connect(self._update_current_profile_data)
+        self.header_height_spin.valueChanged.connect(self._update_current_profile_data)
+        self.day_width_spin.valueChanged.connect(self._update_current_profile_data)
 
         group.setLayout(layout)
         return group
 
     def _load_settings_to_widgets(self):
-        # Przywrócono wczytywanie ustawień importu
+        # Ładowanie motywu (globalne)
+        # UWAGA: Ustawienie setChecked wyzwala sygnał toggled -> _emit_live_preview_changes
+        # Dlatego self.profiles musi być już zainicjowane (co zrobiliśmy w __init__)
         if self.current_settings.get('theme', 'dark') == 'dark':
             self.dark_theme_radio.setChecked(True)
         else:
             self.light_theme_radio.setChecked(True)
-        default_font = self.current_settings.get('font_family', 'Segoe UI')
-        self.font_combo.setCurrentText(default_font)
-        self.font_size_spin.setValue(self.current_settings.get('font_size', 9))
 
+        active_profile_name = self.current_settings.get('active_profile', 'Podstawowy')
+
+        self._refresh_profile_combo(active_profile_name)
+
+        # Reszta ustawień
         index_g = self.grupa_combo.findData(self.current_settings.get('import_grupa', 3))
         if index_g != -1: self.grupa_combo.setCurrentIndex(index_g)
         index_f = self.funkcja_combo.findData(self.current_settings.get('import_funkcja', 1))
         if index_f != -1: self.funkcja_combo.setCurrentIndex(index_f)
-
         self.show_special_symbol_check.setChecked(self.current_settings.get('show_special_symbol', True))
         self.show_location_symbol_check.setChecked(self.current_settings.get('show_location_symbol', True))
         special_pos = self.current_settings.get('special_symbol_position', 'top_left')
         self.special_symbol_pos_combo.setCurrentIndex(1 if special_pos == 'top_right' else 0)
         location_pos = self.current_settings.get('location_symbol_position', 'top_right')
         self.location_symbol_pos_combo.setCurrentIndex(1 if location_pos == 'top_right' else 0)
-
         self.template_path_edit.setText(self.current_settings.get('outlook_template_path', ''))
 
-    def get_current_settings(self):
-        # Przywrócono zwracanie ustawień importu
+    def _refresh_profile_combo(self, select_name=None):
+        self.profile_combo.blockSignals(True)
+        self.profile_combo.clear()
+        for name in sorted(self.profiles.keys()):
+            self.profile_combo.addItem(name)
+
+        if select_name and select_name in self.profiles:
+            self.profile_combo.setCurrentText(select_name)
+
+        self.profile_combo.blockSignals(False)
+        self._on_profile_changed()
+
+    def _on_profile_changed(self):
+        """Ładuje dane z wybranego profilu do kontrolek."""
+        name = self.profile_combo.currentText()
+        data = self.profiles.get(name, {})
+
+        self.delete_profile_btn.setEnabled(name != "Podstawowy")
+
+        self._block_params_signals(True)
+
+        # Ustawienie wartości w kontrolkach
+        self.font_combo.setCurrentFont(QFont(data.get('font_family', 'Segoe UI')))
+        self.font_size_spin.setValue(int(data.get('font_size', 9)))
+        self.row_height_spin.setValue(int(data.get('row_height', 25)))
+        self.header_height_spin.setValue(int(data.get('header_height', 35)))
+        self.day_width_spin.setValue(int(data.get('day_col_width', 45)))
+
+        self._block_params_signals(False)
+
+        # Wywołaj podgląd, aby zaktualizować okno główne
+        self._emit_live_preview_changes()
+
+    def _block_params_signals(self, block: bool):
+        self.font_combo.blockSignals(block)
+        self.font_size_spin.blockSignals(block)
+        self.row_height_spin.blockSignals(block)
+        self.header_height_spin.blockSignals(block)
+        self.day_width_spin.blockSignals(block)
+
+    def _update_current_profile_data(self):
+        """Aktualizuje słownik profilu w pamięci na podstawie kontrolek."""
+        name = self.profile_combo.currentText()
+        if not name: return
+
+        self.profiles[name] = {
+            'font_family': self.font_combo.currentFont().family(),
+            'font_size': self.font_size_spin.value(),
+            'row_height': self.row_height_spin.value(),
+            'header_height': self.header_height_spin.value(),
+            'day_col_width': self.day_width_spin.value()
+        }
+        self._emit_live_preview_changes()
+
+    def _add_new_profile(self):
+        name, ok = QInputDialog.getText(self, "Nowy Profil", "Podaj nazwę nowego profilu:")
+        if ok and name:
+            name = name.strip()
+            if not name: return
+            if name in self.profiles:
+                QMessageBox.warning(self, "Błąd", "Profil o takiej nazwie już istnieje.")
+                return
+
+            # Kopiuj ustawienia z obecnego profilu
+            current_data = {
+                'font_family': self.font_combo.currentFont().family(),
+                'font_size': self.font_size_spin.value(),
+                'row_height': self.row_height_spin.value(),
+                'header_height': self.header_height_spin.value(),
+                'day_col_width': self.day_width_spin.value()
+            }
+            self.profiles[name] = current_data
+            self._refresh_profile_combo(name)
+
+    def _delete_profile(self):
+        name = self.profile_combo.currentText()
+        if name == "Podstawowy":
+            QMessageBox.warning(self, "Błąd", "Nie można usunąć profilu podstawowego.")
+            return
+
+        if QMessageBox.question(self, "Potwierdzenie", f"Czy na pewno usunąć profil '{name}'?") == QMessageBox.Yes:
+            del self.profiles[name]
+            self._refresh_profile_combo("Podstawowy")
+
+    def _emit_live_preview_changes(self):
+        selected_theme = 'dark' if self.dark_theme_radio.isChecked() else 'light'
         font_family = self.font_combo.currentText()
+        font_size = self.font_size_spin.value()
+
+        if self.parent_widget:
+            active_name = self.profile_combo.currentText()
+            # Aktualizujemy profile w obiekcie settings rodzica TYMCZASOWO
+            self.parent_widget.user_app_settings['layout_profiles'] = self.profiles
+            self.parent_widget.user_app_settings['active_profile'] = active_name
+
+            self.live_theme_changed.emit(selected_theme, font_family, font_size)
+            self.apply_dialog_theme()
+
+    def get_current_settings(self):
+        active_name = self.profile_combo.currentText()
+        active_data = self.profiles.get(active_name, {})
+        font_family = self.font_combo.currentText()
+
         return {
             'theme': 'dark' if self.dark_theme_radio.isChecked() else 'light',
-            'font_family': font_family,
-            'font_size': self.font_size_spin.value(),
+
+            # Dane do zapisu profili
+            'layout_profiles': self.profiles,
+            'active_profile': active_name,
+
+            # Dane dla kompatybilności (fallback)
+            'font_family': active_data.get('font_family', 'Segoe UI'),
+            'font_size': active_data.get('font_size', 9),
+
             'import_grupa': self.grupa_combo.currentData(),
             'import_funkcja': self.funkcja_combo.currentData(),
             'save_to_db': self.save_settings_checkbox.isChecked(),
@@ -189,47 +345,81 @@ class AppSettingsDialog(QDialog):
             'outlook_template_path': self.template_path_edit.text()
         }
 
+    def _create_groups_config_group(self):
+        group = QGroupBox("Zarządzanie Grupami Raportowymi")
+        layout = QVBoxLayout(group)
+
+        info_label = QLabel(
+            "Zdefiniuj grupy wydziałów oraz ich procentowy udział w raportach (RBH).\n"
+            "Zmiany tutaj wpłyną na obliczenia w oknie 'Obsada' dla wszystkich użytkowników."
+        )
+        info_label.setWordWrap(True)
+        info_label.setStyleSheet("color: gray; font-style: italic; margin-bottom: 10px;")
+
+        self.edit_groups_btn = QPushButton("Edytuj Grupy i Udziały %")
+        self.edit_groups_btn.setMinimumHeight(40)
+        self.edit_groups_btn.setCursor(Qt.PointingHandCursor)
+        self.edit_groups_btn.clicked.connect(self.open_group_config_dialog)
+
+        layout.addWidget(info_label)
+        layout.addWidget(self.edit_groups_btn)
+
+        return group
+
+    def open_group_config_dialog(self):
+        from group_config_dialog import GroupConfigDialog
+        is_dark = True
+        if self.parent_widget and hasattr(self.parent_widget, 'is_dark_theme'):
+            is_dark = self.parent_widget.is_dark_theme
+
+        dialog = GroupConfigDialog(self, app_settings.GROUP_MAPPING, is_dark)
+
+        if dialog.exec():
+            new_mapping_json = dialog.get_mapping_json()
+            self.save_global_settings_requested.emit({'GroupMapping': new_mapping_json})
+            app_settings.parse_and_apply('GroupMapping', new_mapping_json)
+            QMessageBox.information(self, "Zapisano", "Konfiguracja grup została zaktualizowana i wysłana do bazy.")
+
+    def _create_admin_group(self):
+        group = QGroupBox("Ustawienia Globalne Aplikacji")
+        group.setStyleSheet(
+            "QGroupBox { border: 1px solid #e74c3c; margin-top: 10px; } QGroupBox::title { color: #e74c3c; }")
+        layout = QGridLayout()
+        self.global_notification_check = QCheckBox("Włącz Centrum Powiadomień (dla wszystkich użytkowników)")
+        self.global_notification_check.setChecked(app_settings.ENABLE_NOTIFICATION_CENTER)
+        layout.addWidget(self.global_notification_check, 0, 0)
+        layout.addWidget(QLabel("<i>Zmiana tego ustawienia wpłynie na wszystkich użytkowników aplikacji.</i>"), 1, 0)
+        group.setLayout(layout)
+        return group
+
+    def _on_accept(self):
+        if hasattr(self, 'global_notification_check'):
+            new_global_state = self.global_notification_check.isChecked()
+            if new_global_state != app_settings.ENABLE_NOTIFICATION_CENTER:
+                self.save_global_settings_requested.emit({
+                    "NotificationCenterEnabled": "true" if new_global_state else "false"
+                })
+        self.accept()
+
     def connect_signals(self):
-        self.ok_button.clicked.connect(self.accept)
+        self.ok_button.clicked.connect(self._on_accept)
         self.cancel_button.clicked.connect(self.reject)
-        self.dark_theme_radio.toggled.connect(self._emit_live_preview_changes)
-        self.font_combo.currentTextChanged.connect(self._emit_live_preview_changes)
-        self.font_size_spin.valueChanged.connect(self._emit_live_preview_changes)
         self.import_now_button.clicked.connect(self._on_import_now_clicked)
         self.browse_button.clicked.connect(self._browse_for_template_folder)
 
     def _on_import_now_clicked(self):
-        # Krok 1: Zapisz aktualne ustawienia (tak jakbyś kliknął OK)
         new_settings = self.get_current_settings()
         should_save = new_settings.pop('save_to_db', False)
-
-        # Zaktualizuj słownik w oknie głównym
         self.parent_widget.user_app_settings.update(new_settings)
-
-        # Zapisz do bazy, jeśli zaznaczone
         if should_save:
             self.parent_widget.settings_db.save_settings(self.parent_widget.user_app_settings)
             debug_print("Zapisano ustawienia przed importem.")
-
-        # Krok 2: Wyemituj sygnał z prośbą o import
         grupa = self.grupa_combo.currentData()
         funkcja = self.funkcja_combo.currentData()
         self.import_requested.emit(grupa, funkcja)
-
-        # Krok 3: Zamknij okno dialogowe
         self.accept()
 
-    def _emit_live_preview_changes(self):
-        """Emituje sygnał ze zmianami motywu, aby główne okno mogło je pokazać na żywo."""
-        selected_theme = 'dark' if self.dark_theme_radio.isChecked() else 'light'
-        font_family = self.font_combo.currentText()
-        font_size = self.font_size_spin.value()
-
-        self.live_theme_changed.emit(selected_theme, font_family, font_size)
-        self.apply_dialog_theme()
-
     def apply_dialog_theme(self):
-        """Stosuje motyw dla samego okna dialogowego."""
         theme_to_apply = 'dark' if self.dark_theme_radio.isChecked() else 'light'
         self.setStyleSheet(AppStyles.get_dialog_style(theme_to_apply))
         button_style = AppStyles.get_button_style(theme_to_apply)
@@ -243,3 +433,60 @@ class AppSettingsDialog(QDialog):
             combo.setStyleSheet(combobox_style)
         for spinbox in self.findChildren(QSpinBox):
             spinbox.setStyleSheet(AppStyles.get_line_edit_style(theme_to_apply))
+
+    def _create_outlook_group(self):
+        group = QGroupBox("Ustawienia Outlook")
+        layout = QGridLayout()
+        layout.addWidget(QLabel("Folder z szablonami (.oft):"), 0, 0)
+        self.template_path_edit = QLineEdit()
+        self.template_path_edit.setReadOnly(True)
+        layout.addWidget(self.template_path_edit, 1, 0)
+        self.browse_button = QPushButton("Przeglądaj...")
+        layout.addWidget(self.browse_button, 1, 1)
+        group.setLayout(layout)
+        return group
+
+    def _browse_for_template_folder(self):
+        folder_path = QFileDialog.getExistingDirectory(self, "Wybierz folder z szablonami .oft")
+        if folder_path:
+            self.template_path_edit.setText(folder_path)
+
+    def _create_import_group(self):
+        group = QGroupBox("Ustawienia Importu Grafiku")
+        layout = QGridLayout()
+        layout.addWidget(QLabel("Importuj grupę:"), 0, 0)
+        self.grupa_combo = QComboBox()
+        self.grupa_combo.addItem("INBOUND", 1)
+        self.grupa_combo.addItem("OUTBOUND", 2)
+        self.grupa_combo.addItem("WSZYSCY", 3)
+        layout.addWidget(self.grupa_combo, 0, 1)
+        layout.addWidget(QLabel("Importuj funkcję:"), 1, 0)
+        self.funkcja_combo = QComboBox()
+        self.funkcja_combo.addItem("wszyscy", 1)
+        self.funkcja_combo.addItem("tylko konsultanci", 2)
+        self.funkcja_combo.addItem("tylko koordynatorzy", 3)
+        self.funkcja_combo.addItem("grupa WZK2h", 4)
+        self.funkcja_combo.addItem("cały DBZ", 5)
+        self.funkcja_combo.addItem("inne wydziały wsparcia", 6)
+        layout.addWidget(self.funkcja_combo, 1, 1)
+        self.import_now_button = QPushButton("Importuj teraz")
+        layout.addWidget(self.import_now_button, 2, 0, 1, 2)
+        group.setLayout(layout)
+        return group
+
+    def _create_display_options_group(self):
+        group = QGroupBox("Wygląd ikon w komórkach grafiku")
+        layout = QFormLayout()
+        layout.setFieldGrowthPolicy(QFormLayout.ExpandingFieldsGrow)
+        self.show_special_symbol_check = QCheckBox("Pokaż symbol specjalny (np. U, CO)")
+        self.special_symbol_pos_combo = QComboBox()
+        self.special_symbol_pos_combo.addItems(["Lewy górny róg", "Prawy górny róg"])
+        self.show_location_symbol_check = QCheckBox("Pokaż symbol lokalizacji (np. h, s)")
+        self.location_symbol_pos_combo = QComboBox()
+        self.location_symbol_pos_combo.addItems(["Lewy górny róg", "Prawy górny róg"])
+        layout.addRow(self.show_special_symbol_check)
+        layout.addRow("Pozycja symbolu specjalnego:", self.special_symbol_pos_combo)
+        layout.addRow(self.show_location_symbol_check)
+        layout.addRow("Pozycja symbolu lokalizacji:", self.location_symbol_pos_combo)
+        group.setLayout(layout)
+        return group
