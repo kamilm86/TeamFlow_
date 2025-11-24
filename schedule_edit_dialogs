@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel,
                                QTableWidget, QTableWidgetItem, QHeaderView, QDialogButtonBox, QTableView,
                                QAbstractItemView, QInputDialog)  # Dodano QInputDialog
 from PySide6.QtCore import Qt, Signal, QTimer, QDate
-from PySide6.QtGui import QFont, QColor
+from PySide6.QtGui import QFont, QColor, QCursor
 
 from styles import AppStyles
 from debug_utils import debug_print, log_error
@@ -566,8 +566,14 @@ class ScheduleChangeDialog(QDialog):
         is_hour = (field_type == "hour")
         values = list(range(24)) if is_hour else list(range(1, 14))
         title = "Wybierz godzinę rozp." if is_hour else "Wybierz liczbę godzin"
+
         dialog = DigitSelectionDialog(parent=self, title=title, values=values, current_theme=self.determined_theme)
-        dialog.move(QApplication.primaryScreen().geometry().center() - dialog.rect().center())
+
+        # --- ZMIANA: Otwieraj pod kursorem myszki zamiast na środku głównego ekranu ---
+        # Było: dialog.move(QApplication.primaryScreen().geometry().center() - dialog.rect().center())
+        dialog.move(QCursor.pos())
+        # ------------------------------------------------------------------------------
+
         if dialog.exec():
             selected_value = dialog.get_selected_value()
             target_button.setText(str(selected_value) if selected_value is not None else "Wybierz")
