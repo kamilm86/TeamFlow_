@@ -1328,12 +1328,12 @@ class StaffingDetailsWindow(QDialog):
         days = self._days_in_month
         schedule_matrix = [[0.0] * days for _ in range(24)]
         overtime_matrix = [[0.0] * days for _ in range(24)]
-        events_matrix = [[0.0] * days for _ in range(24)]  # Dla spotkań/szkoleń odejmowanych od grafiku
+        events_matrix = [[0.0] * days for _ in range(24)]
 
         events_map = self._get_events_duration_per_hour(all_events)
         location_map = self._get_daily_location_map(schedule_data)
 
-        # 1. Obliczanie godzin z grafiku (Standardowe zmiany)
+        # 1. Obliczanie godzin z grafiku
         for user_key, user_schedule in schedule_data.items():
             if user_schedule.get('dtn') == 1:
                 continue
@@ -1344,8 +1344,12 @@ class StaffingDetailsWindow(QDialog):
                 day_idx = day - 1
                 parsed = parse_symbol(day_info.get('symbol', ''))
 
-                if parsed.get('special_symbol') is not None and parsed.get('special_symbol').strip() != '':
-                    continue
+                # --- POPRAWKA LOGIKI ---
+                spec = parsed.get('special_symbol')
+                if spec and spec.strip():
+                    if spec.upper() not in app_settings.WORK_LIKE_SYMBOLS:
+                        continue
+                # -----------------------
 
                 if location_filter and location_filter != "-Wszystkie-" and location_map.get(
                         (user_key[3], day)) != location_filter:
@@ -1612,7 +1616,8 @@ class StaffingDetailsWindow(QDialog):
 
     def _calculate_actual_staffing_matrix(self) -> dict:
         """
-        Oblicza macierz obsady rzeczywistej z zabezpieczeniem przed błędami typów danych.
+        Oblicza macierz obsady rzeczywistej.
+        POPRAWKA: Uwzględnia symbole pracujące (HO, DYS itp.) w obsadzie.
         """
         schedule_data = self.parent_widget.filter_processed_data()
         all_events = self.data_provider.get_events_data(self._year, self._month, self.parent_widget.import_grupa,
@@ -1622,7 +1627,6 @@ class StaffingDetailsWindow(QDialog):
 
         granular_staffing = defaultdict(lambda: defaultdict(lambda: defaultdict(int)))
 
-        # 1. Zliczanie osób (bez zmian)
         for user_key, user_data in schedule_data.items():
             if user_data.get('dtn') == 1:
                 continue
@@ -1642,10 +1646,15 @@ class StaffingDetailsWindow(QDialog):
 
             for day, day_info in user_data.get('days', {}).items():
                 parsed_symbol = parse_symbol(day_info.get('symbol', ''))
+                special_symbol = parsed_symbol.get('special_symbol')
 
-                if parsed_symbol.get('special_symbol') is not None and parsed_symbol.get(
-                        'special_symbol').strip() != '':
-                    continue
+                # --- POPRAWKA LOGIKI ---
+                # Pomijamy dzień TYLKO wtedy, gdy jest symbol specjalny I NIE JEST on symbolem pracującym.
+                # Jeśli to np. HO, DYS, T - kod pójdzie dalej i policzy godziny.
+                if special_symbol and special_symbol.strip():
+                    if special_symbol.upper() not in app_settings.WORK_LIKE_SYMBOLS:
+                        continue
+                        # -----------------------
 
                 start_hour = parsed_symbol.get('start_hour')
                 base_work_hours = parsed_symbol.get('work_hours')
@@ -1659,6 +1668,9 @@ class StaffingDetailsWindow(QDialog):
 
                 for h in range(max(0, int(final_work_hours))):
                     current_hour = (start_hour + h) % 24
+
+                    # Jeśli w tej godzinie jest spotkanie/szkolenie, osoba nie jest wliczana do obsady (productywnej),
+                    # ale sam fakt posiadania symbolu HO jej nie wyklucza całkowicie.
                     if events_map.get(user_id, {}).get(day, {}).get(current_hour, 0) > 30:
                         continue
 
@@ -1671,9 +1683,8 @@ class StaffingDetailsWindow(QDialog):
                     )
                     granular_staffing[day][current_hour][grouping_key] += 1
 
-        # 2. Agregacja wyników (NAPRAWIONA LOGIKA KOMPATYBILNOŚCI)
+        # 2. Agregacja (bez zmian)
         group_mapping = app_settings.GROUP_MAPPING
-
         final_group_names = list(group_mapping.keys())
         if "TOTAL" not in final_group_names:
             final_group_names.append("TOTAL")
@@ -1686,26 +1697,15 @@ class StaffingDetailsWindow(QDialog):
                     continue
 
                 sums = defaultdict(float)
-
                 for grouping_key, count in granular_staffing[day][hour].items():
-                    wydzial = grouping_key[0]  # Wydział jest na indeksie 0
-
+                    wydzial = grouping_key[0]
                     sums['TOTAL'] += count
-
-                    # --- BEZPIECZNE SPRAWDZANIE KONFIGURACJI ---
                     for group_name, config in group_mapping.items():
                         weight = 0.0
-
-                        # Przypadek 1: Nowa konfiguracja (Słownik wag)
                         if isinstance(config, dict):
-                            if wydzial in config:
-                                weight = float(config[wydzial])
-
-                        # Przypadek 2: Stara konfiguracja (Lista wydziałów) - zapobiega Crashowi
+                            if wydzial in config: weight = float(config[wydzial])
                         elif isinstance(config, list):
-                            if wydzial in config:
-                                weight = 1.0
-
+                            if wydzial in config: weight = 1.0
                         if weight > 0:
                             sums[group_name] += count * weight
 
@@ -1946,12 +1946,10 @@ class StaffingDetailsWindow(QDialog):
         events_map = self._get_events_duration_per_hour(all_events)
         location_map = self._get_daily_location_map(schedule_data)
 
-        # 1. Oblicz sumy dzienne dla grafiku i zdarzeń
+        # 1. Oblicz sumy dzienne dla grafiku
         for user_key, user_schedule in schedule_data.items():
-            # ### POCZĄTEK ZMIANY ###
             if user_schedule.get('dtn') == 1:
                 continue
-            # ### KONIEC ZMIANY ###
 
             user_id, wydzial = user_key[3], user_key[0] or "Brak"
             korekta = float(user_schedule.get('korekta', 0.0) or 0.0)
@@ -1959,8 +1957,12 @@ class StaffingDetailsWindow(QDialog):
             for day, day_info in user_schedule.get('days', {}).items():
                 parsed = parse_symbol(day_info.get('symbol', ''))
 
-                if parsed.get('special_symbol') is not None and parsed.get('special_symbol').strip() != '':
-                    continue
+                # --- POPRAWKA LOGIKI ---
+                spec = parsed.get('special_symbol')
+                if spec and spec.strip():
+                    if spec.upper() not in app_settings.WORK_LIKE_SYMBOLS:
+                        continue
+                # -----------------------
 
                 shift_location = location_map.get((user_id, day))
                 if location_filter and location_filter != "-Wszystkie-" and shift_location != location_filter:
