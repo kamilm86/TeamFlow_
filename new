@@ -286,3 +286,34 @@ Co naprawiono?
  * Lokalizacja:
    * Jeśli wstawiany symbol to np. HO (pracujący) -> system wstawi lokalizację domyślną (np. h) i powstanie h;9;8;HO.
    * Jeśli wstawiany symbol to U (absencja) -> system wstawi godziny, ale pominie lokalizację, tworząc 9;8;U (zgodnie z tym, że absencje zazwyczaj nie mają lokalizacji, ale Lider OUT chce mieć godziny).
+
+
+
+Masz absolutną rację. Problem polega na tym, że chociaż _predict_new_symbol w main.py poprawnie wylicza nowy symbol (np. h;9;8;HO), to do procesora zmian (ScheduleChangeProcessor) przekazujemy typ APPLY_SPECIAL_SYMBOL i surowy symbol (np. "HO").
+Wątek w tle (schedule_change_processor.py) przelicza to na nowo, używając swojej wewnętrznej metody _prepare_new_symbol_legacy, która nie zna specyficznej logiki dla "Lidera OUT" (ustawiania startu na 9:00).
+Rozwiązaniem jest przekazanie do procesora już gotowego, obliczonego symbolu jako typ APPLY_BUILT_SYMBOL.
+Oto poprawiona końcówka metody _apply_special_symbol_to_selection w pliku main.py.
+Plik: main.py
+Znajdź w metodzie _apply_special_symbol_to_selection (na samym dole tej metody) pętlę tworzącą change_requests i podmień ją na poniższą wersję:
+        # ... (wcześniejszy kod metody bez zmian) ...
+
+        change_requests = []
+        for cell_data in cells_to_process:
+            # 1. Obliczamy pełny symbol lokalnie (korzystając z naprawionej logiki _predict_new_symbol)
+            new_symbol = self._predict_new_symbol(cell_data.get('symbol', ''), special_symbol, cell_data)
+            
+            # 2. ZMIANA: Przekazujemy gotowy symbol (APPLY_BUILT_SYMBOL) zamiast surowego (APPLY_SPECIAL_SYMBOL).
+            # Dzięki temu wątek w tle nie będzie próbował przeliczać go na nowo i nie zgubi godziny 9:00.
+            change_requests.append((ChangeType.APPLY_BUILT_SYMBOL, cell_data, new_symbol))
+
+        if change_requests:
+            self.schedule_change_processor.start_changes(change_requests)
+            if show_vacation_plan_warning and not self._should_ask_for_confirmation():
+                 QMessageBox.information(self, "Przypomnienie", "Zmieniono symbol urlopu. Pamiętaj o usunięciu go z planów urlopowych.")
+
+Dlaczego to zadziała?
+W pliku schedule_change_processor.py obsługa APPLY_BUILT_SYMBOL wygląda tak:
+if change_type == ChangeType.APPLY_BUILT_SYMBOL:
+    new_symbol = str(value)
+
+Oznacza to, że baza danych otrzyma dokładnie ten ciąg znaków, który wygenerowała Twoja poprawiona metoda _predict_new_symbol (czyli np. h;9;8;HO), zamiast próbować zgadywać go od zera.
