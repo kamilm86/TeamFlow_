@@ -51,3 +51,141 @@ Dla pewności upewnij się, że metoda closeEvent (którą podałem w poprzednie
         event.accept()
 
 Teraz zarówno krzyżyk ("X"), jak i przycisk "Zamknij" wywołają ten sam kod i zapiszą rozmiar okna.
+
+
+Rozumiem. Problem wynika z tego, że obecna logika w _predict_new_symbol automatycznie zakłada, że jeśli wstawiamy absencję w dzień wolny (pusty), to system powinien pobrać etat i wstawić np. "8;U" (szczególnie w systemie równoważnym).
+Dla roli Lider musimy zablokować to zachowanie na etapie filtrowania komórek, zanim trafią one do przetwarzania.
+Należy zmodyfikować metodę _apply_special_symbol_to_selection w pliku main.py.
+Plik: main.py
+Zastąp metodę _apply_special_symbol_to_selection poniższą wersją. Dodałem w niej nową listę skipped_day_off oraz warunek sprawdzający, czy komórka jest pusta.
+    def _apply_special_symbol_to_selection(self, special_symbol: str):
+        """
+        Aplikuje symbol specjalny do zaznaczonych komórek z uwzględnieniem logiki Lidera:
+        1. Blokada wstawiania U/OS nie-Liderom.
+        2. Blokada wstawiania absencji w dni wolne (puste).
+        """
+        selected_cells_data = self.table.get_data_for_selected_cells()
+        if not selected_cells_data:
+            self.statusBar().showMessage("Nie zaznaczono żadnych komórek do edycji.", 3000)
+            return
+
+        if not self._can_modify_cells(selected_cells_data):
+            return
+
+        special_symbol_upper = special_symbol.upper()
+        user_role = self.current_user_app_role
+        
+        # Czy to jest symbol absencji? (np. U, L4, ale nie HO, DYS)
+        is_absence = special_symbol_upper in app_settings.get_absence_symbols()
+
+        show_vacation_plan_warning = False
+        cells_to_process = []
+        
+        # Listy pominiętych
+        skipped_restricted_symbol = [] 
+        skipped_day_off = [] # <--- NOWA LISTA
+
+        for cell_data in selected_cells_data:
+            permissions = self._get_permission_for_cell(cell_data)
+            if not permissions['can_edit_symbol']:
+                continue
+
+            target_role = cell_data.get('rola_nazwa', '')
+            current_symbol_str = cell_data.get('symbol', '')
+            parsed_current = parse_symbol(current_symbol_str)
+            current_special = (parsed_current.get('special_symbol') or '').upper()
+            
+            # Sprawdź czy dzień jest wolny (brak godzin pracy)
+            is_day_off = parsed_current.get('work_hours') is None
+
+            # --- NOWA LOGIKA: LIDER + DZIEŃ WOLNY + ABSENCJA ---
+            if user_role == 'Lider' and is_day_off and is_absence:
+                skipped_day_off.append(cell_data.get('uzytkownik_dane', 'Nieznany'))
+                continue
+            # ---------------------------------------------------
+
+            # Logika: Lider może wstawić "U" lub "OS" TYLKO osobie w roli Lider.
+            if user_role == 'Lider':
+                if special_symbol_upper in ['U', 'OS']:
+                    if target_role != 'Lider':
+                        skipped_restricted_symbol.append(cell_data.get('uzytkownik_dane', 'Nieznany'))
+                        continue
+            
+            # Ostrzeżenie przy zmianie 'U' na co innego
+            if current_special in ['U', 'UZ'] and special_symbol_upper not in ['U', 'UZ'] and special_symbol_upper:
+                show_vacation_plan_warning = True
+
+            cells_to_process.append(cell_data)
+
+        # --- KOMUNIKATY O POMINIĘCIACH ---
+        
+        if skipped_restricted_symbol:
+            QMessageBox.warning(self, "Ograniczenia uprawnień",
+                                f"Symbol '{special_symbol_upper}' może być wstawiony przez Lidera TYLKO innemu Liderowi.<br>"
+                                f"Pominięto zmiany dla:<br>- {', '.join(set(skipped_restricted_symbol))}")
+
+        # Nowy komunikat dla dni wolnych
+        if skipped_day_off:
+             # Opcjonalnie: pokaż komunikat, lub po prostu statusbar, żeby nie spamować oknami
+             # Tutaj wersja z Info, bo to ważna reguła biznesowa
+             if len(skipped_day_off) > 5:
+                 msg_users = f"{len(skipped_day_off)} komórek"
+             else:
+                 msg_users = "<br>- ".join(set(skipped_day_off))
+                 
+             self.statusBar().showMessage(f"Pominięto wstawianie absencji w dni wolne dla: {msg_users}", 5000)
+             # Jeśli wolisz okno dialogowe, odkomentuj poniższe:
+             # QMessageBox.information(self, "Pominięto dni wolne", 
+             #                        f"Jako Lider nie możesz wstawiać absencji w dni wolne od pracy.<br>"
+             #                        f"Pominięto: {msg_users}")
+
+        if not cells_to_process:
+            return
+
+        # --- RESZTA BEZ ZMIAN ---
+        
+        events_to_cancel = []
+        if is_absence:
+            user_date_pairs = {(c.get('uzytkownik_id'), c.get('date_str')) for c in cells_to_process}
+            events_to_cancel = self._find_events_to_cancel(user_date_pairs)
+
+        reply = QMessageBox.Yes
+        if self._should_ask_for_confirmation():
+            grouped_changes = self._group_cells_for_symbol_changes(cells_to_process)
+            changes_info = self._prepare_symbol_changes_description(grouped_changes, special_symbol)
+            complete_info = f"Czy na pewno chcesz wprowadzić następujące zmiany?{changes_info}"
+            
+            if show_vacation_plan_warning:
+                complete_info += "<br><br><b><font color='orange'>UWAGA:</font> Zmieniasz 'U' na inny symbol. Pamiętaj o usunięciu urlopu z planów urlopowych!</b>"
+
+            if events_to_cancel:
+                grouped_events = self._group_events_by_user_date(events_to_cancel)
+                delegations_info = self._prepare_delegations_description(grouped_events)
+                complete_info += f"<br>{delegations_info}"
+            
+            reply = show_confirmation_dialog(self, "Potwierdzenie wstawienia symbolu", complete_info)
+
+        if reply != QMessageBox.Yes:
+            return
+
+        if events_to_cancel:
+            self.cancel_delegations(ask_for_confirmation=False)
+
+        change_requests = []
+        for cell_data in cells_to_process:
+            new_symbol = self._predict_new_symbol(cell_data.get('symbol', ''), special_symbol, cell_data)
+            change_requests.append((ChangeType.APPLY_SPECIAL_SYMBOL, cell_data, special_symbol))
+
+        if change_requests:
+            self.schedule_change_processor.start_changes(change_requests)
+            if show_vacation_plan_warning and not self._should_ask_for_confirmation():
+                 QMessageBox.information(self, "Przypomnienie", "Zmieniono symbol urlopu. Pamiętaj o usunięciu go z planów urlopowych.")
+
+Co się zmieniło?
+ * Definicja Dnia Wolnego: Dodano is_day_off = parsed_current.get('work_hours') is None.
+ * Nowy Warunek: W pętli dodano blok:
+   if user_role == 'Lider' and is_day_off and is_absence:
+    # pomiń
+
+   Dzięki temu, jeśli Lider wybierze pustą komórkę i spróbuje wstawić "U" lub "L4" (lub cokolwiek ze zbioru absencji), kod po prostu pominie tę komórkę, nie próbując jej wypełniać domyślnymi godzinami.
+ * Kompatybilność: To działa zarówno przy wyborze z klawiatury (wpisanie "U"), jak i przez okno dialogowe (wybranie przycisku "U"), ponieważ obie metody korzystają z tej samej funkcji _apply_special_symbol_to_selection.
