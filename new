@@ -1,0 +1,53 @@
+To typowy niuans biblioteki Qt. Przycisk "Zamknij" w Twoim kodzie był podłączony do metody self.accept (standardowe zachowanie dla dialogów), która zamyka okno, ale nie zawsze wyzwala zdarzenie closeEvent (gdzie umieściliśmy logikę zapisu), zwłaszcza jeśli okno nie jest modalne.
+Aby to naprawić, musimy zmienić akcję przycisku "Zamknij" tak, aby wywoływał metodę self.close(). To zadziała tak samo jak kliknięcie "X" w rogu okna i zagwarantuje uruchomienie logiki zapisu.
+Oto poprawka w pliku staffing_details_window.py.
+Plik: staffing_details_window.py
+Znajdź metodę setup_ui i popraw linię łączącą przycisk close_button.
+    def setup_ui(self):
+        main_layout = QVBoxLayout(self)
+        self.info_label = QLabel(f"Analiza obsady i zdarzeń dla miesiąca: {self._month:02}.{self._year}")
+        main_layout.addWidget(self.info_label)
+        self.tabs = QTabWidget()
+        main_layout.addWidget(self.tabs)
+
+        self._create_hourly_staffing_tab()
+        self._create_daily_staffing_tab()
+        self._create_forecast_tab()
+        self._create_overtime_tab()
+        self._create_symbols_tab()
+        self._create_absence_analysis_tab()
+        self._create_flexibility_analysis_tab()
+
+        buttons_layout = QHBoxLayout()
+        buttons_layout.addStretch()
+        self.refresh_button = QPushButton("Odśwież")
+        self.refresh_button.clicked.connect(self.load_and_display_data)
+        
+        self.close_button = QPushButton("Zamknij")
+        
+        # --- POPRAWKA: Zmiana z self.accept na self.close ---
+        # self.close() wymusza wywołanie closeEvent, gdzie jest logika zapisu.
+        self.close_button.clicked.connect(self.close)
+        # ----------------------------------------------------
+        
+        buttons_layout.addWidget(self.refresh_button)
+        buttons_layout.addWidget(self.close_button)
+        main_layout.addLayout(buttons_layout)
+
+Dla pewności upewnij się, że metoda closeEvent (którą podałem w poprzedniej odpowiedzi) jest nadal w klasie StaffingDetailsWindow:
+    def closeEvent(self, event):
+        """Zapisuje aktualne wymiary okna do ustawień i wymusza zapis do bazy."""
+        if self.parent_widget and hasattr(self.parent_widget, 'user_app_settings'):
+            # 1. Zapisz wymiary do słownika ustawień w pamięci głównego okna
+            current_size = (self.width(), self.height())
+            self.parent_widget.user_app_settings['staffing_window_size'] = current_size
+            
+            # 2. Wymuś natychmiastowy zapis do bazy danych SQL
+            if hasattr(self.parent_widget, 'settings_db'):
+                self.parent_widget.settings_db.save_settings(
+                    self.parent_widget.user_app_settings
+                )
+            
+        event.accept()
+
+Teraz zarówno krzyżyk ("X"), jak i przycisk "Zamknij" wywołają ten sam kod i zapiszą rozmiar okna.
