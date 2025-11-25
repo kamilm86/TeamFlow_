@@ -189,3 +189,100 @@ Co się zmieniło?
 
    Dzięki temu, jeśli Lider wybierze pustą komórkę i spróbuje wstawić "U" lub "L4" (lub cokolwiek ze zbioru absencji), kod po prostu pominie tę komórkę, nie próbując jej wypełniać domyślnymi godzinami.
  * Kompatybilność: To działa zarówno przy wyborze z klawiatury (wpisanie "U"), jak i przez okno dialogowe (wybranie przycisku "U"), ponieważ obie metody korzystają z tej samej funkcji _apply_special_symbol_to_selection.
+
+
+
+Problem wynika z tego, że metoda _predict_new_symbol domyślnie pobiera godziny i lokalizację z istniejącego symbolu. W przypadku dnia wolnego (pustego), tych danych nie ma (None), a logika "Lidera OUT" była zaimplementowana wcześniej w pętli, a nie w samym predyktorze.
+Przeniesiemy logikę "wypełniania pustego dnia" dla Lidera OUT bezpośrednio do metody obliczającej nowy symbol.
+Oto poprawiona metoda _predict_new_symbol. Wklej ją do pliku main.py.
+Plik: main.py
+Zastąp istniejącą metodę _predict_new_symbol tą wersją:
+    def _predict_new_symbol(self, current_symbol: str, special_symbol: str, cell_data: dict) -> str:
+        """
+        Przewiduje nowy symbol.
+        Dla Lidera OUT w dzień wolny automatycznie ustawia start na 9:00 i godziny z etatu.
+        """
+        parsed_current = parse_symbol(current_symbol)
+
+        final_start_hour = parsed_current.get('start_hour')
+        final_work_hours = parsed_current.get('work_hours')
+        
+        # Sprawdź czy to dzień wolny (brak godzin pracy)
+        is_day_off = final_work_hours is None
+
+        # --- NOWA LOGIKA DLA LIDERA OUT W DZIEŃ WOLNY ---
+        if self.current_user_app_role == 'Lider OUT' and is_day_off:
+            # 1. Sztywna godzina rozpoczęcia
+            final_start_hour = 9
+            
+            # 2. Pobranie godzin z etatu
+            try:
+                etat_val = float(cell_data.get('etat', 0) or 0)
+                # Jeśli etat jest zapisany jako ułamek (np. 1.0, 0.5) -> przelicz na godziny standardowe (x8)
+                # Jeśli etat jest zapisany w godzinach (np. 7, 8) -> użyj wprost
+                if 0 < etat_val <= 1.0:
+                    final_work_hours = int(etat_val * 8)
+                elif etat_val > 1.0:
+                    final_work_hours = int(etat_val)
+                else:
+                    final_work_hours = 8 # Fallback
+            except (ValueError, TypeError):
+                final_work_hours = 8
+            
+            # 3. Wstępne ustawienie lokalizacji domyślnej w "sparsowanym" obiekcie, 
+            # aby logika poniżej mogła z niej skorzystać
+            parsed_current['location'] = cell_data.get('lokalizacja_domyslna')
+        # ------------------------------------------------
+
+        # Logika dla systemu równoważnego i absencji (zachowana z poprzedniej wersji)
+        system_pracy = cell_data.get('system_czasu_pracy', '').strip().lower()
+        is_equivalent_system = (system_pracy == 'równoważny')
+        is_absence_symbol = special_symbol and special_symbol.upper() in app_settings.get_absence_symbols()
+
+        if is_equivalent_system and is_absence_symbol and final_work_hours is None:
+             # Jeśli system równoważny i brak godzin (a nie wpadło w logikę Lider OUT), spróbuj pobrać etat
+             try:
+                 etat_val = float(cell_data.get('etat', 0) or 0)
+                 final_work_hours = int(etat_val) if etat_val > 1 else 8
+             except:
+                 final_work_hours = 8
+
+        # --- USTALANIE LOKALIZACJI ---
+        final_location = None
+        
+        # Lokalizację dodajemy TYLKO gdy:
+        # 1. Symbol jest "pracujący" (np. HO, DYS, T, PR)
+        # 2. LUB brak symbolu specjalnego (zwykła zmiana)
+        is_work_like = (special_symbol and special_symbol.upper() in app_settings.WORK_LIKE_SYMBOLS)
+        
+        if is_work_like or not special_symbol:
+            # Priorytet: 1. Lokalizacja z obecnego symbolu, 2. Domyślna lokalizacja pracownika (lub ta ustawiona dla Lidera OUT wyżej)
+            current_loc = parsed_current.get('location')
+            
+            # Jeśli Lider OUT wstawia w dzień wolny, parsed_current['location'] został ustawiony w bloku wyżej
+            # Jeśli to edycja istniejącego dnia, bierzemy to co było.
+            if current_loc:
+                final_location = current_loc
+            else:
+                # Fallback do funkcji SQL (determine_correct_location)
+                final_location = self.determine_correct_location(cell_data)
+        
+        # Budowanie symbolu
+        new_symbol = build_symbol(
+            location=final_location,
+            start_hour=final_start_hour,
+            work_hours=final_work_hours,
+            special_symbol=special_symbol
+        )
+
+        if not new_symbol.strip() and special_symbol and special_symbol.strip():
+            return special_symbol.strip()
+
+        return new_symbol.strip() if new_symbol else ""
+
+Co naprawiono?
+ * Start 9:00: Dodano blok if Lider OUT and day_off, który na sztywno ustawia final_start_hour = 9.
+ * Godziny z etatu: Dodano przeliczanie etatu. Jeśli etat to 1.0, system wstawi 8 godzin. Jeśli 0.5, wstawi 4 godziny.
+ * Lokalizacja:
+   * Jeśli wstawiany symbol to np. HO (pracujący) -> system wstawi lokalizację domyślną (np. h) i powstanie h;9;8;HO.
+   * Jeśli wstawiany symbol to U (absencja) -> system wstawi godziny, ale pominie lokalizację, tworząc 9;8;U (zgodnie z tym, że absencje zazwyczaj nie mają lokalizacji, ale Lider OUT chce mieć godziny).
