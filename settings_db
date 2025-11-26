@@ -45,7 +45,7 @@ class SettingsDatabase:
             'font_family': 'Segoe UI',
             'font_size': 9,
             'row_height': 25,       # Dla głównego grafiku
-            'header_height': 35,    # Dla nagłówków
+            'header_height': 36,    # Dla nagłówków
             'day_col_width': 45,    # Dla kolumn dni
             'staffing_row_height': 22 # <--- NOWOŚĆ: Dla okna Obsady
         }
