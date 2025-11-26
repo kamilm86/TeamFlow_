@@ -317,3 +317,40 @@ if change_type == ChangeType.APPLY_BUILT_SYMBOL:
     new_symbol = str(value)
 
 Oznacza to, że baza danych otrzyma dokładnie ten ciąg znaków, który wygenerowała Twoja poprawiona metoda _predict_new_symbol (czyli np. h;9;8;HO), zamiast próbować zgadywać go od zera.
+
+
+
+Problem polega na tym, że choć aplikacja nasłuchuje zmian szerokości kolumn na bieżąco (_on_column_resized), to w momencie kliknięcia "Importuj teraz" następuje sekwencja zdarzeń (zamknięcie dialogu -> aplikowanie motywu -> odświeżenie danych), która może korzystać z nieaktualnego stanu w user_app_settings, jeśli ostatnia zmiana nie została poprawnie zrzutowana.
+Najbezpieczniejszym rozwiązaniem jest wymuszenie zapisu bieżących szerokości kolumn z widoku do pamięci ustawień tuż przed otwarciem okna ustawień. Dzięki temu, niezależnie od tego co zrobisz w oknie (zmienisz motyw, klikniesz importuj), aplikacja zawsze przywróci te szerokości, które widziałeś sekundę temu.
+Wprowadź jedną, kluczową zmianę w pliku main.py.
+Plik: main.py
+Znajdź metodę show_settings_dialog w klasie WorkScheduleWindow i dodaj linię zapisu na samym początku.
+    def show_settings_dialog(self):
+        """Pokazuje okno dialogowe ustawień aplikacji."""
+        
+        # --- POPRAWKA: Zapisz aktualne szerokości kolumn przed otwarciem okna ---
+        # Zapobiega to resetowaniu widoku przy zmianie motywu lub imporcie.
+        if hasattr(self, 'table'):
+             self.user_app_settings['column_widths'] = self.table.get_column_widths()
+        # ------------------------------------------------------------------------
+
+        from settings_dialog import AppSettingsDialog
+
+        # Przekazujemy current_user_app_role
+        dialog = AppSettingsDialog(self, settings=self.user_app_settings, user_role=self.current_user_app_role)
+
+        dialog.live_theme_changed.connect(self.apply_theme_settings)
+        dialog.import_requested.connect(self.on_import_requested)
+        dialog.save_global_settings_requested.connect(self._save_global_app_settings)
+
+        if dialog.exec() == QDialog.Accepted:
+            # ... (reszta metody bez zmian) ...
+
+Dlaczego to działa?
+Kiedy klikasz "Importuj teraz":
+ * Dialog emituje sygnał import_requested.
+ * Uruchamia się refresh_data (który czyści widok i ładuje dane).
+ * Dialog zamyka się, wywołując apply_theme_settings w oknie głównym.
+ * apply_theme_settings wywołuje _apply_dynamic_sizes.
+ * _apply_dynamic_sizes pobiera szerokości z self.user_app_settings['column_widths'].
+Dzięki dodanej linijce mamy 100% pewności, że w punkcie 5 aplikacja użyje dokładnie tych szerokości, które miałeś ustawione przed chwilą na ekranie.
