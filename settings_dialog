@@ -418,16 +418,47 @@ class AppSettingsDialog(QDialog):
         self.browse_button.clicked.connect(self._browse_for_template_folder)
 
     def _on_import_now_clicked(self):
+        """
+        Obsługuje kliknięcie 'Importuj teraz'.
+        Aplikuje WSZYSTKIE aktualne ustawienia z dialogu (w tym profile wymiarów!)
+        do pamięci aplikacji, a następnie uruchamia import.
+        """
+        # 0. Wymuś zapisanie bieżących wartości z kontrolek do self.profiles
+        self._update_current_profile_data()
+        # 1. Pobierz pełny stan ustawień z dialogu (profile, fonty, import settings itp.)
+        # To kluczowe: pobieramy to, co user widzi w oknie (np. wysokość 36px)
         new_settings = self.get_current_settings()
+
+        # 2. Zachowaj ustawienie 'save_to_db'
         should_save = new_settings.pop('save_to_db', False)
+
+        # 3. Zaktualizuj ustawienia w oknie głównym
+        # WAŻNE: user_app_settings.update() nadpisuje profil nowymi wartościami z dialogu.
+        # Jednocześnie NIE usuwa 'column_widths', bo get_current_settings() ich nie zwraca.
+        # Dzięki temu szerokości kolumn ustawione ręcznie (i zapisane przy otwarciu okna) są bezpieczne.
         self.parent_widget.user_app_settings.update(new_settings)
+
+        # Aktualizuj atrybuty bezpośrednie w klasie głównej (dla pewności logiki importu i wyglądu)
+        self.parent_widget.import_grupa = new_settings.get('import_grupa')
+        self.parent_widget.import_funkcja = new_settings.get('import_funkcja')
+        self.parent_widget.is_dark_theme = (new_settings.get('theme') == 'dark')
+        self.parent_widget.current_font = new_settings.get('font_family')
+        self.parent_widget.current_font_size = new_settings.get('font_size')
+
+        # 4. Zapisz do bazy SQL (jeśli zaznaczono checkbox)
         if should_save:
             self.parent_widget.settings_db.save_settings(self.parent_widget.user_app_settings)
-            debug_print("Zapisano ustawienia przed importem.")
-        grupa = self.grupa_combo.currentData()
-        funkcja = self.funkcja_combo.currentData()
-        self.import_requested.emit(grupa, funkcja)
-        self.accept()
+            from debug_utils import debug_print
+            debug_print("Zapisano ustawienia (w tym parametry importu i profile) do bazy.")
+
+        # 5. Wyemituj sygnał żądania importu
+        # To uruchomi refresh_data() w main.py -> _apply_loaded_data() -> _apply_dynamic_sizes()
+        # Teraz _apply_dynamic_sizes() pobierze zaktualizowane wymiary z user_app_settings.
+        self.import_requested.emit(new_settings['import_grupa'], new_settings['import_funkcja'])
+
+        # 6. Zamknij okno używając reject(), aby uniknąć podwójnego aplikowania zmian w main.py
+        # (main.py ma blok "if dialog.exec() == Accepted", który pomijamy, bo zrobiliśmy update ręcznie wyżej)
+        self.reject()
 
     def apply_dialog_theme(self):
         theme_to_apply = 'dark' if self.dark_theme_radio.isChecked() else 'light'
