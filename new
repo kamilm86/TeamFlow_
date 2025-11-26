@@ -354,3 +354,98 @@ Kiedy klikasz "Importuj teraz":
  * apply_theme_settings wywołuje _apply_dynamic_sizes.
  * _apply_dynamic_sizes pobiera szerokości z self.user_app_settings['column_widths'].
 Dzięki dodanej linijce mamy 100% pewności, że w punkcie 5 aplikacja użyje dokładnie tych szerokości, które miałeś ustawione przed chwilą na ekranie.
+
+
+
+Diagnoza jest trafna. Problem polega na tym, że reset modelu (wywoływany przez self.schedule_model.update_data(...)) powoduje zresetowanie widoku tabeli, co z kolei wyzwala sygnały sectionResized z domyślnymi wartościami szerokości. Ponieważ Twój slot _on_column_resized nasłuchuje tych zmian, nieświadomie nadpisuje on poprawne ustawienia użytkownika wartościami domyślnymi (śmieciami), zanim _apply_dynamic_sizes zdąży je przywrócić.
+Rozwiązaniem jest objęcie całej operacji ładowania danych (_apply_loaded_data) blokadą flagi _is_updating_layout. Dzięki temu wszelkie sygnały zmiany rozmiaru wygenerowane podczas przebudowy tabeli zostaną zignorowane.
+Oto poprawiona metoda _apply_loaded_data. Wklej ją do pliku main.py, zastępując istniejącą wersję.
+Plik: main.py
+    def _apply_loaded_data(self, data, filters_to_restore=None):
+        """Aplikuje nowo załadowane dane do modeli i UI."""
+        if data is None:
+            log_error("Błąd: _apply_loaded_data otrzymało puste dane (None).")
+            return
+
+        # --- FIX: BLOKADA PRZED RESETEM MODELU ---
+        # Ustawiamy flagę na True PRZED jakąkolwiek ingerencją w model.
+        # To sprawi, że metoda _on_column_resized zignoruje wszystkie sygnały
+        # generowane podczas resetowania i wypełniania tabeli.
+        self._is_updating_layout = True
+        # -----------------------------------------
+
+        try:
+            schedule_data = data.get('schedule_data', [])
+            events_data = data.get('events_data', [])
+            processed_data = data.get('processed_data', {})
+            year = data.get('year')
+            month = data.get('month')
+
+            if processed_data is None or year is None or month is None:
+                log_error(f"Niekompletne dane przekazane do _apply_loaded_data: rok={year}, miesiac={month}")
+                return
+
+            self.raw_data = schedule_data
+            self.all_events_data = events_data
+            self.processed_data = processed_data
+
+            is_initial_load = self.schedule_model.rowCount() == 0
+            
+            # KRYTYCZNY MOMENT: To wywołanie resetuje model.
+            # Bez blokady, widok zresetowałby kolumny do domyślnych szerokości,
+            # a _on_column_resized nadpisałby ustawienia użytkownika.
+            # Dzięki fladze _is_updating_layout=True, ustawienia są bezpieczne.
+            self.schedule_model.update_data(self.processed_data, year, month)
+
+            if 'custom_columns' in self.user_app_settings:
+                self.schedule_model.set_custom_columns(self.user_app_settings['custom_columns'])
+
+            self.events_data = []
+            if 'row_colors' in self.user_app_settings:
+                self.schedule_model.set_row_colors(self.user_app_settings['row_colors'])
+            
+            if hasattr(self, 'events_model'):
+                self.events_model.update_data([])
+            self.all_events_data = data.get('events_data', [])
+
+            if hasattr(self, 'status_filter_combo'):
+                all_statuses = sorted(list(set(e.get('status', '') for e in self.all_events_data if e.get('status'))))
+                self.status_filter_combo.add_items(all_statuses)
+                self.status_filter_combo.select_items(all_statuses)
+
+            if filters_to_restore:
+                self.restore_filters_state(filters_to_restore)
+            else:
+                last_filters = self.user_app_settings.get('last_filters')
+                if last_filters:
+                    self.restore_filters_state(last_filters)
+                else:
+                    self.update_filters()
+                    self.filter_data()
+
+            if is_initial_load:
+                self.apply_custom_sort()
+
+            # Na końcu aplikujemy poprawne szerokości z nienaruszonej pamięci ustawień.
+            # Metoda _apply_dynamic_sizes zarządza własną blokadą (wewnątrz), 
+            # ale ponieważ jesteśmy w bloku try...finally, jest to bezpieczne.
+            self._apply_dynamic_sizes()
+            self.setup_events_table_columns()
+            
+        finally:
+            # --- ZDEJMOWANIE BLOKADY ---
+            # Zawsze zdejmujemy blokadę na końcu, aby przywrócić 
+            # możliwość ręcznego zmieniania rozmiaru przez użytkownika.
+            self._is_updating_layout = False
+            # ---------------------------
+
+Jak to działa?
+ * Użytkownik klika "Importuj teraz".
+ * Wcześniej dodana linijka w show_settings_dialog zapisała bieżące szerokości do self.user_app_settings.
+ * Aplikacja pobiera dane i wywołuje _apply_loaded_data.
+ * Włączamy blokadę: self._is_updating_layout = True.
+ * Wywołujemy update_data. Tabela się czyści, kolumny wracają do 100px. Qt wysyła sygnał sectionResized.
+ * Slot _on_column_resized odbiera sygnał, ale widzi self._is_updating_layout == True, więc nic nie robi (nie psuje ustawień).
+ * Wywołujemy _apply_dynamic_sizes. Metoda ta bierze poprawne, niezepsute szerokości z self.user_app_settings i aplikuje je do tabeli.
+ * Zdejmujemy blokadę (False).
+ * Widok jest poprawny.
