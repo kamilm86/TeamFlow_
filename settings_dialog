@@ -331,8 +331,19 @@ class AppSettingsDialog(QDialog):
 
     def get_current_settings(self):
         active_name = self.profile_combo.currentText()
+
+        # 2. Zaktualizuj dane tego profilu w słowniku na podstawie obecnego stanu kontrolek
+        if active_name:
+            self.profiles[active_name] = {
+                'font_family': self.font_combo.currentFont().family(),
+                'font_size': self.font_size_spin.value(),
+                'row_height': self.row_height_spin.value(),
+                'staffing_row_height': self.staffing_row_height_spin.value(),
+                'header_height': self.header_height_spin.value(),
+                'day_col_width': self.day_width_spin.value()
+            }
+
         active_data = self.profiles.get(active_name, {})
-        font_family = self.font_combo.currentText()
 
         return {
             'theme': 'dark' if self.dark_theme_radio.isChecked() else 'light',
