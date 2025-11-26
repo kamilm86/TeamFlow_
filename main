@@ -2866,16 +2866,23 @@ class WorkScheduleWindow(QMainWindow):
         """
         Sortuje dane w modelu. Jeśli użytkownik nie ma własnych preferencji,
         stosuje domyślne sortowanie biznesowe.
+        POPRAWKA: Zabezpiecza przed nadpisaniem sortowania przez QTableView.
         """
         if not hasattr(self, 'schedule_model') or not self.schedule_model._processed_data:
             return
 
-        # 1. Pobierz preferencje użytkownika
-        sort_prefs = self.user_sort_preferences
+        # 1. Zabezpieczenie widoku (Employees View)
+        # Musimy wyłączyć automatyczne sortowanie widoku, bo inaczej po layoutChanged
+        # tabela spróbuje posortować dane po swojemu (np. po kolumnie 0), psując nasze sortowanie.
+        emp_view = None
+        header = None
+        if hasattr(self, 'table') and hasattr(self.table, 'employees_view'):
+            emp_view = self.table.employees_view
+            header = emp_view.horizontalHeader()
+            emp_view.setSortingEnabled(False)  # Wyłączamy sortowanie UI na czas operacji
 
-        # 2. DEFINICJA DOMYŚLNEGO SORTOWANIA (FALLBACK)
-        # Jeśli użytkownik nic nie ustawił, sortujemy logicznie:
-        # DTN (rosnąco) -> Wydział -> Przełożony -> Pracownik
+        # 2. Pobierz preferencje użytkownika lub domyślne
+        sort_prefs = self.user_sort_preferences
         if not sort_prefs:
             sort_prefs = [
                 ('sched_dtn', 'asc'),
@@ -2887,41 +2894,32 @@ class WorkScheduleWindow(QMainWindow):
         else:
             debug_print(f"[Sortowanie] Zastosowano preferencje użytkownika: {sort_prefs}")
 
+        # 3. Wykonaj sortowanie w modelu (na liście kluczy)
         keys_to_sort = self.schedule_model._keys
         self.schedule_model.layoutAboutToBeChanged.emit()
 
-        # Definicja funkcji porównującej
         def compare_rows(key_a, key_b):
-            """Funkcja porównująca, która analizuje wszystkie kryteria sortowania naraz."""
             for col_id, direction in sort_prefs:
                 val_a = self.schedule_model._get_sort_key(key_a, col_id)
                 val_b = self.schedule_model._get_sort_key(key_b, col_id)
 
-                # Normalizacja typów (zabezpieczenie przed porównywaniem int vs str)
                 try:
                     if val_a is None: val_a = ""
                     if val_b is None: val_b = ""
 
-                    # Jeśli oba są liczbami (int/float), porównaj liczbowo
                     if isinstance(val_a, (int, float)) and isinstance(val_b, (int, float)):
-                        pass  # Porównanie naturalne
+                        pass
                     else:
-                        # W przeciwnym razie tekstowo
                         val_a, val_b = str(val_a).lower(), str(val_b).lower()
                 except Exception:
                     val_a, val_b = str(val_a), str(val_b)
 
-                # Porównanie
                 if val_a < val_b:
                     return -1 if direction == 'asc' else 1
                 elif val_a > val_b:
                     return 1 if direction == 'asc' else -1
-
-                # Jeśli równe, przejdź do kolejnego kryterium w pętli
-
             return 0
 
-        # Wykonanie sortowania
         try:
             keys_to_sort.sort(key=functools.cmp_to_key(compare_rows))
         except Exception as e:
@@ -2930,27 +2928,33 @@ class WorkScheduleWindow(QMainWindow):
 
         self.schedule_model.layoutChanged.emit()
 
-        # Ustaw wskaźnik wizualny w nagłówku (strzałkę)
-        emp_header = self.table.employees_view.horizontalHeader()
-        sched_header = self.table.schedule_view.horizontalHeader()
+        # 4. Przywróć ustawienia widoku i zaktualizuj strzałkę w nagłówku
+        if emp_view and header:
+            # Blokujemy sygnały nagłówka, żeby setSortIndicator nie wywołał ponownego sortowania modelu przez widok
+            header.blockSignals(True)
 
-        # Reset wskaźników
-        emp_header.setSortIndicator(-1, Qt.AscendingOrder)
-        sched_header.setSortIndicator(-1, Qt.AscendingOrder)
+            # Resetujemy wskaźnik na prawej tabeli (grafik)
+            if hasattr(self.table, 'schedule_view'):
+                self.table.schedule_view.horizontalHeader().setSortIndicator(-1, Qt.AscendingOrder)
 
-        # Jeśli sortujemy, pokaż strzałkę na pierwszej kolumnie z listy priorytetów, która jest widoczna
-        if sort_prefs:
-            first_col_id, first_direction = sort_prefs[0]
-            order = Qt.DescendingOrder if first_direction == 'desc' else Qt.AscendingOrder
+            if sort_prefs:
+                # Ustaw strzałkę na pierwszej kolumnie sortowania (jeśli widoczna)
+                first_col_id, first_direction = sort_prefs[0]
+                order = Qt.DescendingOrder if first_direction == 'desc' else Qt.AscendingOrder
 
-            # Sprawdź, czy ta kolumna jest widoczna, aby ustawić strzałkę
-            if hasattr(self, 'visible_columns'):
-                try:
-                    if first_col_id in self.visible_columns:
-                        col_index = self.visible_columns.index(first_col_id)
-                        emp_header.setSortIndicator(col_index, order)
-                except ValueError:
-                    pass
+                # Znajdź indeks wizualny tej kolumny
+                if hasattr(self, 'visible_columns') and first_col_id in self.visible_columns:
+                    col_index = self.visible_columns.index(first_col_id)
+                    header.setSortIndicator(col_index, order)
+                else:
+                    header.setSortIndicator(-1, Qt.AscendingOrder)
+            else:
+                # Brak konkretnego sortowania (domyślne) - brak strzałki
+                header.setSortIndicator(-1, Qt.AscendingOrder)
+
+            # Odblokowujemy sygnały i włączamy sortowanie, aby użytkownik mógł klikać
+            header.blockSignals(False)
+            emp_view.setSortingEnabled(True)
 
     def _apply_dynamic_sizes(self):
         """
@@ -8094,7 +8098,7 @@ class WorkScheduleWindow(QMainWindow):
 
             # Przetwarzanie zebranych wyników
             for row in all_results:
-                if row and len(row) > 0 and row[0] is not None:
+                if row and len(row) > 0 and row[0] is not None and row[0] != '0':
                     raw_value = row[0]
                     # Jeśli to tekst, jest to komunikat o błędzie
                     if isinstance(raw_value, str):
@@ -8645,7 +8649,7 @@ class WorkScheduleWindow(QMainWindow):
             is_day_off = parsed_current.get('work_hours') is None
 
             # --- NOWA LOGIKA: LIDER + DZIEŃ WOLNY + ABSENCJA ---
-            if user_role == 'Lider' and is_day_off and is_absence:
+            if user_role != 'Lider OUT' and is_day_off and is_absence:
                 skipped_day_off.append(cell_data.get('uzytkownik_dane', 'Nieznany'))
                 continue
             # ---------------------------------------------------
