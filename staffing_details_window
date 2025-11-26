@@ -637,8 +637,14 @@ class StaffingDetailsWindow(QDialog):
         buttons_layout.addStretch()
         self.refresh_button = QPushButton("Odśwież")
         self.refresh_button.clicked.connect(self.load_and_display_data)
+
         self.close_button = QPushButton("Zamknij")
-        self.close_button.clicked.connect(self.accept)
+
+        # --- POPRAWKA: Zmiana z self.accept na self.close ---
+        # self.close() wymusza wywołanie closeEvent, gdzie jest logika zapisu.
+        self.close_button.clicked.connect(self.close)
+        # ----------------------------------------------------
+
         buttons_layout.addWidget(self.refresh_button)
         buttons_layout.addWidget(self.close_button)
         main_layout.addLayout(buttons_layout)
@@ -2293,5 +2299,20 @@ class StaffingDetailsWindow(QDialog):
                 )
                 # from debug_utils import debug_print
                 # debug_print(f"Zapisano wymiary okna obsady do bazy: {current_size}")
+
+        event.accept()
+
+    def closeEvent(self, event):
+        """Zapisuje aktualne wymiary okna do ustawień i wymusza zapis do bazy."""
+        if self.parent_widget and hasattr(self.parent_widget, 'user_app_settings'):
+            # 1. Zapisz wymiary do słownika ustawień w pamięci głównego okna
+            current_size = (self.width(), self.height())
+            self.parent_widget.user_app_settings['staffing_window_size'] = current_size
+
+            # 2. Wymuś natychmiastowy zapis do bazy danych SQL
+            if hasattr(self.parent_widget, 'settings_db'):
+                self.parent_widget.settings_db.save_settings(
+                    self.parent_widget.user_app_settings
+                )
 
         event.accept()
