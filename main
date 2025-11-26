@@ -2967,12 +2967,18 @@ class WorkScheduleWindow(QMainWindow):
             # 1. Pobierz aktywny profil
             profiles = self.user_app_settings.get('layout_profiles', {})
             active_name = self.user_app_settings.get('active_profile', 'Podstawowy')
+            # --- DEBUG ---
+            debug_print(f"[DEBUG SIZE] Active Profile: {active_name}")
+            debug_print(f"[DEBUG SIZE] Available Profiles: {list(profiles.keys())}")
+            if active_name in profiles:
+                debug_print(f"[DEBUG SIZE] Content: {profiles[active_name]}")
+            # -------------
             profile = profiles.get(active_name, {
-                'row_height': 25, 'header_height': 35, 'day_col_width': 45, 'font_size': 9
+                'row_height': 25, 'header_height': 36, 'day_col_width': 45, 'font_size': 9
             })
 
             row_height = int(profile.get('row_height', 25))
-            header_height = int(profile.get('header_height', 35))
+            header_height = int(profile.get('header_height', 36))
             day_column_width = int(profile.get('day_col_width', 45))
 
             self.current_font_size = int(profile.get('font_size', 9))
@@ -2992,11 +2998,12 @@ class WorkScheduleWindow(QMainWindow):
             header = self.table.schedule_view.horizontalHeader()
             model = self.table.employees_view.model()
 
-            scale_factor = day_column_width / 45.0
+            # scale_factor = day_column_width / 45.0
+            scale_factor = 1.0
             special_widths = {
-                "Suma\nRBH": int(60 * scale_factor),
-                "Bilans\nRBH": int(60 * scale_factor),
-                "Procent\nrano": int(80 * scale_factor),
+                "Suma\nRBH": int(40 * scale_factor),
+                "Bilans\nRBH": int(40 * scale_factor),
+                "Procent\nrano": int(60 * scale_factor),
                 "Procent\nHO": int(60 * scale_factor),
                 "Komentarz": 300
             }
@@ -3304,36 +3311,75 @@ class WorkScheduleWindow(QMainWindow):
 
     def _predict_new_symbol(self, current_symbol: str, special_symbol: str, cell_data: dict) -> str:
         """
-        Przewiduje, jak będzie wyglądał nowy symbol, z uwzględnieniem
-        logiki dla lokalizacji i systemu równoważnego.
+        Przewiduje nowy symbol.
+        Dla Lidera OUT w dzień wolny automatycznie ustawia start na 9:00 i godziny z etatu.
         """
         parsed_current = parse_symbol(current_symbol)
 
         final_start_hour = parsed_current.get('start_hour')
         final_work_hours = parsed_current.get('work_hours')
 
-        system_pracy = cell_data.get('system_czasu_pracy', '').strip().lower()
-        is_equivalent_system = (system_pracy == 'równoważny')
-        is_absence_symbol = special_symbol.upper() in app_settings.get_absence_symbols()
+        # Sprawdź czy to dzień wolny (brak godzin pracy)
+        is_day_off = final_work_hours is None
 
-        if is_equivalent_system and is_absence_symbol:
+        # --- NOWA LOGIKA DLA LIDERA OUT W DZIEŃ WOLNY ---
+        if self.current_user_app_role == 'Lider OUT' and is_day_off:
+            # 1. Sztywna godzina rozpoczęcia
+            final_start_hour = 9
+
+            # 2. Pobranie godzin z etatu
             try:
-                final_work_hours = int(float(cell_data.get('etat')))
+                etat_val = float(cell_data.get('etat', 0) or 0)
+                # Jeśli etat jest zapisany jako ułamek (np. 1.0, 0.5) -> przelicz na godziny standardowe (x8)
+                # Jeśli etat jest zapisany w godzinach (np. 7, 8) -> użyj wprost
+                if 0 < etat_val <= 1.0:
+                    final_work_hours = int(etat_val * 8)
+                elif etat_val > 1.0:
+                    final_work_hours = int(etat_val)
+                else:
+                    final_work_hours = 8  # Fallback
             except (ValueError, TypeError):
                 final_work_hours = 8
 
-        # --- ZMIANA: Poprawiona logika ustalania lokalizacji ---
-        final_location = None
-        # Warunek: Lokalizację przypisujemy tylko, gdy wstawiany jest symbol "pracujący"
-        # lub gdy nie ma symbolu specjalnego (zwykła zmiana robocza).
-        if (special_symbol and special_symbol.upper() in app_settings.WORK_LIKE_SYMBOLS) or not special_symbol:
-            # Hierarchia:
-            # 1. Weź lokalizację, jeśli już istnieje w komórce.
-            # 2. Jeśli nie, użyj nowej funkcji, która sprawdzi wyjątki i domyślne.
-            final_location = parsed_current.get('location') or self.determine_correct_location(cell_data)
-        # Dla zwykłych nieobecności (U, CO) `final_location` pozostanie None.
-        # --- KONIEC ZMIANY ---
+            # 3. Wstępne ustawienie lokalizacji domyślnej w "sparsowanym" obiekcie,
+            # aby logika poniżej mogła z niej skorzystać
+            parsed_current['location'] = cell_data.get('lokalizacja_domyslna')
+        # ------------------------------------------------
 
+        # Logika dla systemu równoważnego i absencji (zachowana z poprzedniej wersji)
+        system_pracy = cell_data.get('system_czasu_pracy', '').strip().lower()
+        is_equivalent_system = (system_pracy == 'równoważny')
+        is_absence_symbol = special_symbol and special_symbol.upper() in app_settings.get_absence_symbols()
+
+        if is_equivalent_system and is_absence_symbol and final_work_hours is None:
+            # Jeśli system równoważny i brak godzin (a nie wpadło w logikę Lider OUT), spróbuj pobrać etat
+            try:
+                etat_val = float(cell_data.get('etat', 0) or 0)
+                final_work_hours = int(etat_val) if etat_val > 1 else 8
+            except:
+                final_work_hours = 8
+
+        # --- USTALANIE LOKALIZACJI ---
+        final_location = None
+
+        # Lokalizację dodajemy TYLKO gdy:
+        # 1. Symbol jest "pracujący" (np. HO, DYS, T, PR)
+        # 2. LUB brak symbolu specjalnego (zwykła zmiana)
+        is_work_like = (special_symbol and special_symbol.upper() in app_settings.WORK_LIKE_SYMBOLS)
+
+        if is_work_like or not special_symbol:
+            # Priorytet: 1. Lokalizacja z obecnego symbolu, 2. Domyślna lokalizacja pracownika (lub ta ustawiona dla Lidera OUT wyżej)
+            current_loc = parsed_current.get('location')
+
+            # Jeśli Lider OUT wstawia w dzień wolny, parsed_current['location'] został ustawiony w bloku wyżej
+            # Jeśli to edycja istniejącego dnia, bierzemy to co było.
+            if current_loc:
+                final_location = current_loc
+            else:
+                # Fallback do funkcji SQL (determine_correct_location)
+                final_location = self.determine_correct_location(cell_data)
+
+        # Budowanie symbolu
         new_symbol = build_symbol(
             location=final_location,
             start_hour=final_start_hour,
@@ -5000,6 +5046,13 @@ class WorkScheduleWindow(QMainWindow):
 
     def show_settings_dialog(self):
         """Pokazuje okno dialogowe ustawień aplikacji."""
+
+        # --- POPRAWKA: Zapisz aktualne szerokości kolumn przed otwarciem okna ---
+        # Zapobiega to resetowaniu widoku przy zmianie motywu lub imporcie.
+        if hasattr(self, 'table'):
+            self.user_app_settings['column_widths'] = self.table.get_column_widths()
+        # ------------------------------------------------------------------------
+
         from settings_dialog import AppSettingsDialog
 
         # Przekazujemy current_user_app_role
@@ -5007,8 +5060,6 @@ class WorkScheduleWindow(QMainWindow):
 
         dialog.live_theme_changed.connect(self.apply_theme_settings)
         dialog.import_requested.connect(self.on_import_requested)
-
-        # --- PODŁĄCZENIE ZAPISU GLOBALNEGO ---
         dialog.save_global_settings_requested.connect(self._save_global_app_settings)
 
         if dialog.exec() == QDialog.Accepted:
@@ -6140,67 +6191,77 @@ class WorkScheduleWindow(QMainWindow):
             log_error("Błąd: _apply_loaded_data otrzymało puste dane (None).")
             return
 
-        schedule_data = data.get('schedule_data', [])
-        events_data = data.get('events_data', [])
-        processed_data = data.get('processed_data', {})
-        year = data.get('year')
-        month = data.get('month')
+        # --- FIX: BLOKADA PRZED RESETEM MODELU ---
+        # Ustawiamy flagę na True PRZED jakąkolwiek ingerencją w model.
+        # To sprawi, że metoda _on_column_resized zignoruje wszystkie sygnały
+        # generowane podczas resetowania i wypełniania tabeli.
+        self._is_updating_layout = True
+        # -----------------------------------------
 
-        # --- POCZĄTEK POPRAWKI ---
-        # Sprawdzamy `is None` zamiast polegać na "prawdziwości" słownika,
-        # aby zezwolić na ładowanie pustych miesięcy (gdzie processed_data = {}).
-        if processed_data is None or year is None or month is None:
-            log_error(f"Niekompletne dane przekazane do _apply_loaded_data: rok={year}, miesiac={month}")
-            return
-        # --- KONIEC POPRAWKI ---
+        try:
+            schedule_data = data.get('schedule_data', [])
+            events_data = data.get('events_data', [])
+            processed_data = data.get('processed_data', {})
+            year = data.get('year')
+            month = data.get('month')
 
-        self.raw_data = schedule_data
-        self.all_events_data = events_data
-        self.processed_data = processed_data
+            if processed_data is None or year is None or month is None:
+                log_error(f"Niekompletne dane przekazane do _apply_loaded_data: rok={year}, miesiac={month}")
+                return
 
-        is_initial_load = self.schedule_model.rowCount() == 0
-        self.schedule_model.update_data(self.processed_data, year, month)
+            self.raw_data = schedule_data
+            self.all_events_data = events_data
+            self.processed_data = processed_data
 
-        # --- DODATKOWA POPRAWKA: Upewnij się, że model ma najnowsze definicje kolumn niestandardowych ---
-        # To jest ważne, gdy dane są odświeżane, a w międzyczasie dodano/usunięto kolumnę.
-        if 'custom_columns' in self.user_app_settings:
-            self.schedule_model.set_custom_columns(self.user_app_settings['custom_columns'])
-        # --- KONIEC POPRAWKI ---
+            is_initial_load = self.schedule_model.rowCount() == 0
 
-        self.events_data = []
-        # --- NOWA ZMIANA: Przekaż zapisane kolory do modelu po załadowaniu danych ---
-        if 'row_colors' in self.user_app_settings:
-            debug_print(
-                f"_apply_loaded_data: Ładowanie {len(self.user_app_settings['row_colors'])} zapisanych kolorów wierszy.")
-            self.schedule_model.set_row_colors(self.user_app_settings['row_colors'])
-        # --- KONIEC ZMIANY ---
-        if hasattr(self, 'events_model'):
-            self.events_model.update_data([])
-        self.all_events_data = data.get('events_data', [])
+            # KRYTYCZNY MOMENT: To wywołanie resetuje model.
+            # Bez blokady, widok zresetowałby kolumny do domyślnych szerokości,
+            # a _on_column_resized nadpisałby ustawienia użytkownika.
+            # Dzięki fladze _is_updating_layout=True, ustawienia są bezpieczne.
+            self.schedule_model.update_data(self.processed_data, year, month)
 
-        if hasattr(self, 'status_filter_combo'):
-            all_statuses = sorted(list(set(e.get('status', '') for e in self.all_events_data if e.get('status'))))
-            self.status_filter_combo.add_items(all_statuses)
-            self.status_filter_combo.select_items(all_statuses)
+            if 'custom_columns' in self.user_app_settings:
+                self.schedule_model.set_custom_columns(self.user_app_settings['custom_columns'])
 
-        # NOWA LOGIKA:
-        # Jeśli przekazano stan filtrów (co dzieje się przy odświeżaniu), użyj go.
-        if filters_to_restore:
-            self.restore_filters_state(filters_to_restore)
-        else:
-            # W przeciwnym razie (przy pierwszym ładowaniu) użyj filtrów zapisanych w bazie.
-            last_filters = self.user_app_settings.get('last_filters')
-            if last_filters:
-                self.restore_filters_state(last_filters)
+            self.events_data = []
+            if 'row_colors' in self.user_app_settings:
+                self.schedule_model.set_row_colors(self.user_app_settings['row_colors'])
+
+            if hasattr(self, 'events_model'):
+                self.events_model.update_data([])
+            self.all_events_data = data.get('events_data', [])
+
+            if hasattr(self, 'status_filter_combo'):
+                all_statuses = sorted(list(set(e.get('status', '') for e in self.all_events_data if e.get('status'))))
+                self.status_filter_combo.add_items(all_statuses)
+                self.status_filter_combo.select_items(all_statuses)
+
+            if filters_to_restore:
+                self.restore_filters_state(filters_to_restore)
             else:
-                self.update_filters()
-                self.filter_data()
+                last_filters = self.user_app_settings.get('last_filters')
+                if last_filters:
+                    self.restore_filters_state(last_filters)
+                else:
+                    self.update_filters()
+                    self.filter_data()
 
-        if is_initial_load:
-            self.apply_custom_sort()
+            if is_initial_load:
+                self.apply_custom_sort()
 
-        self._apply_dynamic_sizes()
-        self.setup_events_table_columns()
+            # Na końcu aplikujemy poprawne szerokości z nienaruszonej pamięci ustawień.
+            # Metoda _apply_dynamic_sizes zarządza własną blokadą (wewnątrz),
+            # ale ponieważ jesteśmy w bloku try...finally, jest to bezpieczne.
+            self._apply_dynamic_sizes()
+            self.setup_events_table_columns()
+
+        finally:
+            # --- ZDEJMOWANIE BLOKADY ---
+            # Zawsze zdejmujemy blokadę na końcu, aby przywrócić
+            # możliwość ręcznego zmieniania rozmiaru przez użytkownika.
+            self._is_updating_layout = False
+            # ---------------------------
 
     def apply_default_sort(self):
         """
@@ -8545,7 +8606,9 @@ class WorkScheduleWindow(QMainWindow):
 
     def _apply_special_symbol_to_selection(self, special_symbol: str):
         """
-        Aplikuje symbol specjalny do zaznaczonych komórek z uwzględnieniem nowej logiki Lidera.
+        Aplikuje symbol specjalny do zaznaczonych komórek z uwzględnieniem logiki Lidera:
+        1. Blokada wstawiania U/OS nie-Liderom.
+        2. Blokada wstawiania absencji w dni wolne (puste).
         """
         selected_cells_data = self.table.get_data_for_selected_cells()
         if not selected_cells_data:
@@ -8558,12 +8621,15 @@ class WorkScheduleWindow(QMainWindow):
         special_symbol_upper = special_symbol.upper()
         user_role = self.current_user_app_role
 
-        # Flaga do wyświetlenia komunikatu o planach urlopowych
-        show_vacation_plan_warning = False
+        # Czy to jest symbol absencji? (np. U, L4, ale nie HO, DYS)
+        is_absence = special_symbol_upper in app_settings.get_absence_symbols()
 
-        # --- FILTROWANIE KOMÓREK WG NOWEJ LOGIKI ---
+        show_vacation_plan_warning = False
         cells_to_process = []
-        skipped_restricted_symbol = []  # Lista osób pominiętych przy wstawianiu U/OS
+
+        # Listy pominiętych
+        skipped_restricted_symbol = []
+        skipped_day_off = []  # <--- NOWA LISTA
 
         for cell_data in selected_cells_data:
             permissions = self._get_permission_for_cell(cell_data)
@@ -8575,35 +8641,57 @@ class WorkScheduleWindow(QMainWindow):
             parsed_current = parse_symbol(current_symbol_str)
             current_special = (parsed_current.get('special_symbol') or '').upper()
 
-            # --- LOGIKA DLA LIDERA: BLOKADA WSTAWIANIA 'U' i 'OS' ---
+            # Sprawdź czy dzień jest wolny (brak godzin pracy)
+            is_day_off = parsed_current.get('work_hours') is None
+
+            # --- NOWA LOGIKA: LIDER + DZIEŃ WOLNY + ABSENCJA ---
+            if user_role == 'Lider' and is_day_off and is_absence:
+                skipped_day_off.append(cell_data.get('uzytkownik_dane', 'Nieznany'))
+                continue
+            # ---------------------------------------------------
+
+            # Logika: Lider może wstawić "U" lub "OS" TYLKO osobie w roli Lider.
             if user_role == 'Lider':
-                # Zasada: Lider może wstawić "U" lub "OS" TYLKO osobie w roli Lider.
                 if special_symbol_upper in ['U', 'OS']:
-                    # Jeśli cel to nie Lider -> BLOKUJEMY WSTAWIENIE
                     if target_role != 'Lider':
                         skipped_restricted_symbol.append(cell_data.get('uzytkownik_dane', 'Nieznany'))
                         continue
 
-            # --- LOGIKA OSTRZEŻENIA PRZY ZMIANIE 'U' NA COŚ INNEGO ---
-            # Lider zmienia symbol specjalny na inny (z wyłączeniem OS, co jest obsłużone wyżej jako wstawienie OS)
+            # Ostrzeżenie przy zmianie 'U' na co innego
             if current_special in ['U', 'UZ'] and special_symbol_upper not in ['U', 'UZ'] and special_symbol_upper:
-                # Jeśli zmieniamy istniejący urlop na coś innego -> ustalamy flagę ostrzeżenia
                 show_vacation_plan_warning = True
 
             cells_to_process.append(cell_data)
 
-        # Wyświetl komunikat o pominięciu (Próba wstawienia U/OS zwykłemu pracownikowi)
+        # --- KOMUNIKATY O POMINIĘCIACH ---
+
         if skipped_restricted_symbol:
             QMessageBox.warning(self, "Ograniczenia uprawnień",
                                 f"Symbol '{special_symbol_upper}' może być wstawiony przez Lidera TYLKO innemu Liderowi.<br>"
                                 f"Pominięto zmiany dla:<br>- {', '.join(set(skipped_restricted_symbol))}")
 
+        # Nowy komunikat dla dni wolnych
+        if skipped_day_off:
+            # Opcjonalnie: pokaż komunikat, lub po prostu statusbar, żeby nie spamować oknami
+            # Tutaj wersja z Info, bo to ważna reguła biznesowa
+            if len(skipped_day_off) > 5:
+                msg_users = f"{len(skipped_day_off)} komórek"
+            else:
+                msg_users = "<br>- ".join(set(skipped_day_off))
+
+            self.statusBar().showMessage(f"Pominięto wstawianie absencji w dni wolne dla: {msg_users}", 5000)
+            # Jeśli wolisz okno dialogowe, odkomentuj poniższe:
+            # QMessageBox.information(self, "Pominięto dni wolne",
+            #                        f"Jako Lider nie możesz wstawiać absencji w dni wolne od pracy.<br>"
+            #                        f"Pominięto: {msg_users}")
+
         if not cells_to_process:
             return
 
+        # --- RESZTA BEZ ZMIAN ---
 
         events_to_cancel = []
-        if special_symbol_upper in app_settings.get_absence_symbols():
+        if is_absence:
             user_date_pairs = {(c.get('uzytkownik_id'), c.get('date_str')) for c in cells_to_process}
             events_to_cancel = self._find_events_to_cancel(user_date_pairs)
 
@@ -8613,7 +8701,6 @@ class WorkScheduleWindow(QMainWindow):
             changes_info = self._prepare_symbol_changes_description(grouped_changes, special_symbol)
             complete_info = f"Czy na pewno chcesz wprowadzić następujące zmiany?{changes_info}"
 
-            # Dodajemy ostrzeżenie o planach urlopowych do dialogu potwierdzenia
             if show_vacation_plan_warning:
                 complete_info += "<br><br><b><font color='orange'>UWAGA:</font> Zmieniasz 'U' na inny symbol. Pamiętaj o usunięciu urlopu z planów urlopowych!</b>"
 
@@ -8632,16 +8719,19 @@ class WorkScheduleWindow(QMainWindow):
 
         change_requests = []
         for cell_data in cells_to_process:
-            # Tutaj predict_new_symbol zachowuje godziny jeśli to symbol pracy
+            # 1. Obliczamy pełny symbol lokalnie (korzystając z naprawionej logiki _predict_new_symbol)
             new_symbol = self._predict_new_symbol(cell_data.get('symbol', ''), special_symbol, cell_data)
-            change_requests.append((ChangeType.APPLY_SPECIAL_SYMBOL, cell_data, special_symbol))
+
+            # 2. ZMIANA: Przekazujemy gotowy symbol (APPLY_BUILT_SYMBOL) zamiast surowego (APPLY_SPECIAL_SYMBOL).
+            # Dzięki temu wątek w tle nie będzie próbował przeliczać go na nowo i nie zgubi godziny 9:00.
+            change_requests.append((ChangeType.APPLY_BUILT_SYMBOL, cell_data, new_symbol))
 
         if change_requests:
             self.schedule_change_processor.start_changes(change_requests)
-            # Jeśli po operacji trzeba wyświetlić dodatkowe info (np. o planach, jeśli nie było w confirmie)
             if show_vacation_plan_warning and not self._should_ask_for_confirmation():
                 QMessageBox.information(self, "Przypomnienie",
                                         "Zmieniono symbol urlopu. Pamiętaj o usunięciu go z planów urlopowych.")
+
 
     def _matches_user_search(self, item_text, item_id, item_login, search_text):
         """
