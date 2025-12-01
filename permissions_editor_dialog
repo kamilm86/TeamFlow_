@@ -24,7 +24,8 @@ PERMISSION_DESCRIPTIONS = {
     'view_schedule_percent_morning_column': 'Widoczność kolumny "Procent rano"',
     'manage_app_configuration': 'Pełny dostęp do panelu Administracji',
     'manage_group_definitions': 'Edycja Grup i Wag',
-    'view_schedule_percent_ho_column': 'Widoczność kolumny "Procent HO"'
+    'view_schedule_percent_ho_column': 'Widoczność kolumny "Procent HO"',
+    'action_cancel_event_from_table': 'Dostęp do przycisku "Odwołaj" w tabeli zdarzeń',
 }
 
 
