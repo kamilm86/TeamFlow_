@@ -12,7 +12,7 @@ import pyodbc
 class SuggestionImportThread(QThread):
     """
     Wątek roboczy do asynchronicznego importowania sugestii
-    z procedury p_pobierzsugestieii i przechwytywania logów błędów.
+    z procedury p_pobierzsugestiein i przechwytywania logów błędów.
     """
     # Sygnał emitowany po zakończeniu: sukces (bool), lista błędów (list), nagłówki (list)
     finished = Signal(bool, list, list)
@@ -42,10 +42,10 @@ class SuggestionImportThread(QThread):
             # Zakładamy, że 3 oznacza "WSZYSCY"
             params = (self.year, self.month, data_str, 3)
 
-            sql = f"EXEC {SQL_OBJECTS['p_pobierzsugestieii']} ?, ?, ?, ?"
+            sql = f"EXEC {SQL_OBJECTS['p_pobierzsugestiein']} ?, ?, ?, ?"
 
             debug_print(
-                f"Wywołuję SuggestionImportThread: EXEC {SQL_OBJECTS['p_pobierzsugestieii']} @Rok={params[0]}, @Miesiac={params[1]}, @Data={params[2]}, @FiltrGrup={params[3]}")
+                f"Wywołuję SuggestionImportThread: EXEC {SQL_OBJECTS['p_pobierzsugestiein']} @Rok={params[0]}, @Miesiac={params[1]}, @Data={params[2]}, @FiltrGrup={params[3]}")
 
             cursor.execute(sql, params)
 
@@ -202,6 +202,7 @@ class DelegationCanceler:
     def __init__(self, parent_window):
         self.parent = parent_window
         self.thread = None
+        self._saved_view_state = None
 
     def start_cancellation(self, events_to_cancel: list):
         if not events_to_cancel:
@@ -211,6 +212,10 @@ class DelegationCanceler:
                                                self.parent)
         self.progress_dialog.setWindowModality(Qt.WindowModal)
         self.progress_dialog.setWindowTitle("Przetwarzanie")
+
+        # Zapisz stan widoku PRZED startem wątku (bo to wątek główny)
+        if hasattr(self.parent, '_save_view_state'):
+            self._saved_view_state = self.parent._save_view_state()
 
         self.thread = CancelDelegationsThread(events_to_cancel)
         self.thread.progress_updated.connect(self.progress_dialog.setValue)
@@ -229,14 +234,20 @@ class DelegationCanceler:
             self.parent._update_modification_date()
 
             if affected_user_date_pairs:
-                debug_print(f"DelegationCanceler: Uruchamiam odświeżanie dla {len(affected_user_date_pairs)} par.")
+                # 1. Invalidate cache (czyści stare dane w DataProvider)
                 self.parent.data_provider.invalidate_complete_cache_for_pairs(affected_user_date_pairs)
 
-                # Przywróć stan widoku, aby zaznaczenie było poprawne
-                if hasattr(self.parent, '_state_to_restore') and self.parent._state_to_restore:
-                    self.parent._restore_view_state(self.parent._state_to_restore)
+                # 2. Wymuś przerysowanie głównej tabeli (żeby zniknęły ikony)
+                self.parent.table.schedule_view.viewport().update()
 
-                # Odśwież tabelę zdarzeń na podstawie aktualnego zaznaczenia
+                # 3. Przywróć zaznaczenie (żeby komórka nadal była "niebieska")
+                if self._saved_view_state:
+                    self.parent._restore_view_state(self._saved_view_state)
+                    self._saved_view_state = None
+
+                # 4. Wymuś odświeżenie tabeli zdarzeń (dolnej)
+                # Pobierze ona dane dla zaznaczonej komórki. Ponieważ cache został wyczyszczony w pkt 1,
+                # DataProvider pobierze świeże dane z bazy (bez usuniętego zdarzenia).
                 self.parent.on_selection_changed()
         else:
             QMessageBox.warning(self.parent, "Brak zmian", "Nie udało się odwołać żadnej delegacji.")
