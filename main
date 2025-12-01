@@ -3186,29 +3186,52 @@ class WorkScheduleWindow(QMainWindow):
             if selected_year == next_month_date.year() and selected_month == next_month_date.month():
                 is_next_month_selected = True
 
-        # Użycie centralnej funkcji do zarządzania widocznością przycisków
+        # --- KONTROLA PRZYCISKÓW GÓRNYCH ---
+
         if hasattr(self, 'add_overtime_button'):
             self.add_overtime_button.setVisible(
                 app_settings.has_permission(self.current_user_app_role, 'button_add_overtime'))
-        if hasattr(self, 'staffing_details_button'):  #
+
+        if hasattr(self, 'staffing_details_button'):
             self.staffing_details_button.setVisible(
                 app_settings.has_permission(self.current_user_app_role, 'button_staffing_details'))
+
         if hasattr(self, 'show_audit_button'):
             self.show_audit_button.setVisible(
                 app_settings.has_permission(self.current_user_app_role, 'button_show_audit'))
+
         if hasattr(self, 'schedule_control_button'):
             can_see_button = app_settings.has_permission(self.current_user_app_role, 'button_schedule_control')
             self.schedule_control_button.setVisible(can_see_button and is_next_month_selected)
-        # Ukryj przycisk wyjątków lokalizacyjnych dla roli Lider OUT
-        if hasattr(self, 'location_exception_button'):
-            self.location_exception_button.setVisible(self.current_user_app_role != 'Lider OUT')
+
+        # --- PRZYCISKI OUTLOOK / TEAMS (Naprawione dla Menadżera) ---
+        # Teraz zależą od zaktualizowanego uprawnienia 'button_send_email'
+        can_send_msg = app_settings.has_permission(self.current_user_app_role, 'button_send_email')
+
         if hasattr(self, 'send_email_button'):
-            self.send_email_button.setVisible(
-                app_settings.has_permission(self.current_user_app_role, 'button_send_email'))
-        # Nowy przycisk jest domyślnie widoczny dla wszystkich, którzy mają dostęp do wysyłania e-maili
+            self.send_email_button.setVisible(can_send_msg)
+
         if hasattr(self, 'teams_chat_button'):
-            self.teams_chat_button.setVisible(
-                app_settings.has_permission(self.current_user_app_role, 'button_send_email'))
+            self.teams_chat_button.setVisible(can_send_msg)
+
+        # --- NOWE PRZYCISKI AKCJI (Prawa strona) ---
+        # Każdy ma teraz swoje własne uprawnienie
+
+        if hasattr(self, 'location_exception_button'):
+            self.location_exception_button.setVisible(
+                app_settings.has_permission(self.current_user_app_role, 'button_location_exception'))
+
+        if hasattr(self, 'insert_change_button'):
+            self.insert_change_button.setVisible(
+                app_settings.has_permission(self.current_user_app_role, 'button_insert_change'))
+
+        if hasattr(self, 'insert_symbol_button'):
+            self.insert_symbol_button.setVisible(
+                app_settings.has_permission(self.current_user_app_role, 'button_insert_absence'))
+
+        if hasattr(self, 'cancel_delegation_button'):
+            self.cancel_delegation_button.setVisible(
+                app_settings.has_permission(self.current_user_app_role, 'button_cancel_delegation'))
 
     def show_audit_log_window(self):
         """Tworzy i pokazuje okno historii zmian."""
