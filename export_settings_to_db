@@ -1,13 +1,11 @@
+# export_settings_to_db.py
 import json
 from collections import OrderedDict
 from db_connector import DatabaseConnector, SQL_OBJECTS
 from _version import __version__ as APP_VERSION
 
-
 def get_config_as_json(data, ensure_ascii=False, indent=4):
-    """Konwertuje obiekt Python do sformatowanego stringa JSON."""
     return json.dumps(data, ensure_ascii=ensure_ascii, indent=indent)
-
 
 def export_settings():
     """Główna funkcja eksportująca wszystkie ustawienia aplikacji do bazy danych."""
@@ -78,19 +76,6 @@ def export_settings():
 
     # 2. Definicje symboli
     symbol_categories = OrderedDict([
-        ("Urlopy", {
-            "U": "Urlop wypoczynkowy",
-            "UZ": "Urlop na żądanie",
-            "UB": "Urlop bezpłatny",
-            "UM": "Urlop macierzyński",
-            "UO": "Urlop okolicznościowy",
-            "UOD": "Opieka nad dzieckiem",
-            "US": "Urlop szkolny",
-            "UT": "Urlop ojcowski",
-            "UW": "Urlop wychowawczy",
-            "UOP": "Urlop opiekuńczy (5 dni)",
-            "USW": "Zwolnienie z powodu siły wyższej (2 dni)",
-         }),
         ("Zwolnienia", {
             "CO": "Zwolnienie lekarskie",
             "CR": "Zwolnienie na inną osobę",
@@ -99,6 +84,20 @@ def export_settings():
             "ZO": "Zwolnienie z obowiązku świadczenia pracy",
             "ZS": "Zwolnienie z obowiązku świadczenia pracy (wyjątkowe)"
         }),
+        ("Urlopy", {
+            "U": "Urlop wypoczynkowy",
+            "UZ": "Urlop na żądanie",
+            "UD": "Urlop dodatkowy dla osób z niepełnosprawnością",
+            "UB": "Urlop bezpłatny",
+            "UM": "Urlop macierzyński",
+            "UO": "Urlop okolicznościowy",
+            "UOD": "Opieka nad dzieckiem",
+            "US": "Urlop szkolny",
+            "UT": "Urlop ojcowski",
+            "UW": "Urlop wychowawczy",
+            "UOP": "Urlop opiekuńczy (5 dni)",
+            "USW": "Urlop z powodu siły wyższej (2 dni)",
+         }),
         ("Delegacje i Inne", {
             "DK": "Delegacja krajowa",
             "DZ": "Delegacja zagraniczna",
@@ -186,48 +185,115 @@ def export_settings():
     # --- NOWA SEKCJA: Lista "Super Liderów" z rozszerzonymi uprawnieniami ---
     super_lider_logins = [""]  # <-- TUTAJ WPISZ LOGINY LIDERÓW
 
-    # 5. Finalny słownik do eksportu
-    settings_to_export = {
+    # --- PODZIAŁ KONFIGURACJI ---
+
+    # 1. Ustawienia SZTYWNE (Systemowe) - Te ZAWSZE nadpisujemy przy update aplikacji.
+    # Są to definicje, bez których kod by się wywalił (np. wymagana wersja).
+    settings_enforced = {
         "current_version": APP_VERSION,
         "force_update": "false",
-        # --- NOWA GLOBALNA FLAGA ---
+        # "AppPermissions": get_config_as_json(permissions), # <- To zaraz przeniesiemy do edytowalnych!
+        # "SymbolCategoriesDialog": get_config_as_json(symbol_categories),
+        # "WorkLikeSymbols": get_config_as_json(work_like_symbols),
+    }
+
+    # 2. Ustawienia INICJALIZACYJNE (Edytowalne) - Te zapisujemy TYLKO, jeśli baza jest pusta.
+    # Jeśli Admin zmienił je w aplikacji, skrypt ich NIE RUSZY.
+    settings_user_editable = {
+        "GroupMapping": get_config_as_json(group_mapping),
+        "AppPermissions": get_config_as_json(permissions),  # Przeniesione tutaj!
+        "SymbolPermissions": get_config_as_json(symbol_permissions),
+        "ShiftColorMap": get_config_as_json(shift_color_map),
+        "AbsenceSymbolsLogic": get_config_as_json(absence_symbols),
         "NotificationCenterEnabled": "true",
         "LoggingUserFile": ",".join(logging_users_for_file),
         "LoggingUserConsole": ",".join(logging_users_for_console),
-        "AppPermissions": get_config_as_json(permissions),
-        "SymbolCategoriesDialog": get_config_as_json(symbol_categories),
-        "AbsenceSymbolsLogic": get_config_as_json(absence_symbols),
-        "GroupMapping": get_config_as_json(group_mapping),
-        "ShiftColorMap": get_config_as_json(shift_color_map),
-        "SymbolPermissions": get_config_as_json(symbol_permissions),
-        "WorkLikeSymbols": get_config_as_json(work_like_symbols),
-        "SuperLiderLogins": ",".join(super_lider_logins) # <-- NOWY WPIS
-
+        "SuperLiderLogins": ",".join(super_lider_logins)
     }
 
-    print("--- Rozpoczynam eksport ustawień do bazy danych ---")
+    print("--- Rozpoczynam INTELIGENTNY eksport ustawień ---")
+    conn = None
     try:
         conn = DatabaseConnector.get_connection()
         cursor = conn.cursor()
         table_name = SQL_OBJECTS['appsettings']
 
-        for key, value in settings_to_export.items():
-            print(f"Przetwarzanie klucza: '{key}'...")
+        # A. Aplikowanie ustawień SZTYWNYCH (Zawsze UPDATE/INSERT)
+        print("\n[SYSTEM] Aktualizacja wymuszona (Core):")
+        for key, value in settings_enforced.items():
             sql = f"""
-            MERGE {table_name} AS target
-            USING (SELECT ? AS SettingKey, ? AS SettingValue) AS source
-            ON (target.SettingKey = source.SettingKey)
-            WHEN MATCHED THEN UPDATE SET target.SettingValue = source.SettingValue
-            WHEN NOT MATCHED THEN INSERT (SettingKey, SettingValue) VALUES (source.SettingKey, source.SettingValue);
-            """
+                MERGE {table_name} AS target
+                USING (SELECT ? AS SettingKey, ? AS SettingValue) AS source
+                ON (target.SettingKey = source.SettingKey)
+                WHEN MATCHED THEN UPDATE SET target.SettingValue = source.SettingValue
+                WHEN NOT MATCHED THEN INSERT (SettingKey, SettingValue) VALUES (source.SettingKey, source.SettingValue);
+                """
             cursor.execute(sql, (key, value))
-            print(f" -> Zakończono.")
+            print(f" -> Zaktualizowano: {key}")
+
+        # B. Aplikowanie ustawień EDYTOWALNYCH (Tylko INSERT IGNORE)
+        print("\n[USER] Inicjalizacja (tylko jeśli brak w bazie):")
+        for key, value in settings_user_editable.items():
+            # Sprawdź czy klucz już istnieje
+            cursor.execute(f"SELECT 1 FROM {table_name} WHERE SettingKey = ?", (key,))
+            exists = cursor.fetchone()
+
+            if not exists:
+                cursor.execute(f"INSERT INTO {table_name} (SettingKey, SettingValue) VALUES (?, ?)", (key, value))
+                print(f" -> WSTAWIONO (Nowy): {key}")
+            else:
+                print(f" -> POMINIĘTO (Istnieje): {key} - szanuję ustawienia Administratora.")
 
         conn.commit()
-        conn.close()
-        print("\n--- Eksport zakończony sukcesem! ---")
+        print("\n--- Sukces! Baza jest gotowa i bezpieczna. ---")
+
     except Exception as e:
-        print(f"\n--- WYSTĄPIŁ BŁĄD PODCZAS EKSPORTU ---\n{e}")
+        print(f"\n!!! BŁĄD: {e}")
+    finally:
+        if conn: conn.close()
+        
+    # # 5. Finalny słownik do eksportu
+    # settings_to_export = {
+    #     "current_version": APP_VERSION,
+    #     "force_update": "false",
+    #     # --- NOWA GLOBALNA FLAGA ---
+    #     "NotificationCenterEnabled": "true",
+    #     "LoggingUserFile": ",".join(logging_users_for_file),
+    #     "LoggingUserConsole": ",".join(logging_users_for_console),
+    #     "AppPermissions": get_config_as_json(permissions),
+    #     "SymbolCategoriesDialog": get_config_as_json(symbol_categories),
+    #     "AbsenceSymbolsLogic": get_config_as_json(absence_symbols),
+    #     "GroupMapping": get_config_as_json(group_mapping),
+    #     "ShiftColorMap": get_config_as_json(shift_color_map),
+    #     "SymbolPermissions": get_config_as_json(symbol_permissions),
+    #     "WorkLikeSymbols": get_config_as_json(work_like_symbols),
+    #     "SuperLiderLogins": ",".join(super_lider_logins) # <-- NOWY WPIS
+    #
+    # }
+    #
+    # print("--- Rozpoczynam eksport ustawień do bazy danych ---")
+    # try:
+    #     conn = DatabaseConnector.get_connection()
+    #     cursor = conn.cursor()
+    #     table_name = SQL_OBJECTS['appsettings']
+    #
+    #     for key, value in settings_to_export.items():
+    #         print(f"Przetwarzanie klucza: '{key}'...")
+    #         sql = f"""
+    #         MERGE {table_name} AS target
+    #         USING (SELECT ? AS SettingKey, ? AS SettingValue) AS source
+    #         ON (target.SettingKey = source.SettingKey)
+    #         WHEN MATCHED THEN UPDATE SET target.SettingValue = source.SettingValue
+    #         WHEN NOT MATCHED THEN INSERT (SettingKey, SettingValue) VALUES (source.SettingKey, source.SettingValue);
+    #         """
+    #         cursor.execute(sql, (key, value))
+    #         print(f" -> Zakończono.")
+    #
+    #     conn.commit()
+    #     conn.close()
+    #     print("\n--- Eksport zakończony sukcesem! ---")
+    # except Exception as e:
+    #     print(f"\n--- WYSTĄPIŁ BŁĄD PODCZAS EKSPORTU ---\n{e}")
 
 
 if __name__ == "__main__":
