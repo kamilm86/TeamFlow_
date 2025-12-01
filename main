@@ -725,6 +725,7 @@ class WorkScheduleWindow(QMainWindow):
         # (filter_id, display_name, is_locked)
         self.ALL_FILTERS = [
             ('presence', "Obecni w pracy w dniu:", False),
+            ('absence', "Nieobecni w pracy w dniu:", False),
             ('separator1', "--------------------", True),  # Separator też jest "filtrem"
             ('grupa', "Grupa:", False),
             ('wydzial', "Wydział:", True),  # ZABLOKOWANY
@@ -2026,14 +2027,51 @@ class WorkScheduleWindow(QMainWindow):
         presence_layout.addWidget(QLabel("Godzina:"), 2, 0)
         presence_layout.addWidget(self.presence_hour_combo, 2, 1)
         self.filter_by_presence_check.toggled.connect(self.filter_data)
+        self.filter_by_presence_check.toggled.connect(
+            lambda checked: self._handle_exclusive_filters(checked, 'presence'))
         self.presence_date_edit.dateChanged.connect(self.filter_data)
         self.presence_location_combo.selection_changed.connect(self.filter_data)
         self.presence_hour_combo.selection_changed.connect(self.filter_data)
 
         presence_group.setVisible(False)
         self.filter_widget_map['presence'] = presence_group
-        # debug_print(
-        #     f"[Filtracja] Stworzono widget 'presence'. Rodzic: {presence_group.parent()}, Widoczny: {presence_group.isVisible()}")
+
+        absence_group = QGroupBox("Nieobecni w pracy w dniu:", parent=parent_widget)
+        absence_group.setCheckable(True)
+        absence_group.setChecked(False)
+        self.filter_by_absence_check = absence_group
+
+        absence_layout = QGridLayout(absence_group)
+        absence_layout.setContentsMargins(5, 10, 5, 5)
+
+        self.absence_date_edit = QDateEdit(QDate.currentDate(), parent=absence_group)
+        self.absence_date_edit.setCalendarPopup(True)
+        self.absence_date_edit.setDisplayFormat("dd.MM.yyyy")
+
+        # Combo dla symboli (będzie wypełniane dynamicznie)
+        self.absence_symbol_combo = CustomMultiComboBox(parent=absence_group)
+
+        # Combo dla godzin (00-23)
+        self.absence_hour_combo = CustomMultiComboBox(parent=absence_group)
+        self.absence_hour_combo.add_items([f"{h:02d}:00" for h in range(24)])
+
+        absence_layout.addWidget(QLabel("Data:"), 0, 0)
+        absence_layout.addWidget(self.absence_date_edit, 0, 1)
+        absence_layout.addWidget(QLabel("Symbol:"), 1, 0)
+        absence_layout.addWidget(self.absence_symbol_combo, 1, 1)
+        absence_layout.addWidget(QLabel("Godzina rozp.:"), 2, 0)
+        absence_layout.addWidget(self.absence_hour_combo, 2, 1)
+
+        # Podłączenie sygnałów
+        self.filter_by_absence_check.toggled.connect(self.filter_data)
+        self.filter_by_absence_check.toggled.connect(
+            lambda checked: self._handle_exclusive_filters(checked, 'absence'))
+        self.absence_date_edit.dateChanged.connect(self.filter_data)
+        self.absence_symbol_combo.selection_changed.connect(self.filter_data)
+        self.absence_hour_combo.selection_changed.connect(self.filter_data)
+
+        absence_group.setVisible(False)
+        self.filter_widget_map['absence'] = absence_group
 
         # --- Separator ---
         separator = QFrame(parent=parent_widget)
@@ -2198,6 +2236,24 @@ class WorkScheduleWindow(QMainWindow):
                 widget.setVisible(True)
 
         self.filters_layout.addStretch()
+
+    def _handle_exclusive_filters(self, checked, filter_type):
+        """Zapewnia, że filtry Obecni/Nieobecni nie są włączone jednocześnie."""
+        if not checked:
+            return
+
+        if filter_type == 'presence':
+            if self.filter_by_absence_check.isChecked():
+                self.filter_by_absence_check.blockSignals(True)
+                self.filter_by_absence_check.setChecked(False)
+                self.filter_by_absence_check.blockSignals(False)
+        elif filter_type == 'absence':
+            if self.filter_by_presence_check.isChecked():
+                self.filter_by_presence_check.blockSignals(True)
+                self.filter_by_presence_check.setChecked(False)
+                self.filter_by_presence_check.blockSignals(False)
+
+
 
     def show_filter_select_dialog(self):
         """Wyświetla dialog do zarządzania widocznością i kolejnością filtrów."""
@@ -2864,25 +2920,24 @@ class WorkScheduleWindow(QMainWindow):
 
     def apply_custom_sort(self):
         """
-        Sortuje dane w modelu. Jeśli użytkownik nie ma własnych preferencji,
-        stosuje domyślne sortowanie biznesowe.
-        POPRAWKA: Zabezpiecza przed nadpisaniem sortowania przez QTableView.
+        Sortuje dane w modelu i zabezpiecza widok przed zniszczeniem kolejności.
         """
         if not hasattr(self, 'schedule_model') or not self.schedule_model._processed_data:
             return
 
-        # 1. Zabezpieczenie widoku (Employees View)
-        # Musimy wyłączyć automatyczne sortowanie widoku, bo inaczej po layoutChanged
-        # tabela spróbuje posortować dane po swojemu (np. po kolumnie 0), psując nasze sortowanie.
+        # --- KROK 1: ZABEZPIECZENIE WIDOKU ---
+        # Wyłączamy sortowanie w widoku, żeby Qt nie próbowało przetasować wierszy po swojemu
         emp_view = None
         header = None
         if hasattr(self, 'table') and hasattr(self.table, 'employees_view'):
             emp_view = self.table.employees_view
             header = emp_view.horizontalHeader()
-            emp_view.setSortingEnabled(False)  # Wyłączamy sortowanie UI na czas operacji
+            emp_view.setSortingEnabled(False)  # STOP
 
-        # 2. Pobierz preferencje użytkownika lub domyślne
+        # --- KROK 2: USTALENIE KRYTERIÓW ---
         sort_prefs = self.user_sort_preferences
+
+        # Fallback: Jeśli brak preferencji, użyj domyślnego sortowania biznesowego
         if not sort_prefs:
             sort_prefs = [
                 ('sched_dtn', 'asc'),
@@ -2890,11 +2945,11 @@ class WorkScheduleWindow(QMainWindow):
                 ('sched_przelozony_nazwisko', 'asc'),
                 ('sched_user_display', 'asc')
             ]
-            debug_print("[Sortowanie] Brak preferencji użytkownika. Zastosowano sortowanie domyślne.")
+            debug_print("[Sortowanie] Użyto domyślnego schematu sortowania.")
         else:
-            debug_print(f"[Sortowanie] Zastosowano preferencje użytkownika: {sort_prefs}")
+            debug_print(f"[Sortowanie] Użyto preferencji użytkownika: {sort_prefs}")
 
-        # 3. Wykonaj sortowanie w modelu (na liście kluczy)
+        # --- KROK 3: SORTOWANIE DANYCH (PYTHON) ---
         keys_to_sort = self.schedule_model._keys
         self.schedule_model.layoutAboutToBeChanged.emit()
 
@@ -2903,6 +2958,7 @@ class WorkScheduleWindow(QMainWindow):
                 val_a = self.schedule_model._get_sort_key(key_a, col_id)
                 val_b = self.schedule_model._get_sort_key(key_b, col_id)
 
+                # Bezpieczne porównywanie (liczb i tekstów)
                 try:
                     if val_a is None: val_a = ""
                     if val_b is None: val_b = ""
@@ -2924,37 +2980,34 @@ class WorkScheduleWindow(QMainWindow):
             keys_to_sort.sort(key=functools.cmp_to_key(compare_rows))
         except Exception as e:
             from debug_utils import log_error
-            log_error(f"Błąd krytyczny podczas sortowania: {e}", exception=e)
+            log_error(f"Błąd sortowania: {e}")
 
         self.schedule_model.layoutChanged.emit()
 
-        # 4. Przywróć ustawienia widoku i zaktualizuj strzałkę w nagłówku
+        # --- KROK 4: PRZYWRÓCENIE WIDOKU ---
         if emp_view and header:
-            # Blokujemy sygnały nagłówka, żeby setSortIndicator nie wywołał ponownego sortowania modelu przez widok
+            # Blokujemy sygnały, żeby setSortIndicator nie wywołał on_sort_changed
+            # i nie nadpisał naszych preferencji
             header.blockSignals(True)
 
-            # Resetujemy wskaźnik na prawej tabeli (grafik)
+            # Resetujemy wskaźnik (brak strzałki)
+            header.setSortIndicator(-1, Qt.AscendingOrder)
             if hasattr(self.table, 'schedule_view'):
                 self.table.schedule_view.horizontalHeader().setSortIndicator(-1, Qt.AscendingOrder)
 
+            # Jeśli mamy aktywne sortowanie, ustawiamy strzałkę wizualnie
             if sort_prefs:
-                # Ustaw strzałkę na pierwszej kolumnie sortowania (jeśli widoczna)
-                first_col_id, first_direction = sort_prefs[0]
-                order = Qt.DescendingOrder if first_direction == 'desc' else Qt.AscendingOrder
+                col_id, direction = sort_prefs[0]
+                order = Qt.DescendingOrder if direction == 'desc' else Qt.AscendingOrder
 
-                # Znajdź indeks wizualny tej kolumny
-                if hasattr(self, 'visible_columns') and first_col_id in self.visible_columns:
-                    col_index = self.visible_columns.index(first_col_id)
-                    header.setSortIndicator(col_index, order)
-                else:
-                    header.setSortIndicator(-1, Qt.AscendingOrder)
-            else:
-                # Brak konkretnego sortowania (domyślne) - brak strzałki
-                header.setSortIndicator(-1, Qt.AscendingOrder)
+                # Szukamy indeksu kolumny
+                if col_id in self.visible_columns:
+                    idx = self.visible_columns.index(col_id)
+                    header.setSortIndicator(idx, order)
 
-            # Odblokowujemy sygnały i włączamy sortowanie, aby użytkownik mógł klikać
+            # Odblokowujemy i włączamy interakcję
             header.blockSignals(False)
-            emp_view.setSortingEnabled(True)
+            emp_view.setSortingEnabled(True)  # START (teraz użytkownik może klikać)
 
     def _apply_dynamic_sizes(self):
         """
@@ -3075,11 +3128,26 @@ class WorkScheduleWindow(QMainWindow):
         self.delete_event(event_id, event_type)
 
     def on_sort_changed(self, logical_index, order):
-        """Obsługuje zmianę sortowania w tabeli grafiku"""
+        """
+        Obsługuje zmianę sortowania w tabeli grafiku (kliknięcie nagłówka).
+        Zapisuje ten wybór jako nową preferencję użytkownika.
+        """
         self.last_sort_column = logical_index
         self.last_sort_order = order
-        debug_print(
-            f"Tabela grafiku: Sortowanie po kolumnie {logical_index}, kolejność: {'rosnąco' if order == Qt.AscendingOrder else 'malejąco'}")
+
+        direction = 'desc' if order == Qt.DescendingOrder else 'asc'
+
+        # Znajdź ID kolumny na podstawie indeksu
+        if hasattr(self, 'visible_columns') and 0 <= logical_index < len(self.visible_columns):
+            col_id = self.visible_columns[logical_index]
+
+            # ZAPAMIĘTAJ WYBÓR: Nadpisujemy preferencje tym jednym, konkretnym sortowaniem
+            self.user_sort_preferences = [(col_id, direction)]
+
+            # Aktualizujemy słownik ustawień (żeby przetrwało do zapisu przy wyjściu)
+            self.user_app_settings['sort_preferences'] = self.user_sort_preferences
+
+            debug_print(f"Zapisano ręczne sortowanie: {col_id} ({direction})")
 
     def _on_column_resized(self, logical_index, old_size, new_size):
         """
@@ -3475,7 +3543,8 @@ class WorkScheduleWindow(QMainWindow):
 
     def clear_special_symbol_from_selected_cells(self):
         """
-        Usuwa symbol specjalny (F12) z uwzględnieniem blokady usuwania U/OS przez Lidera u nie-Liderów.
+        Usuwa symbol specjalny (F12).
+        Ostrzega o usuwaniu urlopu (U/UZ) dla KAŻDEJ roli.
         """
         if not app_settings.has_permission(self.current_user_app_role, 'action_clear_special_symbol'):
             self.statusBar().showMessage("Brak uprawnień do wykonania tej operacji.", 3000)
@@ -3487,7 +3556,10 @@ class WorkScheduleWindow(QMainWindow):
 
         user_role = self.current_user_app_role
         cells_to_modify = []
-        skipped_restricted_removal = []  # Lista pominiętych przy usuwaniu U/OS
+        skipped_restricted_removal = []
+
+        # Flaga ostrzegawcza
+        contains_vacation = False
 
         for cell in selected_cells_data:
             parsed = parse_symbol(cell.get('symbol', ''))
@@ -3498,32 +3570,40 @@ class WorkScheduleWindow(QMainWindow):
 
             target_role = cell.get('rola_nazwa', '')
 
-            # --- LOGIKA DLA LIDERA: BLOKADA USUWANIA 'U' i 'OS' ---
+            # Logika Lidera (Restrykcje)
             if user_role == 'Lider':
                 if current_special in ['U', 'OS']:
-                    # Jeśli cel to nie Lider -> BLOKUJEMY USUNIĘCIE
                     if target_role != 'Lider':
                         skipped_restricted_removal.append(
                             f"{cell.get('uzytkownik_dane', 'Nieznany')} (Symbol: {current_special})")
                         continue
 
+            # Sprawdzenie czy to urlop (DLA KAŻDEGO)
+            if current_special in ['U', 'UZ']:
+                contains_vacation = True
+
             cells_to_modify.append(cell)
 
-        # Wyświetl komunikat o blokadzie usuwania
         if skipped_restricted_removal:
             QMessageBox.warning(self, "Ograniczenia uprawnień",
                                 f"Lider może usunąć symbol 'U' lub 'OS' tylko u innego Lidera.<br>"
                                 f"Pominięto usuwanie dla:<br>- {', '.join(set(skipped_restricted_removal))}")
 
         if not cells_to_modify:
-            if not skipped_restricted_removal:  # Jeśli nic nie pominięto i nic nie dodano, to po prostu brak symboli
+            if not skipped_restricted_removal:
                 QMessageBox.information(self, "Brak zmian",
                                         "W zaznaczonych komórkach nie ma symboli możliwych do usunięcia.")
             return
 
-        # --- Reszta logiki bez zmian ---
-        reply = show_confirmation_dialog(self, "Potwierdzenie operacji",
-                                         f"Czy na pewno chcesz usunąć symbole specjalne z {len(cells_to_modify)} komórek?")
+        # --- Budowanie komunikatu potwierdzenia ---
+        msg = f"Czy na pewno chcesz usunąć symbole specjalne z {len(cells_to_modify)} komórek?"
+
+        # Dodanie ostrzeżenia dla KAŻDEGO, jeśli wykryto urlop
+        if contains_vacation:
+            msg += "<br><br><b><font color='orange'>UWAGA:</font> Usuwasz symbol urlopu. Pamiętaj o usunięciu go z planów urlopowych!</b>"
+
+        reply = show_confirmation_dialog(self, "Potwierdzenie operacji", msg)
+
         if reply != QMessageBox.Yes:
             return
 
@@ -3850,6 +3930,9 @@ class WorkScheduleWindow(QMainWindow):
                             bg_color = "#FFFFFF"
 
                     day_data['_bg_color_hex'] = bg_color
+                    # Wymuszamy aktualizację cache statystyk w modelu dla tego wiersza
+                    if hasattr(self, 'schedule_model'):
+                        self.schedule_model.recalculate_row_stats(user_data)
                     # --- KONIEC AKTUALIZACJI CACHE ---
 
                 except (ValueError, IndexError, KeyError):
@@ -4009,6 +4092,16 @@ class WorkScheduleWindow(QMainWindow):
         """Przeładowuje ustawienia globalne, style i logikę na żądanie."""
         debug_print("Zdalne żądanie: Pełne przeładowanie ustawień...")
 
+        # --- POPRAWKA: Zapisz bieżący stan widoku (szerokości kolumn) przed resetem ---
+        # Dzięki temu, gdy apply_theme_settings -> _apply_dynamic_sizes spróbuje
+        # przywrócić widok, użyje tych wartości, zamiast starych z bazy.
+        if hasattr(self, 'table'):
+             self.user_app_settings['column_widths'] = self.table.get_column_widths()
+             # Jeśli masz też splitter, warto go zapisać:
+             if hasattr(self.table, 'splitter'):
+                 self.user_app_settings['schedule_splitter_sizes'] = self.table.splitter.sizes()
+        # ------------------------------------------------------------------------------
+
         # 1. Pobierz świeże dane
         load_all_app_settings()
 
@@ -4016,6 +4109,7 @@ class WorkScheduleWindow(QMainWindow):
         self.check_user_permissions()
 
         # 3. Odśwież wygląd
+        # Ta metoda wywoła _apply_dynamic_sizes, która teraz skorzysta z zapisanych wyżej szerokości
         self.apply_theme_settings(
             'dark' if self.is_dark_theme else 'light',
             self.current_font,
@@ -4024,27 +4118,23 @@ class WorkScheduleWindow(QMainWindow):
 
         # 4. Obsługa Włączania/Wyłączania Powiadomień w locie
         if app_settings.ENABLE_NOTIFICATION_CENTER:
-            # Włączamy
             if not hasattr(self, 'notification_drawer') or self.notification_drawer is None:
                 from notification_center import NotificationDrawer
                 self.notification_drawer = NotificationDrawer(self)
                 self.notification_drawer.hide()
 
-            # Pokaż przycisk (teraz mamy pewność, że istnieje)
             if hasattr(self, 'notification_btn'):
                 self.notification_btn.setVisible(True)
 
         else:
-            # Wyłączamy
             if hasattr(self, 'notification_drawer') and self.notification_drawer:
                 self.notification_drawer.deleteLater()
                 self.notification_drawer = None
 
-            # Ukryj przycisk
             if hasattr(self, 'notification_btn'):
                 self.notification_btn.setVisible(False)
 
-        # Dzięki temu nowa grupa pojawi się w filtrze u wszystkich użytkowników
+        # Odświeżenie filtrów (np. nowa grupa)
         if hasattr(self, 'update_filters'):
             self.update_filters()
 
@@ -5086,6 +5176,9 @@ class WorkScheduleWindow(QMainWindow):
                 self.settings_db.save_settings(self.user_app_settings)
                 debug_print(f"Zapisano ustawienia z dialogu.")
 
+            # Naprawia kolejność wierszy po tym, jak setup_table_properties ją zresetował
+            self.apply_custom_sort()
+
     def _save_global_app_settings(self, settings_dict):
         """
         Zapisuje ustawienia globalne do tabeli appsettings (SQL)
@@ -5705,6 +5798,16 @@ class WorkScheduleWindow(QMainWindow):
         # Filtr obecności
         show_only_at_work = self.filter_by_presence_check.isChecked()
 
+        # Filtr nieobecności (NOWOŚĆ)
+        show_only_absent = self.filter_by_absence_check.isChecked()
+
+        # Parametry dla filtru nieobecności
+        # Pobieramy je zawsze, ale używamy tylko gdy show_only_absent is True
+        abs_date = self.absence_date_edit.date()
+        abs_day = abs_date.day()
+        selected_abs_symbols = set(self.absence_symbol_combo.get_selected_items())
+        selected_abs_hours = {int(h.split(':')[0]) for h in self.absence_hour_combo.get_selected_items()}
+
         # Filtry statyczne (ComboBoxy i Listy)
         selected_wydzialy = set(self.wydzial_combo.get_selected_items())
         selected_przelozeni = self.get_list_selected_items(self.przelozony_list)
@@ -5802,7 +5905,7 @@ class WorkScheduleWindow(QMainWindow):
             if selected_podrola and data.get('sched_podrola', '') not in selected_podrola:
                 continue
 
-            # --- B. Filtry niestandardowe (ZMODYFIKOWANE) ---
+            # --- B. Filtry niestandardowe ---
             if active_custom_filters:
                 user_id = str(key[3])
                 should_skip_user = False
@@ -5829,6 +5932,12 @@ class WorkScheduleWindow(QMainWindow):
                     continue
 
                 selected_date = self.presence_date_edit.date()
+
+                # --- FIX: Sprawdź czy data pasuje do bieżącego widoku ---
+                if selected_date.year() != self.year or selected_date.month() != self.month:
+                    continue
+                    # ------------------------------------------------------
+
                 day_to_check = selected_date.day()
 
                 # Pobierz kryteria filtra obecności
@@ -5906,6 +6015,39 @@ class WorkScheduleWindow(QMainWindow):
                         is_match = True
 
                     if not is_match:
+                        continue
+
+            # --- D. NOWOŚĆ: Filtr "Nieobecni w pracy" ---
+            if show_only_absent:
+                # Pomijamy osoby z DTN=1 (zgodnie z konwencją)
+                if data.get('sched_dtn') == 1:
+                    continue
+
+                # --- FIX: Sprawdź czy data pasuje do bieżącego widoku ---
+                if abs_date.year() != self.year or abs_date.month() != self.month:
+                    continue
+                # ------------------------------------------------------
+
+                # Pobierz dane dla wybranego dnia
+                day_data = data.get('days', {}).get(abs_day, {})
+                symbol = day_data.get('symbol', '')
+                parsed = parse_symbol(symbol)
+                spec_symbol = parsed.get('special_symbol')
+
+                # 1. Sprawdź, czy to w ogóle jest absencja
+                if not spec_symbol or spec_symbol.upper() not in app_settings.get_absence_symbols():
+                    continue
+
+                # 2. Filtr Symboli (jeśli wybrano konkretne)
+                if selected_abs_symbols and spec_symbol.upper() not in selected_abs_symbols:
+                    continue
+
+                # 3. Filtr Godziny Rozpoczęcia (jeśli wybrano konkretne)
+                # Uwaga: Absencje całodzienne (bez godziny) mają start_hour = None.
+                # Jeśli użytkownik wybrał konkretne godziny, a absencja nie ma godziny -> odrzucamy.
+                if selected_abs_hours:
+                    start_h = parsed.get('start_hour')
+                    if start_h is None or start_h not in selected_abs_hours:
                         continue
 
             # Jeśli pracownik przeszedł wszystkie filtry, dodaj go do wyników
@@ -6580,6 +6722,11 @@ class WorkScheduleWindow(QMainWindow):
             'podrola': self.podrola_combo.get_selected_items(),
             'grafik_za_punkty': self.grafik_za_punkty_combo.get_selected_items(),
             'brak_nocki': self.brak_nocki_combo.get_selected_items(),
+            # --- NOWOŚĆ: Stan filtra nieobecności ---
+            'absence_checked': self.filter_by_absence_check.isChecked(),
+            'absence_date': self.absence_date_edit.date().toString("yyyy-MM-dd"),
+            'absence_symbols': self.absence_symbol_combo.get_selected_items(),
+            'absence_hours': self.absence_hour_combo.get_selected_items(),
         }
 
         # --- NOWA LOGIKA: Zapisywanie filtrów niestandardowych ---
@@ -6624,6 +6771,14 @@ class WorkScheduleWindow(QMainWindow):
             self.podrola_combo.select_items(state.get('podrola', []))
             self.grafik_za_punkty_combo.select_items(state.get('grafik_za_punkty', []))
             self.brak_nocki_combo.select_items(state.get('brak_nocki', []))
+
+            # --- NOWOŚĆ: Przywracanie filtra nieobecności ---
+            if state.get('absence_checked', False):
+                self.filter_by_absence_check.setChecked(True)
+
+            self.absence_symbol_combo.select_items(state.get('absence_symbols', []))
+            self.absence_hour_combo.select_items(state.get('absence_hours', []))
+            self.presence_date_edit.setDate(QDate.currentDate())
 
             # Przywróć przełożonego (używa tekstu)
             przelozeni_items_text = state.get('przelozony', [])
@@ -6702,7 +6857,7 @@ class WorkScheduleWindow(QMainWindow):
             'default_location_combo', 'rka_combo',
             'grafik_za_punkty_combo', 'brak_nocki_combo',
             'podrola_combo', 'presence_location_combo',
-            'presence_hour_combo'
+            'presence_hour_combo', 'absence_symbol_combo', 'absence_hour_combo'
         ]
 
         try:
@@ -6745,7 +6900,7 @@ class WorkScheduleWindow(QMainWindow):
                 self.uzytkownik_list.clearSelection()
                 self.uzytkownik_list.blockSignals(False)
 
-            # 3. Wyczyść pola tekstowe (blokując sygnały)
+                # 3. Wyczyść pola tekstowe
             if hasattr(self, 'przelozony_filter'):
                 self.przelozony_filter.blockSignals(True)
                 self.przelozony_filter.clear()
@@ -6756,11 +6911,18 @@ class WorkScheduleWindow(QMainWindow):
                 self.uzytkownik_filter.clear()
                 self.uzytkownik_filter.blockSignals(False)
 
-            # 4. Inne kontrolki
+                # 4. Inne kontrolki (Checkboxy obecności i nieobecności)
             if hasattr(self, 'filter_by_presence_check'):
                 self.filter_by_presence_check.blockSignals(True)
                 self.filter_by_presence_check.setChecked(False)
                 self.filter_by_presence_check.blockSignals(False)
+
+                # --- NOWOŚĆ: Reset checkboxa nieobecności ---
+            if hasattr(self, 'filter_by_absence_check'):
+                self.filter_by_absence_check.blockSignals(True)
+                self.filter_by_absence_check.setChecked(False)
+                self.filter_by_absence_check.blockSignals(False)
+                # --------------------------------------------
 
             if hasattr(self, 'saved_filters_combo'):
                 self.saved_filters_combo.blockSignals(True)
@@ -6769,11 +6931,8 @@ class WorkScheduleWindow(QMainWindow):
 
         finally:
             self._cross_filtering_enabled = True
-
-            # Wywołanie filtrowania TYLKO RAZ po wyczyszczeniu wszystkich kontrolek
             debug_print("[Filtracja] Wywołuję filter_data() po wyczyszczeniu filtrów.")
             self.filter_data()
-
             self._update_delete_button_state()
 
     def filter_przelozony_list(self, text):
@@ -6888,20 +7047,17 @@ class WorkScheduleWindow(QMainWindow):
     def update_filters(self):
         """
         Wypełnia wszystkie filtry na podstawie załadowanych danych.
-        WERSJA ZAKTUALIZOWANA: Używa nowych kluczy 'sched_*' ze słownika danych.
         """
         try:
             if not hasattr(self, 'processed_data') or not self.processed_data:
                 debug_print("Brak danych do wypełnienia filtrów, pomijam.")
                 return
 
-            debug_print("Rozpoczynam pełną aktualizację filtrów (nowe klucze sched_)...")
+            debug_print("Rozpoczynam pełną aktualizację filtrów...")
 
             # --- 1. Pobranie starych zaznaczeń (aby je przywrócić) ---
             selected_grupy = self.grupa_main_filter_combo.get_selected_items()
             selected_wydzialy = self.wydzial_combo.get_selected_items()
-
-            # Zmienione klucze
             selected_dtn = self.dtn_combo.get_selected_items()
             selected_role = self.rola_combo.get_selected_items()
             selected_jezyki = self.jezyk_combo.get_selected_items()
@@ -6912,110 +7068,122 @@ class WorkScheduleWindow(QMainWindow):
             selected_podrola = self.podrola_combo.get_selected_items()
             selected_grafik_pkt = self.grafik_za_punkty_combo.get_selected_items()
             selected_brak_nocki = self.brak_nocki_combo.get_selected_items()
-            # Filtry listowe
+
+            # --- NAPRAWA BŁĘDU: Pobieramy to TUTAJ, zanim użyjemy niżej ---
+            selected_abs_symbols = self.absence_symbol_combo.get_selected_items()
+            # --------------------------------------------------------------
+
             selected_przelozeni_text = self.get_list_selected_items(self.przelozony_list)
             selected_uzytkownik_ids = self.get_list_selected_data(self.uzytkownik_list)
 
             # --- 2. Wypełnianie filtrów ComboBox ---
 
-            # Grupy (bez zmian, logika biznesowa)
             group_mapping = self.data_provider.get_department_to_group_mapping()
             self.grupa_main_filter_combo.add_items(sorted(group_mapping.keys()))
             self.grupa_main_filter_combo.select_items(selected_grupy)
 
-            # Wydziały (klucz 0 w krotce)
-            wydzialy = sorted(set(key[0] for key in self.processed_data.keys() if key[0]))
-            self.wydzial_combo.add_items(wydzialy)
+            # Zbiory na unikalne wartości
+            wydzialy = set()
+            locations = set()
+            scp_values = set()
+            role_values = set()
+            podrola_values = set()
+            jezyki_values = set()
+            etaty_values = set()
+            dtn_values = set()
+            rka_values = set()
+            grafik_pkt_values = set()
+            brak_nocki_values = set()
+
+            # Dane do list
+            przelozeni_set = set()
+            user_map = {}  # ID -> (Nazwa, Login)
+
+            # Iteracja po danych raz, żeby zebrać wszystko
+            for key, data in self.processed_data.items():
+                # key = (Wydzial, Przelozony, UserDisplay, UserID)
+                if key[0]: wydzialy.add(key[0])
+                if key[1]: przelozeni_set.add(key[1])
+
+                user_id = key[3]
+                user_name = key[2]
+                login = data.get('sched_login', '')
+                if user_id and user_name:
+                    user_map[user_id] = (user_name, login)
+
+                if val := data.get('sched_lokalizacja'): locations.add(str(val))
+                if val := data.get('sched_system_pracy'): scp_values.add(str(val))
+                if val := data.get('sched_rola'): role_values.add(str(val))
+                if val := data.get('sched_podrola'): podrola_values.add(str(val))
+                if val := data.get('sched_jezyk'): jezyki_values.add(str(val))
+                if (val := data.get('sched_etat')) is not None: etaty_values.add(str(val))
+                if (val := data.get('sched_dtn')) is not None: dtn_values.add(str(val))
+                if val := data.get('sched_rka'): rka_values.add(str(val))
+
+                val_pkt = data.get('sched_grafik_za_punkty')
+                grafik_pkt_values.add(str(val_pkt) if val_pkt and str(val_pkt).strip() else 'NIE')
+
+                val_nocki = data.get('sched_brak_nocki')
+                brak_nocki_values.add(str(val_nocki) if val_nocki and str(val_nocki).strip() else 'NIE')
+
+            # Aplikowanie wartości do ComboBoxów
+            self.wydzial_combo.add_items(sorted(list(wydzialy)))
             self.wydzial_combo.select_items(selected_wydzialy)
 
-            # Lokalizacja Domyślna (sched_lokalizacja)
-            locations = sorted(set(data.get('sched_lokalizacja', '') for data in self.processed_data.values() if
-                                   data.get('sched_lokalizacja')))
-            self.default_location_combo.add_items(locations)
+            self.default_location_combo.add_items(sorted(list(locations)))
             self.default_location_combo.select_items(selected_locations)
 
-            # System Czasu Pracy (sched_system_pracy)
-            scp_values = sorted(set(data.get('sched_system_pracy', '') for data in self.processed_data.values() if
-                                    data.get('sched_system_pracy')))
-            self.system_czasu_pracy_combo.add_items(scp_values)
+            self.system_czasu_pracy_combo.add_items(sorted(list(scp_values)))
             self.system_czasu_pracy_combo.select_items(selected_scp)
 
-            # Rola (sched_rola)
-            role_values = sorted(
-                set(data.get('sched_rola', '') for data in self.processed_data.values() if data.get('sched_rola')))
-            self.rola_combo.add_items(role_values)
+            self.rola_combo.add_items(sorted(list(role_values)))
             self.rola_combo.select_items(selected_role)
 
-            # Podrola (sched_podrola)
-            podrola_values = self._get_unique_values_for_filter('sched_podrola')
             self.podrola_combo.add_items(sorted(list(podrola_values)))
             self.podrola_combo.select_items(selected_podrola)
 
-            # Język (sched_jezyk)
-            jezyki_values = sorted(
-                set(data.get('sched_jezyk', '') for data in self.processed_data.values() if data.get('sched_jezyk')))
-            self.jezyk_combo.add_items(jezyki_values)
+            self.jezyk_combo.add_items(sorted(list(jezyki_values)))
             self.jezyk_combo.select_items(selected_jezyki)
 
-            # Etat (sched_etat)
-            etaty_values = set(str(data.get('sched_etat', '')) for data in self.processed_data.values() if
-                               data.get('sched_etat') is not None)
-            # Sortowanie numeryczne etatów
-            sorted_etaty = sorted(etaty_values, key=lambda x: float(x) if x.replace('.', '', 1).isdigit() else 0)
-            self.etat_combo.add_items(sorted_etaty)
+            self.etat_combo.add_items(
+                sorted(list(etaty_values), key=lambda x: float(x) if x.replace('.', '', 1).isdigit() else 0))
             self.etat_combo.select_items(selected_etaty)
 
-            # DTN (sched_dtn)
-            dtn_values = sorted(set(
-                str(data['sched_dtn']) for data in self.processed_data.values() if data.get('sched_dtn') is not None),
-                                key=int)
-            self.dtn_combo.add_items(dtn_values)
+            self.dtn_combo.add_items(sorted(list(dtn_values), key=int))
             self.dtn_combo.select_items(selected_dtn)
 
-            # RKA (sched_rka)
-            rka_values = self._get_unique_values_for_filter('sched_rka')
             self.rka_combo.add_items(sorted(list(rka_values)))
             self.rka_combo.select_items(selected_rka)
-
-            # Grafik za punkty (sched_grafik_za_punkty)
-            # Logika: Pobierz wartość, jeśli pusta/None -> zamień na 'NIE'
-            grafik_pkt_values = set()
-            for data in self.processed_data.values():
-                val = data.get('sched_grafik_za_punkty')
-                # Jeśli wartość istnieje i nie jest pusta -> użyj jej, w przeciwnym razie 'NIE'
-                grafik_pkt_values.add(str(val) if val and str(val).strip() else 'NIE')
 
             self.grafik_za_punkty_combo.add_items(sorted(list(grafik_pkt_values)))
             self.grafik_za_punkty_combo.select_items(selected_grafik_pkt)
 
-            # Brak nocki (sched_brak_nocki)
-            brak_nocki_values = set()
-            for data in self.processed_data.values():
-                val = data.get('sched_brak_nocki')
-                brak_nocki_values.add(str(val) if val and str(val).strip() else 'NIE')
-
             self.brak_nocki_combo.add_items(sorted(list(brak_nocki_values)))
             self.brak_nocki_combo.select_items(selected_brak_nocki)
 
+            # --- Wypełnianie combo symboli nieobecności ---
+            absence_def_set = app_settings.get_absence_symbols()
+            current_absence_symbols = set()
+
+            if self.processed_data:
+                for data in self.processed_data.values():
+                    for day_data in data.get('days', {}).values():
+                        sym = day_data.get('symbol', '')
+                        if sym:
+                            parsed = parse_symbol(sym)
+                            spec = parsed.get('special_symbol')
+                            if spec and spec.upper() in absence_def_set:
+                                current_absence_symbols.add(spec.upper())
+
+            self.absence_symbol_combo.add_items(sorted(list(current_absence_symbols)))
+            self.absence_symbol_combo.select_items(selected_abs_symbols)
+
             # --- 3. Aktualizacja List (Przełożony i Użytkownik) ---
 
-            # Przełożony (używamy metody pomocniczej z nowym kluczem)
-            przelozeni_items = self._get_unique_values_for_filter('sched_przelozony')
-            self.update_list_safely(self.przelozony_list, sorted(list(przelozeni_items)), selected_przelozeni_text)
+            # Przełożony
+            self.update_list_safely(self.przelozony_list, sorted(list(przelozeni_set)), selected_przelozeni_text)
 
-            # Użytkownik (Specjalna logika dla ID i Loginu)
-            user_map = {}
-            for key, data in self.processed_data.items():
-                # key = (wydzial, przelozony, user_display, user_id)
-                user_id = key[3]
-                display_name = key[2]
-                # NOWY KLUCZ: sched_login
-                login = data.get('sched_login')
-
-                if user_id and display_name:
-                    user_map[user_id] = (display_name, login or '')
-
-            # Ręczna aktualizacja QListWidget dla Użytkownika
+            # Użytkownik - Ręczna aktualizacja
             self.uzytkownik_list.blockSignals(True)
             try:
                 search_text = self.uzytkownik_filter.text().lower()
@@ -7042,29 +7210,23 @@ class WorkScheduleWindow(QMainWindow):
                 # Odśwież widoczność i zaznaczenie
                 for user_id in new_ids_set:
                     item = current_items_map.get(user_id)
-                    if not item:  # Jeśli to był nowy element, musimy go znaleźć w pętli (rzadki przypadek)
-                        # W praktyce został dodany wyżej, więc pominę ponowne szukanie dla optymalizacji
-                        # Dla pewności przy następnym odświeżeniu się złapie.
-                        continue
+                    # Fallback gdyby itemu nie było (teoretycznie niemożliwe po dodaniu wyżej)
+                    if not item: continue
 
                     item.setHidden(False)
-
                     if user_id in selected_uzytkownik_ids:
                         item.setSelected(True)
 
-                    # Zastosuj filtr wyszukiwania
+                    # Filtr wyszukiwania
                     item_text_lower = item.text().lower()
                     item_id_str = str(user_id)
                     item_login_str = str(item.data(Qt.UserRole + 1) or '').lower()
-
                     if not self._matches_user_search(item_text_lower, item_id_str, item_login_str, search_text):
                         item.setHidden(True)
             finally:
                 self.uzytkownik_list.blockSignals(False)
 
-            # --- 4. Populacja filtrów niestandardowych (Custom Columns) ---
-            # (Bez zmian, ponieważ opierają się na col_id z konfiguracji)
-            debug_print("[Filtracja] Rozpoczynam populację filtrów niestandardowych...")
+            # --- 4. Filtry niestandardowe ---
             current_data = self.date_combo.currentData()
             curr_year, curr_month = current_data if current_data else (self.year, self.month)
             suffix = f"|{curr_year}|{curr_month}"
@@ -8610,9 +8772,8 @@ class WorkScheduleWindow(QMainWindow):
 
     def _apply_special_symbol_to_selection(self, special_symbol: str):
         """
-        Aplikuje symbol specjalny do zaznaczonych komórek z uwzględnieniem logiki Lidera:
-        1. Blokada wstawiania U/OS nie-Liderom.
-        2. Blokada wstawiania absencji w dni wolne (puste).
+        Aplikuje symbol specjalny do zaznaczonych komórek.
+        Ostrzega o zmianie urlopu (U/UZ) dla KAŻDEJ roli.
         """
         selected_cells_data = self.table.get_data_for_selected_cells()
         if not selected_cells_data:
@@ -8625,15 +8786,14 @@ class WorkScheduleWindow(QMainWindow):
         special_symbol_upper = special_symbol.upper()
         user_role = self.current_user_app_role
 
-        # Czy to jest symbol absencji? (np. U, L4, ale nie HO, DYS)
+        # Czy to jest symbol absencji?
         is_absence = special_symbol_upper in app_settings.get_absence_symbols()
 
         show_vacation_plan_warning = False
         cells_to_process = []
 
-        # Listy pominiętych
         skipped_restricted_symbol = []
-        skipped_day_off = []  # <--- NOWA LISTA
+        skipped_day_off = []
 
         for cell_data in selected_cells_data:
             permissions = self._get_permission_for_cell(cell_data)
@@ -8644,56 +8804,42 @@ class WorkScheduleWindow(QMainWindow):
             current_symbol_str = cell_data.get('symbol', '')
             parsed_current = parse_symbol(current_symbol_str)
             current_special = (parsed_current.get('special_symbol') or '').upper()
-
-            # Sprawdź czy dzień jest wolny (brak godzin pracy)
             is_day_off = parsed_current.get('work_hours') is None
 
-            # --- NOWA LOGIKA: LIDER + DZIEŃ WOLNY + ABSENCJA ---
-            if user_role != 'Lider OUT' and is_day_off and is_absence:
-                skipped_day_off.append(cell_data.get('uzytkownik_dane', 'Nieznany'))
-                continue
-            # ---------------------------------------------------
-
-            # Logika: Lider może wstawić "U" lub "OS" TYLKO osobie w roli Lider.
+            # --- 1. Logika Lidera (Restrykcje) ---
             if user_role == 'Lider':
-                if special_symbol_upper in ['U', 'OS']:
-                    if target_role != 'Lider':
-                        skipped_restricted_symbol.append(cell_data.get('uzytkownik_dane', 'Nieznany'))
-                        continue
+                # Blokada absencji w dni wolne
+                if is_day_off and is_absence:
+                    skipped_day_off.append(cell_data.get('uzytkownik_dane', 'Nieznany'))
+                    continue
+                # Blokada U/OS dla nie-Liderów
+                if special_symbol_upper in ['U', 'OS'] and target_role != 'Lider':
+                    skipped_restricted_symbol.append(cell_data.get('uzytkownik_dane', 'Nieznany'))
+                    continue
 
-            # Ostrzeżenie przy zmianie 'U' na co innego
-            if current_special in ['U', 'UZ'] and special_symbol_upper not in ['U', 'UZ'] and special_symbol_upper:
+            # --- 2. Logika Ostrzeżeń (DLA WSZYSTKICH RÓL) ---
+            # Jeśli zmieniamy ISTNIEJĄCY urlop (U/UZ) na cokolwiek innego (co nie jest urlopem)
+            # To włączamy ostrzeżenie. Niezależnie od tego czy jesteś Adminem czy Liderem.
+            if current_special in ['U', 'UZ'] and special_symbol_upper not in ['U', 'UZ']:
                 show_vacation_plan_warning = True
 
             cells_to_process.append(cell_data)
 
-        # --- KOMUNIKATY O POMINIĘCIACH ---
-
+        # --- Obsługa błędów/pominięć ---
         if skipped_restricted_symbol:
             QMessageBox.warning(self, "Ograniczenia uprawnień",
                                 f"Symbol '{special_symbol_upper}' może być wstawiony przez Lidera TYLKO innemu Liderowi.<br>"
                                 f"Pominięto zmiany dla:<br>- {', '.join(set(skipped_restricted_symbol))}")
 
-        # Nowy komunikat dla dni wolnych
         if skipped_day_off:
-            # Opcjonalnie: pokaż komunikat, lub po prostu statusbar, żeby nie spamować oknami
-            # Tutaj wersja z Info, bo to ważna reguła biznesowa
-            if len(skipped_day_off) > 5:
-                msg_users = f"{len(skipped_day_off)} komórek"
-            else:
-                msg_users = "<br>- ".join(set(skipped_day_off))
-
+            msg_users = "<br>- ".join(set(skipped_day_off)) if len(
+                skipped_day_off) <= 5 else f"{len(skipped_day_off)} komórek"
             self.statusBar().showMessage(f"Pominięto wstawianie absencji w dni wolne dla: {msg_users}", 5000)
-            # Jeśli wolisz okno dialogowe, odkomentuj poniższe:
-            # QMessageBox.information(self, "Pominięto dni wolne",
-            #                        f"Jako Lider nie możesz wstawiać absencji w dni wolne od pracy.<br>"
-            #                        f"Pominięto: {msg_users}")
 
         if not cells_to_process:
             return
 
-        # --- RESZTA BEZ ZMIAN ---
-
+        # --- Przygotowanie zmian ---
         events_to_cancel = []
         if is_absence:
             user_date_pairs = {(c.get('uzytkownik_id'), c.get('date_str')) for c in cells_to_process}
@@ -8705,8 +8851,9 @@ class WorkScheduleWindow(QMainWindow):
             changes_info = self._prepare_symbol_changes_description(grouped_changes, special_symbol)
             complete_info = f"Czy na pewno chcesz wprowadzić następujące zmiany?{changes_info}"
 
+            # --- DODANIE OSTRZEŻENIA DO DIALOGU ---
             if show_vacation_plan_warning:
-                complete_info += "<br><br><b><font color='orange'>UWAGA:</font> Zmieniasz 'U' na inny symbol. Pamiętaj o usunięciu urlopu z planów urlopowych!</b>"
+                complete_info += "<br><br><b><font color='orange'>UWAGA:</font> Zmieniasz symbol urlopu. Pamiętaj o usunięciu go z planów urlopowych!</b>"
 
             if events_to_cancel:
                 grouped_events = self._group_events_by_user_date(events_to_cancel)
@@ -8723,15 +8870,13 @@ class WorkScheduleWindow(QMainWindow):
 
         change_requests = []
         for cell_data in cells_to_process:
-            # 1. Obliczamy pełny symbol lokalnie (korzystając z naprawionej logiki _predict_new_symbol)
+            # Używamy predykcji z logiką Lidera OUT
             new_symbol = self._predict_new_symbol(cell_data.get('symbol', ''), special_symbol, cell_data)
-
-            # 2. ZMIANA: Przekazujemy gotowy symbol (APPLY_BUILT_SYMBOL) zamiast surowego (APPLY_SPECIAL_SYMBOL).
-            # Dzięki temu wątek w tle nie będzie próbował przeliczać go na nowo i nie zgubi godziny 9:00.
             change_requests.append((ChangeType.APPLY_BUILT_SYMBOL, cell_data, new_symbol))
 
         if change_requests:
             self.schedule_change_processor.start_changes(change_requests)
+            # Dodatkowe info po operacji, jeśli nie było okna potwierdzenia (np. nieopublikowany grafik)
             if show_vacation_plan_warning and not self._should_ask_for_confirmation():
                 QMessageBox.information(self, "Przypomnienie",
                                         "Zmieniono symbol urlopu. Pamiętaj o usunięciu go z planów urlopowych.")
@@ -8881,7 +9026,8 @@ class WorkScheduleWindow(QMainWindow):
                 'default_location_combo', 'system_czasu_pracy_combo',
                 'rola_combo', 'jezyk_combo', 'etat_combo', 'dtn_combo',
                 'rka_combo', 'podrola_combo', 'presence_location_combo',
-                'presence_hour_combo', 'status_filter_combo', 'saved_filters_combo',
+                'presence_hour_combo', 'absence_symbol_combo', 'absence_hour_combo',
+                'status_filter_combo', 'saved_filters_combo',
                 'grafik_za_punkty_combo', 'brak_nocki_combo'  # <-- Nowe filtry
             ]
         ]
@@ -8900,11 +9046,12 @@ class WorkScheduleWindow(QMainWindow):
         if hasattr(self, 'date_from'): self.date_from.setStyleSheet(date_edit_style)
         if hasattr(self, 'date_to'): self.date_to.setStyleSheet(date_edit_style)
         if hasattr(self, 'presence_date_edit'): self.presence_date_edit.setStyleSheet(date_edit_style)
+        if hasattr(self, 'absence_date_edit'): self.absence_date_edit.setStyleSheet(date_edit_style)
 
         checkboxes_to_style = [
             getattr(self, name, None) for name in [
                 'meetings_checkbox', 'trainings_checkbox', 'overtime_checkbox',
-                'filter_by_presence_check'
+                'filter_by_presence_check', 'filter_by_absence_check'
             ]
         ]
         for checkbox in checkboxes_to_style:
