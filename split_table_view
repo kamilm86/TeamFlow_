@@ -36,6 +36,7 @@ class SplitTableView(QWidget):
         self.employees_view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.employees_view.verticalHeader().setDefaultSectionSize(25)
         self.employees_view.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
+        self.employees_view.verticalHeader().setMinimumSectionSize(20)
         self.employees_view.horizontalHeader().setFixedHeight(35)
         self.employees_view.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
         self.employees_view.horizontalHeader().setSectionsClickable(True)
@@ -48,6 +49,7 @@ class SplitTableView(QWidget):
         self.schedule_view.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
         self.schedule_view.verticalHeader().setDefaultSectionSize(25)
         self.schedule_view.verticalHeader().setSectionResizeMode(QHeaderView.Fixed)
+        self.schedule_view.verticalHeader().setMinimumSectionSize(15)
         self.schedule_view.horizontalHeader().setFixedHeight(35)
 
         # ZMIANA: Wyłączamy wbudowane sortowanie, aby przejąć pełną kontrolę
