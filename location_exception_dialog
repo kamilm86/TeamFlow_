@@ -8,7 +8,7 @@ from PySide6.QtCore import Qt, QDate, Signal
 from PySide6.QtGui import QCursor
 from db_connector import get_modifier_id
 from styles import AppStyles
-from ui_utils import show_confirmation_dialog
+from ui_utils import show_confirmation_dialog, show_warning_dialog
 from debug_utils import debug_print, log_error
 
 
@@ -90,7 +90,7 @@ class AddEditExceptionDialog(QDialog):
     def get_data(self):
         """Zwraca dane z formularza jako słownik."""
         if self.date_from_edit.date() > self.date_to_edit.date():
-            QMessageBox.warning(self, "Błąd dat", "Data 'od' nie może być późniejsza niż data 'do'.")
+            show_warning_dialog(self, "Błąd dat", "Data 'od' nie może być późniejsza niż data 'do'.")
             return None
         return {"date_from": self.date_from_edit.date(), "date_to": self.date_to_edit.date(),
                 "lokalizacja": self.index_to_location_id.get(self.location_combo.currentIndex()),
@@ -278,7 +278,7 @@ class LocationExceptionDialog(QDialog):
                 existing_exceptions = self.parent_widget._get_location_exceptions(self.user_id, data['date_from'],
                                                                                   data['date_to'])
                 if existing_exceptions:
-                    QMessageBox.warning(self, "Wykryto kolizję",
+                    show_warning_dialog(self, "Wykryto kolizję",
                                         "W wybranym zakresie dat istnieje już co najmniej jeden wpis wyjątku.")
                     return
 
