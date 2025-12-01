@@ -36,7 +36,7 @@ def export_settings():
 
         # Klucz: 'button_show_audit'
         # Opis: Kontroluje widoczność przycisku "Historia Zmian".
-        'button_show_audit': ['Pracownik WPR', 'Lider OUT', 'Lider', 'Administrator'],
+        'button_show_audit': ['Pracownik WPR', 'Lider OUT', 'Lider', 'Administrator', 'Menadżer'],
 
         # Klucz: 'button_schedule_control'
         # Opis: Kontroluje widoczność przycisku "Zarządzaj Grafikiem", który pozwala na blokowanie i publikację grafiku.
@@ -56,7 +56,7 @@ def export_settings():
 
         # Klucz: 'button_send_email'
         # Opis: Kontroluje widoczność przycisku "Wyślij e-mail" do zaznaczonych pracowników.
-        'button_send_email': ['Pracownik WPR', 'Lider OUT', 'Lider', 'Administrator'],
+        'button_send_email': ['Pracownik WPR', 'Lider OUT', 'Lider', 'Administrator', 'Menadżer'],
 
         # Klucz: 'view_schedule_percent_morning_column'
         # Opis: Sprawia, że w oknie wyboru kolumn pojawia się opcja włączenia kolumny "Procent rano".
@@ -66,7 +66,14 @@ def export_settings():
         # Pozwala widzieć zakładkę "Administracja" w ustawieniach i zmieniać globalne flagi
         'manage_app_configuration': ['Administrator'],
 
+        # --- NOWE UPRAWNIENIA (Dla przycisków edycji grafiku) ---
+        # Domyślnie NIE MA tu Menadżera, więc przyciski będą dla niego ukryte
+        'button_insert_change': ['Pracownik WPR', 'Lider OUT', 'Lider', 'Administrator'],
+        'button_insert_absence': ['Pracownik WPR', 'Lider OUT', 'Lider', 'Administrator'],
+        'button_cancel_delegation': ['Pracownik WPR', 'Lider OUT', 'Lider', 'Administrator'],
+        'button_location_exception': ['Pracownik WPR', 'Lider', 'Administrator'],
 
+        # -- INNE --
         'manage_group_definitions': ['Administrator', 'Pracownik WPR']
     }
 
