@@ -19,7 +19,7 @@ from symbol_parser import parse_symbol, build_symbol
 from schedule_change_model import ScheduleChangeModel
 from schedule_change_delegate import ScheduleChangeDelegate
 from schedule_change_processor import ChangeType
-from ui_utils import show_confirmation_dialog
+from ui_utils import show_confirmation_dialog, show_warning_dialog
 from ui_components import DigitSelectionDialog
 
 
@@ -343,14 +343,13 @@ class InsertSymbolDialog(QDialog):
             if app_settings.has_symbol_permission(self.user_role, self.selected_symbol):
                 super().accept()
             else:
-                QMessageBox.warning(self, "Brak uprawnień",
-                                    f"Twoja rola ('{self.user_role}') nie ma uprawnień do użycia symbolu '{self.selected_symbol}'.",
-                                    QMessageBox.Ok)
+                show_warning_dialog(self, "Brak uprawnień",
+                                    f"Twoja rola ('{self.user_role}') nie ma uprawnień do użycia symbolu '{self.selected_symbol}'.")
         elif self.selected_symbol:
-            QMessageBox.warning(self, "Nieprawidłowy symbol",
-                                f"Symbol '{self.selected_symbol}' nie jest poprawnym symbolem.", QMessageBox.Ok)
+            show_warning_dialog(self, "Nieprawidłowy symbol",
+                                f"Symbol '{self.selected_symbol}' nie jest poprawnym symbolem.")
         else:
-            QMessageBox.warning(self, "Brak symbolu", "Proszę wpisać lub wybrać symbol.", QMessageBox.Ok)
+            show_warning_dialog(self, "Brak symbolu", "Proszę wpisać lub wybrać symbol.")
             self.selected_symbol = "";
             self.symbol_input.setText("");
             self.symbol_input.setFocus()
