@@ -1,1 +1,175 @@
 
+from PySide6.QtWidgets import (QDialog, QVBoxLayout, QTableWidget, QTableWidgetItem,
+                               QPushButton, QHBoxLayout, QMessageBox, QHeaderView, QCheckBox, QWidget, QLabel)
+from PySide6.QtCore import Qt
+from styles import AppStyles
+import json
+
+# Słownik opisów dla uprawnień (możesz go rozbudować)
+PERMISSION_DESCRIPTIONS = {
+    'app_access': 'Dostęp do uruchomienia aplikacji',
+    'schedule_keyboard_edit': 'Edycja godzin i symboli z klawiatury',
+    'schedule_cell_actions': 'Dostęp do przycisków "Wstaw zmianę" / "Nieobecność"',
+    'button_add_overtime': 'Widoczność przycisku "Dodaj nadgodziny"',
+    'button_staffing_details': 'Dostęp do okna "Obsada"',
+    'button_show_audit': 'Dostęp do historii zmian',
+    'button_schedule_control': 'Dostęp do "Zarządzaj Grafikiem" (Blokady/Publikacja)',
+    'action_delete_symbol': 'Usuwanie symboli klawiszem Delete',
+    'view_schedule_comment_column': 'Widoczność kolumny "Komentarz"',
+    'action_clear_special_symbol': 'Usuwanie symboli specjalnych (F12)',
+    'button_send_email': 'Wysyłanie e-maili z aplikacji',
+    'view_schedule_percent_morning_column': 'Widoczność kolumny "Procent rano"',
+    'manage_app_configuration': 'Pełny dostęp do panelu Administracji',
+    'manage_group_definitions': 'Edycja Grup i Wag',
+    'view_schedule_percent_ho_column': 'Widoczność kolumny "Procent HO"'
+}
+
+
+class PermissionsEditorDialog(QDialog):
+    def __init__(self, parent, current_permissions, is_dark_theme):
+        super().__init__(parent)
+        self.setWindowTitle("Zarządzanie Uprawnieniami Ról")
+        self.resize(1100, 700)  # Zwiększono szerokość dla kolumny opisu
+        self.is_dark_theme = is_dark_theme
+
+        # Kopia robocza: { 'feature_key': ['Role1', 'Role2'] }
+        self.permissions = current_permissions.copy()
+
+        # Zdefiniuj wszystkie dostępne role w systemie
+        self.all_roles = ["Pracownik WPR", "Lider", "Lider OUT", "Administrator", "Menadżer"]
+
+        self.setup_ui()
+        self.apply_styles()
+
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+
+        # Dodajemy etykietę informacyjną
+        info_lbl = QLabel("Zaznacz role, które mają mieć dostęp do danej funkcji.")
+        layout.addWidget(info_lbl)
+
+        self.table = QTableWidget()
+        # Kolumny: Klucz | Opis | Rola 1 | Rola 2 ...
+        self.table.setColumnCount(len(self.all_roles) + 2)
+
+        headers = ["Kod Funkcji", "Opis Uprawnienia"] + self.all_roles
+        self.table.setHorizontalHeaderLabels(headers)
+
+        # Konfiguracja nagłówków
+        header = self.table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.ResizeToContents)  # Kod
+        header.setSectionResizeMode(1, QHeaderView.Stretch)  # Opis (rozciągnij)
+        for i in range(2, self.table.columnCount()):
+            header.setSectionResizeMode(i, QHeaderView.ResizeToContents)  # Role
+
+        self._populate_table()
+
+        layout.addWidget(self.table)
+
+        btns = QHBoxLayout()
+        save_btn = QPushButton("Zapisz zmiany")
+        save_btn.clicked.connect(self.accept)
+        cancel_btn = QPushButton("Anuluj")
+        cancel_btn.clicked.connect(self.reject)
+
+        btns.addStretch()
+        btns.addWidget(save_btn)
+        btns.addWidget(cancel_btn)
+        layout.addLayout(btns)
+
+    def _populate_table(self):
+        self.table.setRowCount(len(self.permissions))
+
+        # Sortujemy po kluczu funkcji
+        for row, (feature, allowed_roles) in enumerate(sorted(self.permissions.items())):
+            # Kolumna 0: Kod Funkcji
+            key_item = QTableWidgetItem(feature)
+            key_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)  # Tylko do odczytu
+            self.table.setItem(row, 0, key_item)
+
+            # Kolumna 1: Opis (Nowość)
+            desc_text = PERMISSION_DESCRIPTIONS.get(feature, "---")
+            desc_item = QTableWidgetItem(desc_text)
+            desc_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
+            self.table.setItem(row, 1, desc_item)
+
+            # Kolumny Ról: Checkboxy
+            for col_idx, role_name in enumerate(self.all_roles):
+                # Indeks kolumny w tabeli (przesunięty o 2)
+                table_col = col_idx + 2
+
+                # --- NAPRAWA KLIKALNOŚCI ---
+                # 1. Tworzymy widget kontenera
+                cell_widget = QWidget()
+                chk_layout = QHBoxLayout(cell_widget)
+                chk_layout.setContentsMargins(0, 0, 0, 0)
+                chk_layout.setAlignment(Qt.AlignCenter)
+
+                chk = QCheckBox()
+                chk.setChecked(role_name in allowed_roles)
+                # Zapamiętujemy dane w widgecie
+                chk.setProperty("feature", feature)
+                chk.setProperty("role", role_name)
+
+                chk_layout.addWidget(chk)
+
+                # 2. Ważne: Ustawiamy pusty item w komórce, aby QTableWidget wiedział, że ona "istnieje"
+                # To często naprawia problemy z fokusem i klikaniem
+                self.table.setItem(row, table_col, QTableWidgetItem())
+
+                # 3. Wstawiamy widget
+                self.table.setCellWidget(row, table_col, cell_widget)
+
+    def get_permissions_json(self):
+        """Zbiera stan checkboxów i zwraca JSON gotowy do zapisu."""
+        new_permissions = {}
+
+        # Iterujemy po wierszach
+        for row in range(self.table.rowCount()):
+            feature = self.table.item(row, 0).text()
+            new_permissions[feature] = []
+
+            # Iterujemy po kolumnach z rolami (od indeksu 2)
+            for col_idx, role_name in enumerate(self.all_roles):
+                table_col = col_idx + 2
+
+                # Pobieramy widget z komórki
+                cell_widget = self.table.cellWidget(row, table_col)
+                if cell_widget:
+                    # Znajdujemy w nim checkbox
+                    chk = cell_widget.findChild(QCheckBox)
+                    if chk and chk.isChecked():
+                        new_permissions[feature].append(role_name)
+
+        return json.dumps(new_permissions, indent=4)
+
+    def apply_styles(self):
+        theme = "dark" if self.is_dark_theme else "light"
+
+        # 1. Pobierz wszystkie niezbędne style z AppStyles
+        dialog_style = AppStyles.get_dialog_style(theme)
+        table_style = AppStyles.get_table_style(theme)
+        checkbox_style = AppStyles.get_checkbox_style(theme)  # <--- KLUCZOWE: Styl kolorystyczny dla checkboxów
+        button_style = AppStyles.get_button_style(theme)
+
+        # 2. Zdefiniuj poprawki specyficzne dla checkboxów wewnątrz tabeli
+        # (musimy usunąć marginesy i tło, aby widget centrujący w komórce działał poprawnie)
+        table_checkbox_tweaks = """
+            QTableWidget QCheckBox { 
+                margin: 0px; 
+                padding: 0px;
+                background-color: transparent;
+            }
+            QTableWidget QCheckBox::indicator { 
+                width: 20px; 
+                height: 20px; 
+            }
+        """
+
+        # 3. Połącz wszystko w jeden arkusz stylów i zastosuj do okna
+        full_style = dialog_style + table_style + checkbox_style + table_checkbox_tweaks
+        self.setStyleSheet(full_style)
+
+        # 4. Zastosuj styl dla przycisków (Zapisz/Anuluj)
+        for btn in self.findChildren(QPushButton):
+            btn.setStyleSheet(button_style)
