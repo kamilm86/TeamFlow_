@@ -2428,9 +2428,11 @@ class WorkScheduleWindow(QMainWindow):
 
         # Filtry daty od-do z przywróconym kalendarzem
         self.date_from = QDateEdit(QDate.currentDate().addDays(-30))
-        self.date_from.setCalendarPopup(True)  # POPRAWKA: Przywrócenie kalendarza
+        self.date_from.setCalendarPopup(True)
+        self.date_from.setDisplayFormat("dd.MM.yyyy")
         self.date_to = QDateEdit(QDate.currentDate())
-        self.date_to.setCalendarPopup(True)  # POPRAWKA: Przywrócenie kalendarza
+        self.date_to.setCalendarPopup(True)
+        self.date_to.setDisplayFormat("dd.MM.yyyy")
 
         # Filtry tekstowe i statusu
         self.topic_filter = QLineEdit()
