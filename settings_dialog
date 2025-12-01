@@ -26,41 +26,40 @@ class AppSettingsDialog(QDialog):
         self.setWindowTitle("Ustawienia")
         self.setMinimumWidth(600)
 
-        # --- POPRAWKA: Inicjalizacja profili PRZED utworzeniem UI ---
-        # Zapobiega błędowi AttributeError, gdy setup_ui -> setChecked wyzwala sygnał
+        # Inicjalizacja profili
         self.profiles = self.current_settings.get('layout_profiles', {}).copy()
-
-        # Zabezpieczenie przed brakiem profili (profil domyślny)
         if not self.profiles:
             self.profiles = {'Podstawowy': {
                 'font_family': 'Segoe UI', 'font_size': 9,
-                'row_height': 25, 'header_height': 35, 'day_col_width': 45
+                'row_height': 25, 'header_height': 35, 'day_col_width': 45, 'staffing_row_height': 22
             }}
-        # -----------------------------------------------------------
 
         self.setup_ui()
         self.apply_dialog_theme()
+
+        # --- KLUCZOWA ZMIANA KOLEJNOŚCI ---
+        # 1. Najpierw załaduj dane do kontrolek (ustaw wartości 36px, 25px itp.)
+        self._load_settings_to_widgets()
+
+        # 2. Dopiero potem podłącz sygnały. Dzięki temu zmiana wartości podczas ładowania
+        # nie wyzwoli fałszywego zapisu "20px" do profilu.
         self.connect_signals()
+        # ----------------------------------
 
     def setup_ui(self):
         main_layout = QVBoxLayout(self)
-
-        # Używamy QTabWidget dla porządku
         self.tabs = QTabWidget()
 
         # --- 1. Zakładka Ogólne ---
         general_tab = QWidget()
         general_layout = QVBoxLayout(general_tab)
-
         theme_group = self._create_theme_group()
         display_options_group = self._create_display_options_group()
         outlook_group = self._create_outlook_group()
-
         general_layout.addWidget(theme_group)
         general_layout.addWidget(display_options_group)
         general_layout.addWidget(outlook_group)
         general_layout.addStretch()
-
         self.tabs.addTab(general_tab, "Ogólne")
 
         # --- 2. Zakładka Import Danych ---
@@ -71,10 +70,9 @@ class AppSettingsDialog(QDialog):
         import_layout.addStretch()
         self.tabs.addTab(import_tab, "Import Danych")
 
-        # --- 3. Zakładka Konfiguracja Grup (OSOBNA) ---
+        # --- 3. Zakładka Grupy ---
         has_group_access = (app_settings.has_permission(self.user_role, 'manage_app_configuration') or
                             app_settings.has_permission(self.user_role, 'manage_group_definitions'))
-
         if has_group_access:
             groups_tab = QWidget()
             groups_layout = QVBoxLayout(groups_tab)
@@ -83,7 +81,7 @@ class AppSettingsDialog(QDialog):
             groups_layout.addStretch()
             self.tabs.addTab(groups_tab, "Grupy i Wagi")
 
-        # --- 4. Zakładka Administracja (Globalne flagi) ---
+        # --- 4. Zakładka Administracja ---
         if app_settings.has_permission(self.user_role, 'manage_app_configuration'):
             admin_tab = QWidget()
             admin_layout = QVBoxLayout(admin_tab)
@@ -94,7 +92,6 @@ class AppSettingsDialog(QDialog):
 
         main_layout.addWidget(self.tabs)
 
-        # Checkbox zapisu użytkownika i przyciski (na dole, poza zakładkami)
         self.save_settings_checkbox = QCheckBox("Zapamiętaj moje ustawienia na stałe")
         self.save_settings_checkbox.setChecked(True)
 
@@ -108,19 +105,15 @@ class AppSettingsDialog(QDialog):
         main_layout.addWidget(self.save_settings_checkbox, 0, Qt.AlignRight)
         main_layout.addLayout(buttons_layout)
 
-        self._load_settings_to_widgets()
-
     def _create_theme_group(self):
-        """Tworzy zaawansowaną grupę zarządzania profilami wyglądu."""
         group = QGroupBox("Profile Wyglądu i Układu")
         layout = QVBoxLayout()
 
-        # --- Sekcja wyboru profilu ---
         profile_select_layout = QHBoxLayout()
         profile_select_layout.addWidget(QLabel("Aktywny profil:"))
-
         self.profile_combo = QComboBox()
-        self.profile_combo.currentIndexChanged.connect(self._on_profile_changed)
+        # UWAGA: Tu usuwamy podłączenie sygnału! Przenosimy do connect_signals
+        # self.profile_combo.currentIndexChanged.connect(self._on_profile_changed)
 
         self.add_profile_btn = QPushButton("+ Nowy")
         self.add_profile_btn.setFixedWidth(60)
@@ -133,34 +126,27 @@ class AppSettingsDialog(QDialog):
         profile_select_layout.addWidget(self.profile_combo, 1)
         profile_select_layout.addWidget(self.add_profile_btn)
         profile_select_layout.addWidget(self.delete_profile_btn)
-
         layout.addLayout(profile_select_layout)
 
-        # --- Sekcja parametrów (Grid) ---
         params_group = QGroupBox("Parametry profilu")
         params_layout = QGridLayout(params_group)
 
-        # Motyw (Dark/Light)
         self.dark_theme_radio = QRadioButton("Ciemny")
         self.light_theme_radio = QRadioButton("Jasny")
-
         theme_layout = QHBoxLayout()
         theme_layout.addWidget(self.dark_theme_radio)
         theme_layout.addWidget(self.light_theme_radio)
         params_layout.addWidget(QLabel("Motyw kolorystyczny:"), 0, 0)
         params_layout.addLayout(theme_layout, 0, 1)
 
-        # Parametry czcionki
         self.font_combo = QFontComboBox()
         self.font_size_spin = QSpinBox()
         self.font_size_spin.setRange(6, 24)
-
         params_layout.addWidget(QLabel("Czcionka:"), 1, 0)
         params_layout.addWidget(self.font_combo, 1, 1)
         params_layout.addWidget(QLabel("Rozmiar czcionki:"), 2, 0)
         params_layout.addWidget(self.font_size_spin, 2, 1)
 
-        # Parametry wymiarów
         self.row_height_spin = QSpinBox()
         self.row_height_spin.setRange(15, 100)
         self.row_height_spin.setSuffix(" px")
@@ -179,20 +165,33 @@ class AppSettingsDialog(QDialog):
 
         params_layout.addWidget(QLabel("Wysokość wiersza tabeli:"), 3, 0)
         params_layout.addWidget(self.row_height_spin, 3, 1)
-
         params_layout.addWidget(QLabel("Wysokość wiersza tabeli (Obsada):"), 4, 0)
         params_layout.addWidget(self.staffing_row_height_spin, 4, 1)
-
         params_layout.addWidget(QLabel("Wysokość nagłówka:"), 5, 0)
         params_layout.addWidget(self.header_height_spin, 5, 1)
-
         params_layout.addWidget(QLabel("Szerokość kolumny dnia:"), 6, 0)
         params_layout.addWidget(self.day_width_spin, 6, 1)
 
         layout.addWidget(params_group)
 
-        # Podłączenie sygnałów podglądu na żywo
+        # UWAGA: USUNIĘTO PODŁĄCZANIE SYGNAŁÓW STĄD!
+        # Są teraz w metodzie connect_signals()
+
+        group.setLayout(layout)
+        return group
+
+    def connect_signals(self):
+        """Podłącza wszystkie sygnały po zainicjowaniu UI i danych."""
+        self.ok_button.clicked.connect(self._on_accept)
+        self.cancel_button.clicked.connect(self.reject)
+        self.import_now_button.clicked.connect(self._on_import_now_clicked)
+        self.browse_button.clicked.connect(self._browse_for_template_folder)
+
+        # --- Podłączenie sygnałów dla profili (TERAZ JEST BEZPIECZNIE) ---
+        self.profile_combo.currentIndexChanged.connect(self._on_profile_changed)
         self.dark_theme_radio.toggled.connect(self._emit_live_preview_changes)
+
+        # Sygnały aktualizujące dane profilu
         self.font_combo.currentTextChanged.connect(self._update_current_profile_data)
         self.font_size_spin.valueChanged.connect(self._update_current_profile_data)
         self.row_height_spin.valueChanged.connect(self._update_current_profile_data)
@@ -200,20 +199,19 @@ class AppSettingsDialog(QDialog):
         self.staffing_row_height_spin.valueChanged.connect(self._update_current_profile_data)
         self.day_width_spin.valueChanged.connect(self._update_current_profile_data)
 
-        group.setLayout(layout)
-        return group
-
     def _load_settings_to_widgets(self):
-        # Ładowanie motywu (globalne)
-        # UWAGA: Ustawienie setChecked wyzwala sygnał toggled -> _emit_live_preview_changes
-        # Dlatego self.profiles musi być już zainicjowane (co zrobiliśmy w __init__)
+        # Ładowanie motywu
+        # Blokujemy sygnały radia, bo connect_signals jeszcze nie było, ale dla porządku:
+        self.dark_theme_radio.blockSignals(True)
+        self.light_theme_radio.blockSignals(True)
         if self.current_settings.get('theme', 'dark') == 'dark':
             self.dark_theme_radio.setChecked(True)
         else:
             self.light_theme_radio.setChecked(True)
+        self.dark_theme_radio.blockSignals(False)
+        self.light_theme_radio.blockSignals(False)
 
         active_profile_name = self.current_settings.get('active_profile', 'Podstawowy')
-
         self._refresh_profile_combo(active_profile_name)
 
         # Reszta ustawień
@@ -239,6 +237,7 @@ class AppSettingsDialog(QDialog):
             self.profile_combo.setCurrentText(select_name)
 
         self.profile_combo.blockSignals(False)
+        # Ręcznie wywołujemy ładowanie danych, bo sygnał jeszcze nie działa (lub jest zablokowany)
         self._on_profile_changed()
 
     def _on_profile_changed(self):
@@ -248,19 +247,20 @@ class AppSettingsDialog(QDialog):
 
         self.delete_profile_btn.setEnabled(name != "Podstawowy")
 
+        # Blokujemy sygnały na czas ustawiania wartości
         self._block_params_signals(True)
+        try:
+            self.font_combo.setCurrentFont(QFont(data.get('font_family', 'Segoe UI')))
+            self.font_size_spin.setValue(int(data.get('font_size', 9)))
+            self.row_height_spin.setValue(int(data.get('row_height', 25)))
+            self.staffing_row_height_spin.setValue(int(data.get('staffing_row_height', 22)))
+            self.header_height_spin.setValue(int(data.get('header_height', 35)))
+            self.day_width_spin.setValue(int(data.get('day_col_width', 45)))
+        finally:
+            self._block_params_signals(False)
 
-        # Ustawienie wartości w kontrolkach
-        self.font_combo.setCurrentFont(QFont(data.get('font_family', 'Segoe UI')))
-        self.font_size_spin.setValue(int(data.get('font_size', 9)))
-        self.row_height_spin.setValue(int(data.get('row_height', 25)))
-        self.staffing_row_height_spin.setValue(int(data.get('staffing_row_height', 22)))
-        self.header_height_spin.setValue(int(data.get('header_height', 35)))
-        self.day_width_spin.setValue(int(data.get('day_col_width', 45)))
-
-        self._block_params_signals(False)
-
-        # Wywołaj podgląd, aby zaktualizować okno główne
+        # Podgląd wywołujemy tylko, jeśli sygnały są już podłączone (czyli po inicjalizacji)
+        # W trakcie startu connect_signals jeszcze nie poszło, więc to nic nie zrobi, co jest OK.
         self._emit_live_preview_changes()
 
     def _block_params_signals(self, block: bool):
@@ -268,6 +268,7 @@ class AppSettingsDialog(QDialog):
         self.font_size_spin.blockSignals(block)
         self.row_height_spin.blockSignals(block)
         self.header_height_spin.blockSignals(block)
+        self.staffing_row_height_spin.blockSignals(block)
         self.day_width_spin.blockSignals(block)
 
     def _update_current_profile_data(self):
@@ -285,6 +286,21 @@ class AppSettingsDialog(QDialog):
         }
         self._emit_live_preview_changes()
 
+    def _emit_live_preview_changes(self):
+        # Emituj tylko, jeśli mamy rodzica
+        if self.parent_widget:
+            selected_theme = 'dark' if self.dark_theme_radio.isChecked() else 'light'
+            font_family = self.font_combo.currentText()
+            font_size = self.font_size_spin.value()
+
+            active_name = self.profile_combo.currentText()
+            # Aktualizujemy profile w obiekcie settings rodzica TYMCZASOWO
+            self.parent_widget.user_app_settings['layout_profiles'] = self.profiles
+            self.parent_widget.user_app_settings['active_profile'] = active_name
+
+            self.live_theme_changed.emit(selected_theme, font_family, font_size)
+            self.apply_dialog_theme()
+
     def _add_new_profile(self):
         name, ok = QInputDialog.getText(self, "Nowy Profil", "Podaj nazwę nowego profilu:")
         if ok and name:
@@ -294,11 +310,11 @@ class AppSettingsDialog(QDialog):
                 QMessageBox.warning(self, "Błąd", "Profil o takiej nazwie już istnieje.")
                 return
 
-            # Kopiuj ustawienia z obecnego profilu
             current_data = {
                 'font_family': self.font_combo.currentFont().family(),
                 'font_size': self.font_size_spin.value(),
                 'row_height': self.row_height_spin.value(),
+                'staffing_row_height': self.staffing_row_height_spin.value(),
                 'header_height': self.header_height_spin.value(),
                 'day_col_width': self.day_width_spin.value()
             }
@@ -310,29 +326,13 @@ class AppSettingsDialog(QDialog):
         if name == "Podstawowy":
             QMessageBox.warning(self, "Błąd", "Nie można usunąć profilu podstawowego.")
             return
-
         if QMessageBox.question(self, "Potwierdzenie", f"Czy na pewno usunąć profil '{name}'?") == QMessageBox.Yes:
             del self.profiles[name]
             self._refresh_profile_combo("Podstawowy")
 
-    def _emit_live_preview_changes(self):
-        selected_theme = 'dark' if self.dark_theme_radio.isChecked() else 'light'
-        font_family = self.font_combo.currentText()
-        font_size = self.font_size_spin.value()
-
-        if self.parent_widget:
-            active_name = self.profile_combo.currentText()
-            # Aktualizujemy profile w obiekcie settings rodzica TYMCZASOWO
-            self.parent_widget.user_app_settings['layout_profiles'] = self.profiles
-            self.parent_widget.user_app_settings['active_profile'] = active_name
-
-            self.live_theme_changed.emit(selected_theme, font_family, font_size)
-            self.apply_dialog_theme()
-
     def get_current_settings(self):
         active_name = self.profile_combo.currentText()
-
-        # 2. Zaktualizuj dane tego profilu w słowniku na podstawie obecnego stanu kontrolek
+        # Wymuś aktualizację profilu przed pobraniem (dla pewności)
         if active_name:
             self.profiles[active_name] = {
                 'font_family': self.font_combo.currentFont().family(),
@@ -347,15 +347,10 @@ class AppSettingsDialog(QDialog):
 
         return {
             'theme': 'dark' if self.dark_theme_radio.isChecked() else 'light',
-
-            # Dane do zapisu profili
             'layout_profiles': self.profiles,
             'active_profile': active_name,
-
-            # Dane dla kompatybilności (fallback)
             'font_family': active_data.get('font_family', 'Segoe UI'),
             'font_size': active_data.get('font_size', 9),
-
             'import_grupa': self.grupa_combo.currentData(),
             'import_funkcja': self.funkcja_combo.currentData(),
             'save_to_db': self.save_settings_checkbox.isChecked(),
@@ -410,8 +405,34 @@ class AppSettingsDialog(QDialog):
         self.global_notification_check.setChecked(app_settings.ENABLE_NOTIFICATION_CENTER)
         layout.addWidget(self.global_notification_check, 0, 0)
         layout.addWidget(QLabel("<i>Zmiana tego ustawienia wpłynie na wszystkich użytkowników aplikacji.</i>"), 1, 0)
+        self.edit_permissions_btn = QPushButton("Edytuj Uprawnienia Ról")
+        self.edit_permissions_btn.clicked.connect(self.open_permissions_editor)
+        layout.addWidget(self.edit_permissions_btn)
         group.setLayout(layout)
         return group
+
+    def open_permissions_editor(self):
+        from permissions_editor_dialog import PermissionsEditorDialog
+
+        # Pobieramy aktualne uprawnienia z app_settings
+        # (Upewnij się, że w app_settings.py masz self.PERMISSIONS jako słownik list, a nie setów przy eksporcie)
+        # Tutaj zakładam, że app_settings.PERMISSIONS to defaultdict(set), więc konwertujemy na dict(list)
+        current_perms = {k: list(v) for k, v in app_settings.PERMISSIONS.items()}
+
+        dialog = PermissionsEditorDialog(self, current_perms, self.parent_widget.is_dark_theme)
+
+        if dialog.exec():
+            new_json = dialog.get_permissions_json()
+
+            # Wysyłamy do bazy
+            self.save_global_settings_requested.emit({
+                'AppPermissions': new_json
+            })
+
+            # Aktualizujemy lokalnie
+            app_settings.parse_and_apply('AppPermissions', new_json)
+
+            QMessageBox.information(self, "Zapisano", "Uprawnienia ról zostały zaktualizowane.")
 
     def _on_accept(self):
         if hasattr(self, 'global_notification_check'):
@@ -422,12 +443,6 @@ class AppSettingsDialog(QDialog):
                 })
         self.accept()
 
-    def connect_signals(self):
-        self.ok_button.clicked.connect(self._on_accept)
-        self.cancel_button.clicked.connect(self.reject)
-        self.import_now_button.clicked.connect(self._on_import_now_clicked)
-        self.browse_button.clicked.connect(self._browse_for_template_folder)
-
     def _on_import_now_clicked(self):
         """
         Obsługuje kliknięcie 'Importuj teraz'.
@@ -435,7 +450,7 @@ class AppSettingsDialog(QDialog):
         do pamięci aplikacji, a następnie uruchamia import.
         """
         # 0. Wymuś zapisanie bieżących wartości z kontrolek do self.profiles
-        self._update_current_profile_data()
+        # self._update_current_profile_data()
         # 1. Pobierz pełny stan ustawień z dialogu (profile, fonty, import settings itp.)
         # To kluczowe: pobieramy to, co user widzi w oknie (np. wysokość 36px)
         new_settings = self.get_current_settings()
