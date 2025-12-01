@@ -73,6 +73,8 @@ def export_settings():
         'button_cancel_delegation': ['Pracownik WPR', 'Lider OUT', 'Lider', 'Administrator'],
         'button_location_exception': ['Pracownik WPR', 'Lider', 'Administrator'],
 
+        # Pozwala na użycie przycisku "Odwołaj" w tabeli zdarzeń (dolny panel)
+        'action_cancel_event_from_table': ['Pracownik WPR', 'Lider OUT', 'Lider', 'Administrator'],
         # -- INNE --
         'manage_group_definitions': ['Administrator', 'Pracownik WPR']
     }
@@ -140,9 +142,9 @@ def export_settings():
         "USW": ["Pracownik WPR", "Lider OUT", "Lider", 'Administrator'],  # Przeniesiono z "Inne" dla spójności
 
         # Zwolnienia
-        "CO": ["Pracownik WPR", "Lider", "Lider OUT"], "CR": ["Pracownik WPR", "Lider", "Lider OUT", 'Administrator'],
-        "CRW": ["Pracownik WPR", "Lider", "Lider OUT"], "CSR": ["Pracownik WPR", "Lider OUT", "Lider", 'Administrator'],
-        "ZO": ["Pracownik WPR", "Lider OUT", "Lider"], "ZS": ["Pracownik WPR", "Lider OUT", "Lider", 'Administrator'],
+        "CO": ["Pracownik WPR", "Lider", "Lider OUT", 'Administrator'], "CR": ["Pracownik WPR", "Lider", "Lider OUT", 'Administrator'],
+        "CRW": ["Pracownik WPR", "Lider", "Lider OUT", 'Administrator'], "CSR": ["Pracownik WPR", "Lider OUT", "Lider", 'Administrator'],
+        "ZO": ["Pracownik WPR", "Lider OUT", "Lider", 'Administrator'], "ZS": ["Pracownik WPR", "Lider OUT", "Lider", 'Administrator'],
 
         # Delegacje i Inne
         "DK": ["Pracownik WPR", "Lider OUT", "Lider", 'Administrator'], "DZ": ["Pracownik WPR", "Lider OUT", "Lider", 'Administrator'],
