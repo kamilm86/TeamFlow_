@@ -193,40 +193,94 @@ class OvertimeItemDelegate(QStyledItemDelegate):
     #     painter.setPen(QColor(Qt.black))
     #     painter.drawText(bg_rect, Qt.AlignCenter, text)
 
+
 class ButtonDelegate(QStyledItemDelegate):
     button_clicked = Signal(int)
 
-    def __init__(self, parent=None, button_text="Odwołaj", is_dark_theme=False):
+    def __init__(self, parent=None, button_text="Odwołaj", is_dark_theme=False, user_role=""):
         super().__init__(parent)
         self.button_text = button_text
         self.is_dark_theme = is_dark_theme
+        self.user_role = user_role
         self._pressed_row = -1
+        # Zbiór do zapamiętania, które wiersze już zlogowaliśmy (żeby nie spamować konsoli przy każdym ruchu myszką)
+        self._logged_rows = set()
+
+    def _get_button_state(self, index):
+        """
+        Określa stan przycisku z uwzględnieniem mapowania kluczy (evt_status vs status).
+        """
+        event_data = index.data(Qt.UserRole)
+        if not event_data:
+            return 'hidden'
+
+        # --- POPRAWKA: Pobieranie danych z obsługą obu formatów kluczy ---
+        # Szukamy 'type' ORAZ 'evt_type', 'status' ORAZ 'evt_status'
+        raw_type = str(event_data.get('type') or event_data.get('evt_type') or '').strip()
+        raw_status = str(event_data.get('status') or event_data.get('evt_status') or '').strip()
+        # ----------------------------------------------------------------
+
+        type_lower = raw_type.lower()
+        status_lower = raw_status.lower()
+
+        should_show = False
+
+        # --- LOGIKA BIZNESOWA ---
+
+        # 1. Spotkania i Szkolenia
+        if type_lower in ['spotkanie', 'spotkania', 'szkolenie', 'szkolenia']:
+            # Akceptujemy status 'Delegowany' oraz kod '1'
+            if status_lower == 'delegowany' or status_lower == '1':
+                should_show = True
+
+        # 2. Nadgodziny
+        elif type_lower in ['nadgodziny', 'nadgodzina']:
+            # Nadgodziny widoczne zawsze, chyba że usunięte/anulowane
+            if status_lower not in ['usunięty', '0', 'anulowany']:
+                should_show = True
+
+        if not should_show:
+            return 'hidden'
+
+        # --- SPRAWDZENIE UPRAWNIEŃ ---
+        if not app_settings.has_permission(self.user_role, 'action_cancel_event_from_table'):
+            return 'disabled'
+
+        return 'active'
 
     def paint(self, painter, option, index):
-        event_data = index.model().data(index, Qt.UserRole)
-        status = event_data.get('status', '')
-        is_disabled = status in ["Do delegacji", "Usunięty"]
+        state = self._get_button_state(index)
+
+        if state == 'hidden':
+            return
+
+        if state == 'disabled':
+            bg_color = QColor("#5a5a5a") if self.is_dark_theme else QColor("#d3d3d3")
+            text_color = QColor("#888888") if self.is_dark_theme else QColor("#a0a0a0")
+        else:  # active
+            if self._pressed_row == index.row():
+                bg_color = QColor("#c0392b")
+            else:
+                bg_color = QColor("#e74c3c")
+            text_color = QColor("white")
+
         button_rect = QRect(option.rect).adjusted(4, 4, -4, -4)
         painter.save()
         painter.setRenderHint(QPainter.Antialiasing)
-        if is_disabled:
-            bg_color = QColor("#5a5a5a") if self.is_dark_theme else QColor("#d3d3d3")
-            text_color = QColor("#888888") if self.is_dark_theme else QColor("#a0a0a0")
-        elif self._pressed_row == index.row():
-            bg_color = QColor("#c0392b")
-        else:
-            bg_color = QColor("#e74c3c")
+
         painter.setBrush(bg_color)
         painter.setPen(Qt.NoPen)
         painter.drawRoundedRect(button_rect, 3, 3)
-        painter.setPen(text_color if is_disabled else QColor("white"))
+
+        painter.setPen(text_color)
         painter.drawText(button_rect, Qt.AlignCenter, self.button_text)
+
         painter.restore()
 
     def editorEvent(self, event, model, option, index):
-        event_data = index.data(Qt.UserRole)
-        status = event_data.get('status', '')
-        if status in ["Do delegacji", "Usunięty"]: return False
+        if self._get_button_state(index) != 'active':
+            return False
+
         if event.type() == QEvent.MouseButtonPress and option.rect.contains(event.position().toPoint()):
             self._pressed_row = index.row()
             return True
@@ -237,7 +291,6 @@ class ButtonDelegate(QStyledItemDelegate):
         elif event.type() == QEvent.Leave:
             self._pressed_row = -1
         return False
-
 
 class ScheduleKeyboardFilter(QObject):
     """
@@ -2563,7 +2616,16 @@ class WorkScheduleWindow(QMainWindow):
         overtime_delegate = OvertimeItemDelegate(settings=self.user_app_settings)
         self.table.schedule_view.setItemDelegate(overtime_delegate)
 
-        button_delegate = ButtonDelegate(parent=self, button_text="Odwołaj", is_dark_theme=self.is_dark_theme)
+        # --- ZMIANA: Przekazanie roli użytkownika do ButtonDelegate ---
+        from debug_utils import debug_print
+        debug_print(f"[SETUP] Tworzę ButtonDelegate z rolą: '{self.current_user_app_role}'")
+
+        button_delegate = ButtonDelegate(
+            parent=self,
+            button_text="Odwołaj",
+            is_dark_theme=self.is_dark_theme,
+            user_role=self.current_user_app_role  # <--- TO MUSI BYĆ PRZEKAZANE
+        )
         button_delegate.button_clicked.connect(self.delete_event_from_row)
         self.events_table.setItemDelegateForColumn(10, button_delegate)
 
@@ -4210,8 +4272,14 @@ class WorkScheduleWindow(QMainWindow):
         app_user_normalized = self.current_user_app_login_windows.lower()
 
         if db_user_normalized == app_user_normalized:
-            debug_print(f"Powiadomienie zignorowane - autorem zmian jest bieżący użytkownik ({modifier}).")
-            return
+            # --- ZMIANA: Wyjątek dla zmian administracyjnych (appsettings) ---
+            # Pozwalamy na przetworzenie powiadomienia, nawet jeśli sami je wywołaliśmy,
+            # aby upewnić się, że globalna konfiguracja przeładowała się poprawnie.
+            if table_name == 'appsettings':
+                debug_print(f"Wymuszam przetworzenie własnej zmiany w '{table_name}' (Administrator).")
+            else:
+                debug_print(f"Powiadomienie zignorowane - autorem zmian jest bieżący użytkownik ({modifier}).")
+                return
 
         debug_print(f"Przetwarzanie powiadomienia zewnętrznego: Tabela={table_name}, Kto={modifier}")
 
@@ -7638,6 +7706,7 @@ class WorkScheduleWindow(QMainWindow):
                 'id': dp_event.get('evt_id') or dp_event.get('id'),
                 'user_id': dp_event.get('evt_user_id') or dp_event.get('user_id'),
                 'type': dp_event.get('evt_type') or dp_event.get('type'),
+                'status': dp_event.get('evt_status') or dp_event.get('status', ''),
                 'date_key': date_key,
                 'date': display_date,
 
@@ -8837,7 +8906,7 @@ class WorkScheduleWindow(QMainWindow):
                     skipped_day_off.append(cell_data.get('uzytkownik_dane', 'Nieznany'))
                     continue
                 # Blokada U/OS dla nie-Liderów
-                if special_symbol_upper in ['U', 'OS'] and target_role != 'Lider':
+                if special_symbol_upper in ['U', 'OS'] and target_role == 'Lider':
                     skipped_restricted_symbol.append(cell_data.get('uzytkownik_dane', 'Nieznany'))
                     continue
 
