@@ -1,4 +1,3 @@
-
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QTableWidget, QTableWidgetItem,
                                QPushButton, QHBoxLayout, QMessageBox, QHeaderView, QCheckBox, QWidget, QLabel)
 from PySide6.QtCore import Qt
@@ -18,6 +17,10 @@ PERMISSION_DESCRIPTIONS = {
     'view_schedule_comment_column': 'Widoczność kolumny "Komentarz"',
     'action_clear_special_symbol': 'Usuwanie symboli specjalnych (F12)',
     'button_send_email': 'Wysyłanie e-maili z aplikacji',
+    'button_insert_change': 'Widoczność przycisku "Wstaw zmianę"',
+    'button_insert_absence': 'Widoczność przycisku "Wstaw nieobecność"',
+    'button_cancel_delegation': 'Widoczność przycisku "Odwołaj delegacje"',
+    'button_location_exception': 'Widoczność przycisku "Wyjątki lokalizacyjne"',
     'view_schedule_percent_morning_column': 'Widoczność kolumny "Procent rano"',
     'manage_app_configuration': 'Pełny dostęp do panelu Administracji',
     'manage_group_definitions': 'Edycja Grup i Wag',
@@ -78,46 +81,48 @@ class PermissionsEditorDialog(QDialog):
         layout.addLayout(btns)
 
     def _populate_table(self):
-        self.table.setRowCount(len(self.permissions))
+        # --- NOWA LOGIKA: Suma kluczy z Bazy i z Kodu ---
+        # Dzięki temu nowe funkcje zdefiniowane w PERMISSION_DESCRIPTIONS pojawią się
+        # w tabeli nawet jeśli nie ma ich jeszcze w bazie danych.
+        all_features = set(self.permissions.keys()) | set(PERMISSION_DESCRIPTIONS.keys())
 
-        # Sortujemy po kluczu funkcji
-        for row, (feature, allowed_roles) in enumerate(sorted(self.permissions.items())):
+        self.table.setRowCount(len(all_features))
+
+        # Sortujemy alfabetycznie po kodzie funkcji
+        for row, feature in enumerate(sorted(all_features)):
+            # Pobieramy listę ról z bazy. Jeśli klucz jest nowy, lista będzie pusta (nikt nie ma dostępu).
+            allowed_roles = self.permissions.get(feature, [])
+
             # Kolumna 0: Kod Funkcji
             key_item = QTableWidgetItem(feature)
-            key_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)  # Tylko do odczytu
+            key_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
             self.table.setItem(row, 0, key_item)
 
-            # Kolumna 1: Opis (Nowość)
-            desc_text = PERMISSION_DESCRIPTIONS.get(feature, "---")
+            # Kolumna 1: Opis
+            desc_text = PERMISSION_DESCRIPTIONS.get(feature, "--- Brak opisu ---")
             desc_item = QTableWidgetItem(desc_text)
             desc_item.setFlags(Qt.ItemIsEnabled | Qt.ItemIsSelectable)
             self.table.setItem(row, 1, desc_item)
 
             # Kolumny Ról: Checkboxy
             for col_idx, role_name in enumerate(self.all_roles):
-                # Indeks kolumny w tabeli (przesunięty o 2)
                 table_col = col_idx + 2
 
-                # --- NAPRAWA KLIKALNOŚCI ---
-                # 1. Tworzymy widget kontenera
                 cell_widget = QWidget()
                 chk_layout = QHBoxLayout(cell_widget)
                 chk_layout.setContentsMargins(0, 0, 0, 0)
                 chk_layout.setAlignment(Qt.AlignCenter)
 
                 chk = QCheckBox()
+                # Sprawdzamy czy rola jest na liście dozwolonych
                 chk.setChecked(role_name in allowed_roles)
-                # Zapamiętujemy dane w widgecie
+
                 chk.setProperty("feature", feature)
                 chk.setProperty("role", role_name)
 
                 chk_layout.addWidget(chk)
 
-                # 2. Ważne: Ustawiamy pusty item w komórce, aby QTableWidget wiedział, że ona "istnieje"
-                # To często naprawia problemy z fokusem i klikaniem
-                self.table.setItem(row, table_col, QTableWidgetItem())
-
-                # 3. Wstawiamy widget
+                self.table.setItem(row, table_col, QTableWidgetItem())  # Fix klikalności
                 self.table.setCellWidget(row, table_col, cell_widget)
 
     def get_permissions_json(self):
