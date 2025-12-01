@@ -2,7 +2,7 @@
 
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QTableView, QPushButton, QComboBox,
                                QHeaderView, QLabel, QHBoxLayout, QSplitter, QWidget, QTabWidget,
-                               QListWidget, QAbstractItemView, QFrame, QGridLayout, QToolTip)
+                               QListWidget, QAbstractItemView, QFrame, QGridLayout, QToolTip, QApplication)
 from PySide6.QtCore import Qt, QAbstractTableModel, QDate, Signal
 from PySide6.QtGui import QBrush, QColor, QFont, QPainter, QCursor
 from PySide6.QtCharts import QChart, QChartView, QBarSeries, QBarSet, QPieSeries, QLineSeries, QValueAxis, \
@@ -583,11 +583,9 @@ class StaffingDetailsWindow(QDialog):
     Okno dialogowe do wyświetlania szczegółów obsady i analiz.
     Wersja przepisana na PySide6.QtCharts, bez zależności od Matplotlib i Numpy.
     """
-    def __init__(self, parent, data_provider, year, month, grupa, funkcja):
-        # --- ZMIANA: Usunięcie rodzica z konstruktora, aby okno było niezależne ---
-        super().__init__(None)
-        # --- KONIEC ZMIANY ---
 
+    def __init__(self, parent, data_provider, year, month, grupa, funkcja):
+        super().__init__(None)  # Okno niezależne
         self.parent_widget = parent
         self.data_provider = data_provider
         self._year = year
@@ -596,27 +594,41 @@ class StaffingDetailsWindow(QDialog):
         self._funkcja = funkcja
         self._days_in_month = QDate(self._year, self._month, 1).daysInMonth()
         self.is_dark_theme = parent.is_dark_theme if hasattr(parent, 'is_dark_theme') else False
+
+        # --- DANE CACHE ---
         self._filtered_schedule_data = {}
+        self._all_events = []
+        self._raw_forecast_data = []
+        self._actual_staffing_matrices = {}
 
-        # --- ZMIANA: Ustawienie okna jako niezależnego w pasku zadań ---
+        # --- NOWOŚĆ: Flagi Leniwego Ładowania ---
+        # Słownik przechowuje informację, czy dana zakładka wymaga odświeżenia
+        # Kluczem jest indeks zakładki (0-6)
+        self._tabs_dirty_state = {i: True for i in range(7)}
+        # ----------------------------------------
+
         self.setWindowFlags(Qt.Window | Qt.WindowMinimizeButtonHint | Qt.WindowMaximizeButtonHint)
-        # --- KONIEC ZMIANY ---
-
         self.setWindowTitle(f"Szczegóły obsady i analizy dla {month:02}/{year}")
         self.setMinimumSize(800, 500)
 
         self.setup_ui()
+
+        # Podłączenie sygnału zmiany zakładki
+        self.tabs.currentChanged.connect(self._on_tab_changed)
+
         self.apply_styles()
+
+        # Pierwsze ładowanie
         self.load_and_display_data()
+
         self._setup_table_interactivity()
 
-        # --- NOWOŚĆ: Przywracanie zapisanego rozmiaru ---
         if hasattr(self.parent_widget, 'user_app_settings'):
             saved_size = self.parent_widget.user_app_settings.get('staffing_window_size')
             if saved_size and isinstance(saved_size, (list, tuple)) and len(saved_size) == 2:
                 self.resize(saved_size[0], saved_size[1])
             else:
-                self.resize(1300, 800)  # Domyślny startowy jeśli brak ustawień
+                self.resize(1300, 800)
 
     def setup_ui(self):
         main_layout = QVBoxLayout(self)
@@ -1077,54 +1089,49 @@ class StaffingDetailsWindow(QDialog):
             self._update_absence_chart(self._last_absence_data)
 
     def load_and_display_data(self):
-        self._filtered_schedule_data = self.parent_widget.filter_processed_data()
-        all_events = self.data_provider.get_events_data(self._year, self._month, self._grupa, self._funkcja)
-        raw_forecast_data = self.data_provider.get_forecast_data(self._year, self._month)
-        actual_staffing_matrices = self._calculate_actual_staffing_matrix()
+        """
+        Inteligentne ładowanie danych.
+        Rozróżnia pełne odświeżenie od zmiany lokalnych filtrów.
+        """
+        sender = self.sender()
 
-        self._populate_location_filter(self.hourly_location_combo)
-        self._populate_location_filter(self.daily_location_combo)
-        self._populate_forecast_filters(raw_forecast_data, actual_staffing_matrices)
+        # Lista kontrolek, które wymagają tylko przeliczenia bieżącej zakładki (bez pobierania danych z rodzica)
+        local_triggers = [
+            self.hourly_staffing_options_combo, self.hourly_location_combo,
+            self.daily_staffing_options_combo, self.daily_location_combo,
+            self.forecast_group_combo, self.forecast_view_mode_combo,
+            getattr(self, 'absence_symbols_list', None)  # ListWidget może nie być senderem bezpośrednio
+        ]
 
-        hourly_option = self.hourly_staffing_options_combo.currentData()
-        hourly_location = self.hourly_location_combo.currentText()
-        daily_option = self.daily_staffing_options_combo.currentData()
-        daily_location = self.daily_location_combo.currentText()
-        forecast_group = self.forecast_group_combo.currentText()
-        forecast_view_mode = self.forecast_view_mode_combo.currentData()
+        # Czy to tylko zmiana opcji wyświetlania?
+        is_local_refresh = sender in local_triggers and self._filtered_schedule_data
 
-        hourly_staffing_data = self._calculate_hourly_staffing(self._filtered_schedule_data, all_events, hourly_option,
-                                                               hourly_location)
-        self._hourly_staffing_model.update_data(hourly_staffing_data, self._year, self._month)
-        self._hourly_staffing_model.set_view_option(hourly_option)
+        if not is_local_refresh:
+            # --- PEŁNE ODŚWIEŻENIE DANYCH ---
+            # Pobieramy dane z głównego okna RAZ
+            self._filtered_schedule_data = self.parent_widget.filter_processed_data()
+            self._all_events = self.data_provider.get_events_data(self._year, self._month, self._grupa, self._funkcja)
+            self._raw_forecast_data = self.data_provider.get_forecast_data(self._year, self._month)
 
-        daily_staffing_data = self._calculate_daily_staffing(self._filtered_schedule_data, all_events, daily_option,
-                                                             daily_location)
-        self._daily_staffing_model.update_data(self._year, self._month, daily_staffing_data)
-        self._update_daily_staffing_chart(daily_staffing_data)
+            # Obliczenia wstępne (wymagane globalnie, np. dla filtrów prognozy)
+            # Uwaga: Zmienimy _calculate_actual_staffing_matrix, aby używało cached self._filtered_schedule_data
+            self._actual_staffing_matrices = self._calculate_actual_staffing_matrix()
 
-        overtime_data = self._calculate_overtime_summary_detailed(self._filtered_schedule_data, all_events)
-        self._overtime_model.update_data(overtime_data)
-        self._update_overtime_charts(overtime_data)
+            # Wypełnienie filtrów (robimy to raz przy pełnym odświeżeniu)
+            self._populate_location_filter(self.hourly_location_combo)
+            self._populate_location_filter(self.daily_location_combo)
+            self._populate_forecast_filters(self._raw_forecast_data, self._actual_staffing_matrices)
 
-        absence_data = self._calculate_absence_analysis(self._filtered_schedule_data)
-        self._last_absence_data = absence_data  # Store for filter updates
-        self._update_absence_tab(absence_data)
+            # Oznaczamy WSZYSTKIE zakładki jako nieaktualne
+            self._tabs_dirty_state = {i: True for i in range(self.tabs.count())}
 
-        flexibility_data = self._calculate_flexibility_analysis(self._filtered_schedule_data)
-        self._flexibility_model.update_data(flexibility_data['table_data'])
-        self._update_flexibility_chart(flexibility_data['chart_data'])
+        else:
+            # --- LOKALNE ODŚWIEŻENIE ---
+            # Oznacz tylko bieżącą zakładkę jako brudną
+            self._tabs_dirty_state[self.tabs.currentIndex()] = True
 
-        counts, rbh = self._calculate_special_symbols_summary(self._filtered_schedule_data)
-        self._symbols_count_model.update_data(self._year, self._month, counts)
-        self._symbols_rbh_model.update_data(self._year, self._month, rbh)
-
-        actual_matrix = actual_staffing_matrices.get(forecast_group, [])
-        filtered_forecast = self._filter_forecast_data(raw_forecast_data)
-        forecast_matrix = self._calculate_matrix_from_forecast(filtered_forecast, "Prognoza")
-        self._forecast_model.update_data(self._year, self._month, forecast_matrix, actual_matrix, forecast_view_mode)
-
-        self._adjust_columns()
+        # Wywołaj aktualizację widocznej zakładki
+        self._update_current_tab()
 
     def _update_daily_staffing_chart(self, daily_staffing_data):
         bg_color, text_color = self._get_theme_colors()
@@ -1686,11 +1693,12 @@ class StaffingDetailsWindow(QDialog):
     def _calculate_actual_staffing_matrix(self) -> dict:
         """
         Oblicza macierz obsady rzeczywistej.
-        POPRAWKA: Uwzględnia symbole pracujące (HO, DYS itp.) w obsadzie.
+        ZMIANA: Korzysta z self._filtered_schedule_data zamiast pobierać ponownie.
         """
-        schedule_data = self.parent_widget.filter_processed_data()
-        all_events = self.data_provider.get_events_data(self._year, self._month, self.parent_widget.import_grupa,
-                                                        self.parent_widget.import_funkcja)
+        # Używamy już pobranych danych
+        schedule_data = self._filtered_schedule_data
+        all_events = self._all_events
+
         events_map = self._get_events_duration_per_hour(all_events)
         days_in_month = self._days_in_month
 
@@ -2301,6 +2309,87 @@ class StaffingDetailsWindow(QDialog):
                 # debug_print(f"Zapisano wymiary okna obsady do bazy: {current_size}")
 
         event.accept()
+
+    def _on_tab_changed(self, index):
+        """Slot wywoływany po zmianie zakładki."""
+        self._update_current_tab()
+
+    def _update_current_tab(self):
+        """
+        Przelicza dane TYLKO dla aktualnie widocznej zakładki,
+        jeśli jest oznaczona jako 'brudna' (wymagająca odświeżenia).
+        """
+        current_index = self.tabs.currentIndex()
+
+        # Jeśli zakładka jest już aktualna, nie rób nic (oszczędność CPU)
+        if not self._tabs_dirty_state.get(current_index, True):
+            return
+
+        # Pokaż kursor oczekiwania, bo obliczenia mogą chwilę potrwać
+        QApplication.setOverrideCursor(Qt.WaitCursor)
+        try:
+            # Pobierz wspólne opcje (dla bezpieczeństwa, choć używane lokalnie)
+            hourly_option = self.hourly_staffing_options_combo.currentData()
+            hourly_location = self.hourly_location_combo.currentText()
+            daily_option = self.daily_staffing_options_combo.currentData()
+            daily_location = self.daily_location_combo.currentText()
+            forecast_group = self.forecast_group_combo.currentText()
+            forecast_view_mode = self.forecast_view_mode_combo.currentData()
+
+            # --- LOGIKA DLA POSZCZEGÓLNYCH ZAKŁADEK ---
+
+            if current_index == 0:  # Obsada Godzinowa
+                hourly_staffing_data = self._calculate_hourly_staffing(
+                    self._filtered_schedule_data, self._all_events, hourly_option, hourly_location
+                )
+                self._hourly_staffing_model.update_data(hourly_staffing_data, self._year, self._month)
+                self._hourly_staffing_model.set_view_option(hourly_option)
+
+            elif current_index == 1:  # Obsada Dzienna
+                daily_staffing_data = self._calculate_daily_staffing(
+                    self._filtered_schedule_data, self._all_events, daily_option, daily_location
+                )
+                self._daily_staffing_model.update_data(self._year, self._month, daily_staffing_data)
+                self._update_daily_staffing_chart(daily_staffing_data)
+
+            elif current_index == 2:  # Prognoza
+                actual_matrix = self._actual_staffing_matrices.get(forecast_group, [])
+                filtered_forecast = self._filter_forecast_data(self._raw_forecast_data)
+                forecast_matrix = self._calculate_matrix_from_forecast(filtered_forecast, "Prognoza")
+                self._forecast_model.update_data(self._year, self._month, forecast_matrix, actual_matrix,
+                                                 forecast_view_mode)
+
+            elif current_index == 3:  # Nadgodziny
+                overtime_data = self._calculate_overtime_summary_detailed(self._filtered_schedule_data,
+                                                                          self._all_events)
+                self._overtime_model.update_data(overtime_data)
+                self._update_overtime_charts(overtime_data)
+
+            elif current_index == 4:  # Symbole
+                counts, rbh = self._calculate_special_symbols_summary(self._filtered_schedule_data)
+                self._symbols_count_model.update_data(self._year, self._month, counts)
+                self._symbols_rbh_model.update_data(self._year, self._month, rbh)
+
+            elif current_index == 5:  # Analiza Absencji
+                absence_data = self._calculate_absence_analysis(self._filtered_schedule_data)
+                self._last_absence_data = absence_data
+                self._update_absence_tab(absence_data)
+
+            elif current_index == 6:  # Elastyczność
+                flexibility_data = self._calculate_flexibility_analysis(self._filtered_schedule_data)
+                self._flexibility_model.update_data(flexibility_data['table_data'])
+                self._update_flexibility_chart(flexibility_data['chart_data'])
+
+            # Oznacz zakładkę jako zaktualizowaną
+            self._tabs_dirty_state[current_index] = False
+
+            # Dostosuj kolumny (tylko dla widocznej)
+            self._adjust_columns()
+
+        except Exception as e:
+            log_error(f"Błąd podczas aktualizacji zakładki {current_index}: {e}", exception=e)
+        finally:
+            QApplication.restoreOverrideCursor()
 
     def closeEvent(self, event):
         """Zapisuje aktualne wymiary okna do ustawień i wymusza zapis do bazy."""
