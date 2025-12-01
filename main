@@ -41,7 +41,7 @@ from symbol_parser import parse_symbol, build_symbol, get_symbol_description
 from outlook_connector import create_outlook_email, create_email_from_template
 from teams_connector import open_teams_chat
 from async_operations import DelegationCanceler, LocationExceptionManager, BackgroundCheckerThread
-from ui_utils import show_confirmation_dialog
+from ui_utils import show_confirmation_dialog, show_error_dialog, show_info_dialog, show_warning_dialog
 from overtime_manager import OvertimeManager
 from schedule_change_processor import ScheduleChangeProcessor, ChangeType
 from preparation_thread import PreparationThread
@@ -3217,7 +3217,7 @@ class WorkScheduleWindow(QMainWindow):
 
         current_data = self.date_combo.currentData()
         if not current_data:
-            QMessageBox.warning(self, "Błąd", "Proszę najpierw wybrać miesiąc.")
+            show_info_dialog(self, "Błąd", "Proszę najpierw wybrać miesiąc.")
             return
 
         year, month = current_data
@@ -6324,9 +6324,8 @@ class WorkScheduleWindow(QMainWindow):
     def _on_async_loading_failed(self, error_message):
         """Obsługuje błędy async loading."""
         debug_print(f"Async loading failed: {error_message}")
-        QMessageBox.critical(self, "Błąd ładowania danych",
-                             f"Nie udało się załadować danych:<br>{error_message}<br><br>Spróbuj ponownie lub skontaktuj się z administratorem.",
-                             QMessageBox.Ok)
+        show_error_dialog(self, "Błąd ładowania danych",
+                             f"Nie udało się załadować danych:<br>{error_message}<br><br>Spróbuj ponownie lub skontaktuj się z administratorem.")
         try:
             debug_print("Próbuję fallback do synchronicznego ładowania")
             self._load_data_sync(self.year, self.month)
@@ -8809,7 +8808,7 @@ class WorkScheduleWindow(QMainWindow):
             is_day_off = parsed_current.get('work_hours') is None
 
             # --- 1. Logika Lidera (Restrykcje) ---
-            if user_role == 'Lider':
+            if user_role != 'Lider OUT':
                 # Blokada absencji w dni wolne
                 if is_day_off and is_absence:
                     skipped_day_off.append(cell_data.get('uzytkownik_dane', 'Nieznany'))
@@ -8822,7 +8821,7 @@ class WorkScheduleWindow(QMainWindow):
             # --- 2. Logika Ostrzeżeń (DLA WSZYSTKICH RÓL) ---
             # Jeśli zmieniamy ISTNIEJĄCY urlop (U/UZ) na cokolwiek innego (co nie jest urlopem)
             # To włączamy ostrzeżenie. Niezależnie od tego czy jesteś Adminem czy Liderem.
-            if current_special in ['U', 'UZ'] and special_symbol_upper not in ['U', 'UZ']:
+            if current_special in ['U'] and special_symbol_upper not in ['U']:
                 show_vacation_plan_warning = True
 
             cells_to_process.append(cell_data)
@@ -9513,7 +9512,7 @@ class WorkScheduleWindow(QMainWindow):
         self.session_manager.end_session(exit_type="RemoteKill")
 
         # Pokaż komunikat (blokujący, żeby użytkownik przeczytał)
-        QMessageBox.warning(self, "Sesja zakończona",
+        show_warning_dialog(self, "Sesja zakończona",
                             f"Twoja sesja została zamknięta przez administratora.\n\nPowód: {reason_text}")
 
         # Zamknij aplikację
@@ -9523,7 +9522,7 @@ class WorkScheduleWindow(QMainWindow):
     def _handle_admin_message(self, message):
         """Wyświetla wiadomość od administratora."""
         if message:
-            QMessageBox.information(self, "Wiadomość od Administratora", message)
+            show_info_dialog(self, "Wiadomość od Administratora", message)
 
     def resizeEvent(self, event):
         """Aktualizuje pozycję panelu powiadomień przy zmianie rozmiaru okna."""
