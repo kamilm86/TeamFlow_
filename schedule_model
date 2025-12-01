@@ -238,29 +238,24 @@ class ScheduleTableModel(QAbstractTableModel):
                 elif schedule_col == 31:
                     return str(row_data.get('total_hours', 0))
 
-                # 3. Bilans (32)
+                # 3. Bilans (32) - Używamy cache
                 elif schedule_col == 32:
-                    try:
-                        etat = float(row_data.get('etat', 0) or 0)
-                        total = float(row_data.get('total_hours', 0) or 0)
-                        wd = self._working_days if hasattr(self, '_working_days') and self._working_days > 0 else 21
-                        return str(int(round((etat * wd) - total)))
-                    except:
-                        return "0.0"
+                    val = row_data.get('_cache_balance', 0)
+                    return str(val)
 
-                # 4. Dynamiczne kolumny za bilansem (indeksy od 33)
+                # 4. Dynamiczne kolumny
                 current_check_idx = 33
 
-                # Procent rano
+                # Procent rano - Używamy cache
                 if self._show_percent_morning_column:
                     if schedule_col == current_check_idx:
-                        return self._calculate_morning_percentage_display(row_data)
+                        return row_data.get('_cache_percent_morning', "0%")
                     current_check_idx += 1
 
-                # Procent HO
+                # Procent HO - Używamy cache
                 if self._show_percent_ho_column:
                     if schedule_col == current_check_idx:
-                        return self._calculate_ho_percentage_display(row_data)
+                        return row_data.get('_cache_percent_ho', "0%")
                     current_check_idx += 1
 
                 # Komentarz
@@ -424,10 +419,10 @@ class ScheduleTableModel(QAbstractTableModel):
         row_data = self._processed_data.get(key, {})
 
         if col_id == 'percent_morning':
-            return self._calculate_morning_percentage_value(row_data)
+            return row_data.get('_cache_sort_percent_morning', 0.0)
 
         if col_id == 'percent_ho':
-            return self._calculate_ho_percentage_value(row_data)
+            return row_data.get('_cache_sort_percent_ho', 0.0)
 
         if col_id.startswith("custom_"):
             user_id = str(key[3])
@@ -558,7 +553,8 @@ class ScheduleTableModel(QAbstractTableModel):
                     except (ValueError, TypeError):
                         bg_color = "#FFFFFF"
                 day_data['_bg_color_hex'] = bg_color
-
+                # Po zaktualizowaniu godzin, przeliczamy statystyki dla tego pracownika
+                self.recalculate_row_stats(user_data)
                 self.dataChanged.emit(index, index, [Qt.DisplayRole, Qt.BackgroundRole])
 
                 right_edge = self.columnCount() - 1
@@ -713,10 +709,59 @@ class ScheduleTableModel(QAbstractTableModel):
         self._weekend_columns = self._find_weekend_columns(year, month)
         self._working_days = self._fetch_working_days(year, month)
         self._processed_data = processed_data if processed_data else {}
+        self._precalculate_statistics()
         self._keys = list(self._processed_data.keys())
         self._row_count = len(self._keys)
         self._update_column_structure()
         self.endResetModel()
+
+    def _precalculate_statistics(self):
+        """
+        Oblicza wartości procentowe i inne statystyki raz dla całego zbioru danych,
+        zamiast robić to przy każdym odświeżeniu komórki.
+        """
+        if not self._processed_data:
+            return
+
+        for row_data in self._processed_data.values():
+            # 1. Prekalkulacja Procent Rano
+            row_data['_cache_percent_morning'] = self._calculate_morning_percentage_display(row_data)
+            row_data['_cache_sort_percent_morning'] = self._calculate_morning_percentage_value(row_data)
+
+            # 2. Prekalkulacja Procent HO
+            row_data['_cache_percent_ho'] = self._calculate_ho_percentage_display(row_data)
+            row_data['_cache_sort_percent_ho'] = self._calculate_ho_percentage_value(row_data)
+
+            # 3. Prekalkulacja Bilansu (opcjonalnie, jeśli też spowalnia)
+            try:
+                etat = float(row_data.get('etat', 0) or 0)
+                total = float(row_data.get('total_hours', 0) or 0)
+                wd = self._working_days if hasattr(self, '_working_days') and self._working_days > 0 else 21
+                row_data['_cache_balance'] = int(round((etat * wd) - total))
+            except:
+                row_data['_cache_balance'] = 0
+
+    def recalculate_row_stats(self, row_data):
+        """
+        Aktualizuje cache statystyk (procenty, bilans) dla pojedynczego wiersza.
+        Wywoływać po każdej zmianie godzin w tym wierszu.
+        """
+        # 1. Procent Rano
+        row_data['_cache_percent_morning'] = self._calculate_morning_percentage_display(row_data)
+        row_data['_cache_sort_percent_morning'] = self._calculate_morning_percentage_value(row_data)
+
+        # 2. Procent HO
+        row_data['_cache_percent_ho'] = self._calculate_ho_percentage_display(row_data)
+        row_data['_cache_sort_percent_ho'] = self._calculate_ho_percentage_value(row_data)
+
+        # 3. Bilans
+        try:
+            etat = float(row_data.get('etat', 0) or 0)
+            total = float(row_data.get('total_hours', 0) or 0)
+            wd = self._working_days if hasattr(self, '_working_days') and self._working_days > 0 else 21
+            row_data['_cache_balance'] = int(round((etat * wd) - total))
+        except:
+            row_data['_cache_balance'] = 0
 
     def get_visible_columns(self):
         return self._visible_columns
