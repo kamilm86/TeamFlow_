@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QLabel, QPushB
 from PySide6.QtCore import Qt
 from styles import AppStyles
 from app_settings import app_settings
-from ui_utils import show_confirmation_dialog
+from ui_utils import show_confirmation_dialog, show_warning_dialog, show_info_dialog, show_error_dialog
 
 
 class ColumnSelectDialog(QDialog):
@@ -23,6 +23,9 @@ class ColumnSelectDialog(QDialog):
                  sort_preferences=None):
         super().__init__(parent)
         self.parent_widget = parent
+        self.is_dark_theme = True
+        if parent and hasattr(parent, 'is_dark_theme'):
+            self.is_dark_theme = parent.is_dark_theme
         self.setWindowTitle("Dostosowywanie widoku tabeli")
         self.setMinimumWidth(400)
         self.setMinimumHeight(600)
@@ -249,7 +252,7 @@ class ColumnSelectDialog(QDialog):
 
         col_id = current_item.data(Qt.UserRole)
         if not col_id.startswith("custom_"):
-            QMessageBox.information(self, "Informacja", "Można usuwać tylko kolumny własne.")
+            show_info_dialog(self, "Informacja", "Można usuwać tylko kolumny własne.")
             return
 
         # --- Użycie polskiego dialogu 'show_confirmation_dialog' ---
