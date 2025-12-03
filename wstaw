@@ -1,0 +1,45 @@
+Problem wynika z tego, że po pobraniu danych przy starcie (Initial Load), aplikacja nie aktualizuje od razu wewnętrznego znacznika czasu (last_modification_date).
+Gdy chwilę później uruchamia się wątek sprawdzający zmiany (lub przychodzi zaległa wiadomość z Brokera), aplikacja porównuje aktualny czas bazy z pustym znacznikiem w pamięci, uznaje że są różnice i zmienia przycisk na pomarańczowy ("Nowe dane!").
+Rozwiązaniem jest wymuszenie aktualizacji daty modyfikacji (_update_modification_date) natychmiast po pomyślnym załadowaniu danych.
+Oto poprawka w pliku main.py.
+Plik: main.py
+Znajdź metodę _on_async_data_loaded w klasie WorkScheduleWindow i dodaj jedną linię na końcu bloku try.
+    def _on_async_data_loaded(self, data, filters_to_restore=None):
+        """Obsługuje pomyślne załadowanie danych async."""
+        debug_print("Otrzymano dane z async loading")
+        try:
+            is_initial_load = self.schedule_model.rowCount() == 0
+
+            # Zapisz stan widoku (sortowanie i zaznaczenie) przed resetem modelu
+            view_state = self._save_view_state()
+
+            self._apply_loaded_data(data, filters_to_restore=filters_to_restore)
+            
+            # --- POPRAWKA: Natychmiastowa synchronizacja daty modyfikacji ---
+            # Dzięki temu aplikacja wie, że posiada najnowsze dane i nie alarmuje
+            # o zmianach, które sama przed chwilą pobrała.
+            self._update_modification_date()
+            # ----------------------------------------------------------------
+
+            # Zawsze przywracaj stan widoku, chyba że jest to pierwsze ładowanie
+            if not is_initial_load:
+                self._restore_view_state(view_state)
+            
+            # Jeśli przycisk był w stanie "alertu" (pomarańczowy), przywróć go do normy
+            if hasattr(self, 'refresh_button'):
+                self.refresh_button.setText("Odśwież")
+                self.refresh_button.setStyleSheet(AppStyles.get_button_style(
+                    'dark' if self.is_dark_theme else 'light',
+                    self.current_font,
+                    self.current_font_size
+                ))
+
+            debug_print("Pomyślnie zastosowano dane z async loading")
+        except Exception as e:
+            log_error(f"Błąd podczas stosowania załadowanych danych: {e}")
+
+Co to zmienia?
+ * Aplikacja pobiera dane.
+ * Wyświetla je w tabeli.
+ * Natychmiast pyta bazę: "Jaka jest data ostatniej zmiany?" i zapisuje ją u siebie.
+ * Gdy Service Broker lub Timer sprawdzi bazę za chwilę, zobaczy tę samą datę, którą zapisałeś w punkcie 3, więc uzna: "Dane są aktualne, nie zmieniam przycisku".
