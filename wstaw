@@ -43,3 +43,112 @@ Co to zmienia?
  * Wyświetla je w tabeli.
  * Natychmiast pyta bazę: "Jaka jest data ostatniej zmiany?" i zapisuje ją u siebie.
  * Gdy Service Broker lub Timer sprawdzi bazę za chwilę, zobaczy tę samą datę, którą zapisałeś w punkcie 3, więc uzna: "Dane są aktualne, nie zmieniam przycisku".
+
+To logiczne – powiadomienia z Service Brokera mogą przychodzić w trakcie ładowania danych (lub tuż po), a mechanizm sprawdzający może zareagować na nie, zanim aplikacja zdąży zaktualizować swoją wewnętrzną datę "ostatniej modyfikacji". W efekcie aplikacja myśli, że dane w bazie są nowsze niż te, które właśnie pobrała.
+Rozwiązaniem jest wprowadzenie flagi self._is_data_loading, która zablokuje sprawdzanie nowości w momencie, gdy aplikacja jest w trakcie pobierania danych.
+Oto instrukcja zmian w pliku main.py.
+Plik: main.py
+Musimy zaktualizować 4 miejsca w klasie WorkScheduleWindow:
+ * __init__ (inicjalizacja flagi).
+ * update_data (ustawienie flagi na True).
+ * _on_async_data_loaded oraz _on_async_loading_failed (ustawienie flagi na False).
+ * check_for_new_data (respektowanie flagi).
+1. Zmiana w __init__
+    def __init__(self):
+        super().__init__()
+        self._state_to_restore = None
+        self._is_data_loading = False  # <--- DODAJ TĘ LINIĘ
+        
+        # ... (reszta init)
+
+2. Zmiana w update_data
+    def update_data(self, year, month, grupa, funkcja, use_async=True, filters_to_restore=None):
+        """
+        NOWA WERSJA: Ładowanie danych z opcją przekazania stanu filtrów do przywrócenia.
+        """
+        debug_print(f"Rozpoczynam ładowanie danych dla {year}-{month} (async={use_async})")
+        
+        # --- DODAJ: Ustaw flagę ładowania ---
+        self._is_data_loading = True
+        # ------------------------------------
+
+        self.year = year
+        self.month = month
+        
+        # ... (reszta metody bez zmian)
+
+3. Zmiany w handlerach zakończenia (_on_async_data_loaded, _on_async_loading_failed, _load_data_sync)
+Musimy zdjąć flagę w każdym miejscu, gdzie ładowanie się kończy.
+W _on_async_data_loaded:
+    def _on_async_data_loaded(self, data, filters_to_restore=None):
+        """Obsługuje pomyślne załadowanie danych async."""
+        debug_print("Otrzymano dane z async loading")
+        try:
+            # ... (istniejący kod) ...
+
+            self._apply_loaded_data(data, filters_to_restore=filters_to_restore)
+            
+            self._update_modification_date()  # To dodaliśmy poprzednio
+
+            # ... (istniejący kod) ...
+            
+            debug_print("Pomyślnie zastosowano dane z async loading")
+        except Exception as e:
+            log_error(f"Błąd podczas stosowania załadowanych danych: {e}")
+        finally:
+            # --- DODAJ: Zdejmij flagę ---
+            self._is_data_loading = False
+            # ----------------------------
+
+W _on_async_loading_failed:
+    def _on_async_loading_failed(self, error_message):
+        # ... (istniejący kod) ...
+        try:
+            debug_print("Próbuję fallback do synchronicznego ładowania")
+            self._load_data_sync(self.year, self.month)
+        except Exception as e:
+            log_error(f"Fallback loading też nie powiódł się: {e}")
+        finally:
+            # --- DODAJ: Zdejmij flagę (nawet przy błędzie) ---
+            self._is_data_loading = False
+            # -------------------------------------------------
+
+W _load_data_sync (dla pewności, jeśli używany jest tryb synchroniczny):
+    def _load_data_sync(self, year, month, filters_to_restore=None): # Pamiętaj o argumentach
+        # ... (początek) ...
+        # (Tu też można ustawić self._is_data_loading = True na początku)
+        
+        try:
+            # ... (logika ładowania) ...
+        except Exception as e:
+            log_error(...)
+        finally:
+            if hasattr(self, 'statusBar'):
+                self.statusBar().clearMessage()
+            
+            # --- DODAJ: Zdejmij flagę ---
+            self._is_data_loading = False
+            # ----------------------------
+
+4. Kluczowa zmiana w check_for_new_data
+Teraz nauczymy sprawdzacza, żeby nie panikował, gdy dane są właśnie pobierane.
+    def check_for_new_data(self):
+        """Sprawdza nowe dane i wersję, używając jednego połączenia z bazą."""
+        
+        # --- DODAJ TEN WARUNEK NA SAMYM POCZĄTKU ---
+        if self._is_data_loading:
+            debug_print("Pominięto sprawdzanie nowych danych - trwa ładowanie (is_loading=True).")
+            return
+        # -------------------------------------------
+
+        conn = None
+        try:
+            # ... (reszta metody bez zmian) ...
+
+Dlaczego to zadziała?
+ * Przy starcie aplikacji włącza się update_data -> self._is_data_loading = True.
+ * Jeśli w tym czasie przyjdzie powiadomienie z Brokera (lub timer zadziała), check_for_new_data zobaczy flagę True i nie zrobi nic. Nie zmieni przycisku na pomarańczowy.
+ * Gdy dane się załadują, _on_async_data_loaded aktualizuje datę modyfikacji (last_modification_date = teraz) i dopiero potem ustawia self._is_data_loading = False.
+ * Kolejne sprawdzenie (za minutę lub przy nowym powiadomieniu) porówna już zaktualizowane daty i nie wykryje fałszywego alarmu.
+
+
