@@ -1,252 +1,153 @@
-Problem wynika z tego, że po pobraniu danych przy starcie (Initial Load), aplikacja nie aktualizuje od razu wewnętrznego znacznika czasu (last_modification_date).
-Gdy chwilę później uruchamia się wątek sprawdzający zmiany (lub przychodzi zaległa wiadomość z Brokera), aplikacja porównuje aktualny czas bazy z pustym znacznikiem w pamięci, uznaje że są różnice i zmienia przycisk na pomarańczowy ("Nowe dane!").
-Rozwiązaniem jest wymuszenie aktualizacji daty modyfikacji (_update_modification_date) natychmiast po pomyślnym załadowaniu danych.
-Oto poprawka w pliku main.py.
-Plik: main.py
-Znajdź metodę _on_async_data_loaded w klasie WorkScheduleWindow i dodaj jedną linię na końcu bloku try.
-    def _on_async_data_loaded(self, data, filters_to_restore=None):
-        """Obsługuje pomyślne załadowanie danych async."""
-        debug_print("Otrzymano dane z async loading")
-        try:
-            is_initial_load = self.schedule_model.rowCount() == 0
+Cześć. Jako Senior Developer widzę tutaj klasyczny problem "wyścigu" (race condition) pomiędzy procesem inicjalizacji interfejsu a asynchronicznym nasłuchem zdarzeń. Nawet jeśli czyścisz kolejkę, moment startu listenera i moment zakończenia ładowania danych mogą się nałożyć, lub Service Broker może odebrać wiadomość "resztkową" tuż po czyszczeniu, zanim UI będzie gotowe.
 
-            # Zapisz stan widoku (sortowanie i zaznaczenie) przed resetem modelu
-            view_state = self._save_view_state()
+Rozwiązaniem w duchu "best practices" jest wprowadzenie **flagi stanu aplikacji**, która jawnie ignoruje powiadomienia zewnętrzne dopóki pierwsze, pełne ładowanie danych nie zakończy się sukcesem. Jest to bardziej niezawodne niż manipulacja czasem startu wątków.
 
-            self._apply_loaded_data(data, filters_to_restore=filters_to_restore)
-            
-            # --- POPRAWKA: Natychmiastowa synchronizacja daty modyfikacji ---
-            # Dzięki temu aplikacja wie, że posiada najnowsze dane i nie alarmuje
-            # o zmianach, które sama przed chwilą pobrała.
-            self._update_modification_date()
-            # ----------------------------------------------------------------
+Oto rozwiązanie implementowane w pliku `main.py`.
 
-            # Zawsze przywracaj stan widoku, chyba że jest to pierwsze ładowanie
-            if not is_initial_load:
-                self._restore_view_state(view_state)
-            
-            # Jeśli przycisk był w stanie "alertu" (pomarańczowy), przywróć go do normy
-            if hasattr(self, 'refresh_button'):
-                self.refresh_button.setText("Odśwież")
-                self.refresh_button.setStyleSheet(AppStyles.get_button_style(
-                    'dark' if self.is_dark_theme else 'light',
-                    self.current_font,
-                    self.current_font_size
-                ))
+### Plan zmian w `main.py`
 
-            debug_print("Pomyślnie zastosowano dane z async loading")
-        except Exception as e:
-            log_error(f"Błąd podczas stosowania załadowanych danych: {e}")
+1.  **`__init__`**: Dodanie flagi `self._is_startup_phase = True`.
+2.  **`on_db_notification`**: Dodanie warunku strażnika (guard clause), który przerywa działanie funkcji, jeśli flaga startowa jest aktywna.
+3.  **`_on_async_data_loaded`**: Wyłączenie flagi (`self._is_startup_phase = False`) w momencie, gdy dane zostały poprawnie wyświetlone użytkownikowi.
 
-Co to zmienia?
- * Aplikacja pobiera dane.
- * Wyświetla je w tabeli.
- * Natychmiast pyta bazę: "Jaka jest data ostatniej zmiany?" i zapisuje ją u siebie.
- * Gdy Service Broker lub Timer sprawdzi bazę za chwilę, zobaczy tę samą datę, którą zapisałeś w punkcie 3, więc uzna: "Dane są aktualne, nie zmieniam przycisku".
+Oto kompletny kod zmienionych metod dla klasy `WorkScheduleWindow`:
 
-To logiczne – powiadomienia z Service Brokera mogą przychodzić w trakcie ładowania danych (lub tuż po), a mechanizm sprawdzający może zareagować na nie, zanim aplikacja zdąży zaktualizować swoją wewnętrzną datę "ostatniej modyfikacji". W efekcie aplikacja myśli, że dane w bazie są nowsze niż te, które właśnie pobrała.
-Rozwiązaniem jest wprowadzenie flagi self._is_data_loading, która zablokuje sprawdzanie nowości w momencie, gdy aplikacja jest w trakcie pobierania danych.
-Oto instrukcja zmian w pliku main.py.
-Plik: main.py
-Musimy zaktualizować 4 miejsca w klasie WorkScheduleWindow:
- * __init__ (inicjalizacja flagi).
- * update_data (ustawienie flagi na True).
- * _on_async_data_loaded oraz _on_async_loading_failed (ustawienie flagi na False).
- * check_for_new_data (respektowanie flagi).
-1. Zmiana w __init__
+```python
+# Zmiany w pliku main.py w klasie WorkScheduleWindow
+
     def __init__(self):
         super().__init__()
+
+        # --- POCZĄTEK ZMIANY: Flaga fazy startowej ---
+        # Zapobiega wyświetlaniu alertów "Nowe dane" podczas inicjalizacji aplikacji,
+        # kiedy dane i tak są ładowane najświeższe.
+        self._is_startup_phase = True
+        # --- KONIEC ZMIANY ---
+
+        self._is_updating_layout = False
+        self.user_hidden_days = set()
+        self.schedule_control_win = None
         self._state_to_restore = None
-        self._is_data_loading = False  # <--- DODAJ TĘ LINIĘ
+
+        # ... (reszta inicjalizacji bez zmian) ...
         
-        # ... (reszta init)
+        self.setWindowTitle("TeamFlowApp")
 
-2. Zmiana w update_data
-    def update_data(self, year, month, grupa, funkcja, use_async=True, filters_to_restore=None):
-        """
-        NOWA WERSJA: Ładowanie danych z opcją przekazania stanu filtrów do przywrócenia.
-        """
-        debug_print(f"Rozpoczynam ładowanie danych dla {year}-{month} (async={use_async})")
-        
-        # --- DODAJ: Ustaw flagę ładowania ---
-        self._is_data_loading = True
-        # ------------------------------------
+        # ... (reszta kodu __init__) ...
 
-        self.year = year
-        self.month = month
-        
-        # ... (reszta metody bez zmian)
-
-3. Zmiany w handlerach zakończenia (_on_async_data_loaded, _on_async_loading_failed, _load_data_sync)
-Musimy zdjąć flagę w każdym miejscu, gdzie ładowanie się kończy.
-W _on_async_data_loaded:
-    def _on_async_data_loaded(self, data, filters_to_restore=None):
-        """Obsługuje pomyślne załadowanie danych async."""
-        debug_print("Otrzymano dane z async loading")
-        try:
-            # ... (istniejący kod) ...
-
-            self._apply_loaded_data(data, filters_to_restore=filters_to_restore)
-            
-            self._update_modification_date()  # To dodaliśmy poprzednio
-
-            # ... (istniejący kod) ...
-            
-            debug_print("Pomyślnie zastosowano dane z async loading")
-        except Exception as e:
-            log_error(f"Błąd podczas stosowania załadowanych danych: {e}")
-        finally:
-            # --- DODAJ: Zdejmij flagę ---
-            self._is_data_loading = False
-            # ----------------------------
-
-W _on_async_loading_failed:
-    def _on_async_loading_failed(self, error_message):
-        # ... (istniejący kod) ...
-        try:
-            debug_print("Próbuję fallback do synchronicznego ładowania")
-            self._load_data_sync(self.year, self.month)
-        except Exception as e:
-            log_error(f"Fallback loading też nie powiódł się: {e}")
-        finally:
-            # --- DODAJ: Zdejmij flagę (nawet przy błędzie) ---
-            self._is_data_loading = False
-            # -------------------------------------------------
-
-W _load_data_sync (dla pewności, jeśli używany jest tryb synchroniczny):
-    def _load_data_sync(self, year, month, filters_to_restore=None): # Pamiętaj o argumentach
-        # ... (początek) ...
-        # (Tu też można ustawić self._is_data_loading = True na początku)
-        
-        try:
-            # ... (logika ładowania) ...
-        except Exception as e:
-            log_error(...)
-        finally:
-            if hasattr(self, 'statusBar'):
-                self.statusBar().clearMessage()
-            
-            # --- DODAJ: Zdejmij flagę ---
-            self._is_data_loading = False
-            # ----------------------------
-
-4. Kluczowa zmiana w check_for_new_data
-Teraz nauczymy sprawdzacza, żeby nie panikował, gdy dane są właśnie pobierane.
-    def check_for_new_data(self):
-        """Sprawdza nowe dane i wersję, używając jednego połączenia z bazą."""
-        
-        # --- DODAJ TEN WARUNEK NA SAMYM POCZĄTKU ---
-        if self._is_data_loading:
-            debug_print("Pominięto sprawdzanie nowych danych - trwa ładowanie (is_loading=True).")
-            return
-        # -------------------------------------------
-
-        conn = None
-        try:
-            # ... (reszta metody bez zmian) ...
-
-Dlaczego to zadziała?
- * Przy starcie aplikacji włącza się update_data -> self._is_data_loading = True.
- * Jeśli w tym czasie przyjdzie powiadomienie z Brokera (lub timer zadziała), check_for_new_data zobaczy flagę True i nie zrobi nic. Nie zmieni przycisku na pomarańczowy.
- * Gdy dane się załadują, _on_async_data_loaded aktualizuje datę modyfikacji (last_modification_date = teraz) i dopiero potem ustawia self._is_data_loading = False.
- * Kolejne sprawdzenie (za minutę lub przy nowym powiadomieniu) porówna już zaktualizowane daty i nie wykryje fałszywego alarmu.
-
-Masz rację, muszę bazować na plikach, które mi przesyłasz, a w załączonym main.py funkcja check_for_new_data nadal istnieje (linie 319 i 1257) i jest podłączona do timera.
-Jeśli jednak lokalnie ją wyłączyłeś, a przycisk nadal zmienia się na pomarańczowy ("Nowe dane"), to winowajcą jest Service Broker (on_db_notification). Nasłuchiwacz bazy danych uruchamia się równolegle ze startem aplikacji. Jeśli w kolejce są jakiekolwiek stare komunikaty lub przyjdzie nowy w trakcie ładowania, aplikacja uznaje, że ma nieaktualne dane.
-Rozwiązanie to zablokowanie wszelkich powiadomień (zarówno z timera, jak i z Service Brokera) dopóki trwa pierwsze ładowanie danych.
-Oto kompletna instrukcja.
-Krok 1: Dodanie flagi w __init__
-W pliku main.py dodaj flagę self._is_loading_data.
-    def __init__(self):
-        super().__init__()
-        self._state_to_restore = None
-        
-        # --- NOWOŚĆ: Flaga blokująca powiadomienia podczas ładowania ---
-        self._is_loading_data = False 
-        # ---------------------------------------------------------------
-
-        # ... reszta metody ...
-
-Krok 2: Ustawienie flagi w update_data
-    def update_data(self, year, month, grupa, funkcja, use_async=True, filters_to_restore=None):
-        debug_print(f"Rozpoczynam ładowanie danych dla {year}-{month} (async={use_async})")
-
-        # --- WŁĄCZ BLOKADĘ ---
-        self._is_loading_data = True
-        # ---------------------
-
-        self.year = year
-        # ... (reszta metody bez zmian) ...
-
-Krok 3: Zdejmowanie flagi i reset przycisku w _on_async_data_loaded
-To najważniejszy moment. Gdy dane w końcu dotrą, musimy:
- * Zaktualizować datę modyfikacji (żeby wiedzieć, że mamy wersję "teraz").
- * Zresetować przycisk (jeśli w międzyczasie Service Broker zmienił go na pomarańczowy).
- * Zdjąć blokadę.
-<!-- end list -->
-    def _on_async_data_loaded(self, data, filters_to_restore=None):
-        """Obsługuje pomyślne załadowanie danych async."""
-        debug_print("Otrzymano dane z async loading")
-        try:
-            is_initial_load = self.schedule_model.rowCount() == 0
-            view_state = self._save_view_state()
-
-            self._apply_loaded_data(data, filters_to_restore=filters_to_restore)
-
-            # --- POPRAWKA 1: Aktualizuj znacznik czasu ---
-            self._update_modification_date()
-            
-            # --- POPRAWKA 2: Resetuj przycisk do stanu "czystego" ---
-            # Nawet jeśli coś zmieniło go na "Nowe dane" w trakcie ładowania,
-            # to właśnie pobraliśmy najnowsze, więc przycisk musi być szary.
-            if hasattr(self, 'refresh_button'):
-                self.refresh_button.setText("Odśwież")
-                self.refresh_button.setStyleSheet(AppStyles.get_button_style(
-                    'dark' if self.is_dark_theme else 'light',
-                    self.current_font,
-                    self.current_font_size
-                ))
-                self.refresh_button.setToolTip("Odśwież dane")
-
-            if not is_initial_load:
-                self._restore_view_state(view_state)
-
-            debug_print("Pomyślnie zastosowano dane z async loading")
-
-        except Exception as e:
-            log_error(f"Błąd podczas stosowania załadowanych danych: {e}")
-        
-        finally:
-            # --- POPRAWKA 3: Zdejmij blokadę ---
-            self._is_loading_data = False
-
-Krok 4: Blokada w on_db_notification
-Jeśli korzystasz z Service Brokera, musisz zablokować przetwarzanie powiadomień w trakcie ładowania.
-Znajdź metodę on_db_notification w main.py i dodaj warunek na samym początku:
     def on_db_notification(self, table_name: str, year: int, month: int, modifier: str):
-        # --- NOWOŚĆ: Ignoruj powiadomienia, jeśli właśnie ładujemy dane ---
-        if getattr(self, '_is_loading_data', False):
-            debug_print("Powiadomienie zignorowane - trwa ładowanie danych.")
+        """
+        Slot wywoływany, gdy nadejdzie powiadomienie z bazy danych.
+        Zmieniony, aby ignorować powiadomienia podczas fazy startowej.
+        """
+        # --- POCZĄTEK ZMIANY: Ignorowanie powiadomień na starcie ---
+        if self._is_startup_phase:
+            from debug_utils import debug_print
+            debug_print(f"[SB Listener] Ignoruję powiadomienie (Faza startowa): Tabela={table_name}")
             return
-        # -----------------------------------------------------------------
+        # --- KONIEC ZMIANY ---
 
-        # ... (reszta Twojej obecnej metody on_db_notification) ...
+        # 1. Sprawdzenie daty (dla powiadomień specyficznych dla miesiąca - grafik, zdarzenia)
+        # Tabela 'appsettings' jest globalna, więc pomijamy dla niej sprawdzanie daty.
+        if table_name != 'appsettings':
+            current_data = self.date_combo.currentData()
+            if not current_data: return
+            current_year, current_month = current_data
 
-Krok 5: Blokada w check_for_new_data (jeśli jednak go używasz)
-Jeśli nie usunąłeś tej funkcji całkowicie, dodaj warunek na początku:
-    def check_for_new_data(self):
-        # --- NOWOŚĆ ---
-        if getattr(self, '_is_loading_data', False):
-            return
-        # --------------
+            # Jeśli powiadomienie dotyczy innego miesiąca niż oglądany -> Ignoruj logikę odświeżania widoku
+            if year != current_year or month != current_month:
+                return
+
+        # 2. IGNOROWANIE WŁASNYCH ZMIAN
+        # Używamy metody pomocniczej do obcięcia domeny (np. 'FIRMA\Jan' -> 'jan')
+        db_user_normalized = self._normalize_db_login(modifier)
+        app_user_normalized = self.current_user_app_login_windows.lower()
+
+        if db_user_normalized == app_user_normalized:
+            # Wyjątek dla zmian administracyjnych (appsettings)
+            if table_name == 'appsettings':
+                debug_print(f"Wymuszam przetworzenie własnej zmiany w '{table_name}' (Administrator).")
+            else:
+                debug_print(f"Powiadomienie zignorowane - autorem zmian jest bieżący użytkownik ({modifier}).")
+                return
+
+        debug_print(f"Przetwarzanie powiadomienia zewnętrznego: Tabela={table_name}, Kto={modifier}")
+
+        # ... (reszta logiki powiadomień: Centrum Powiadomień, Logika Odświeżania) ...
+        # (Tutaj następuje dalsza część oryginalnej metody on_db_notification - bez zmian)
         
-        conn = None
-        # ...
+        # --- Poniżej fragmenty oryginalnej metody dla kontekstu (nie trzeba ich zmieniać, o ile są takie same) ---
+        if hasattr(self, 'notification_drawer') and self.notification_drawer:
+             # ... logika drawer ...
+             pass
+        
+        if table_name == 'appsettings':
+             # ... logika appsettings ...
+             pass
+        elif table_name in ['spotkania', 'szkolenia', 'nadgodziny']:
+             # ... logika zdarzeń ...
+             pass
+        elif table_name == 'grafikipracy':
+             # ... logika grafiku (alert button) ...
+             self.refresh_button.setText(f"Nowe dane grafiku!")
+             self.refresh_button.setToolTip(
+                f"Użytkownik {modifier} wprowadził zmiany w grafiku. Kliknij, aby załadować.")
+             
+             alert_style = AppStyles.get_alert_button_style(
+                'dark' if self.is_dark_theme else 'light',
+                self.current_font,
+                self.current_font_size
+             )
+             self.refresh_button.setStyleSheet(alert_style)
+             QApplication.alert(self)
 
-Dzięki tym zmianom, sekwencja startowa będzie wyglądać tak:
- * Start aplikacji -> _is_loading_data = True.
- * Przychodzi powiadomienie z Brokera -> Ignorowane (bo flaga True).
- * Dane się ładują.
- * Koniec ładowania -> Aktualizacja daty modyfikacji -> Reset przycisku na "Odśwież" -> _is_loading_data = False.
- * Aplikacja jest gotowa i "zielona".
 
+    def _on_async_data_loaded(self, data, filters_to_restore=None):
+        """Obsługuje pomyślne załadowanie danych async."""
+        from debug_utils import debug_print
+        debug_print("Otrzymano dane z async loading")
+        try:
+            # ... (logika czyszczenia powiadomień i drawer - bez zmian) ...
+            if hasattr(self, 'notification_drawer') and self.notification_drawer:
+                self.notification_drawer.clear_notifications()
+            
+            if hasattr(self, 'notification_btn'):
+                current_theme = 'dark' if self.is_dark_theme else 'light'
+                style = AppStyles.get_icon_button_style(current_theme)
+                self.notification_btn.setStyleSheet(style)
+
+            is_initial_load = self.schedule_model.rowCount() == 0
+
+            # Zapisz stan widoku
+            view_state = self._save_view_state()
+
+            self._apply_loaded_data(data, filters_to_restore=filters_to_restore)
+
+            if not is_initial_load:
+                debug_print("Przywracanie stanu widoku po załadowaniu asynchronicznym...")
+                self._restore_view_state(view_state)
+
+            debug_print("Pomyślnie zastosowano dane z async loading")
+
+            # --- POCZĄTEK ZMIANY: Wyłączenie fazy startowej ---
+            # Skoro dane zostały załadowane i wyświetlone, możemy zacząć reagować na nowe zmiany z bazy.
+            if self._is_startup_phase:
+                self._is_startup_phase = False
+                debug_print("=== Faza startowa zakończona. Powiadomienia o nowych danych są teraz aktywne. ===")
+            # --- KONIEC ZMIANY ---
+
+        except Exception as e:
+            from debug_utils import log_error
+            log_error(f"Błąd podczas stosowania załadowanych danych: {e}", exception=e)
+        finally:
+            self._is_refreshing_data = False
+            debug_print("Ustawiono flagę _is_refreshing_data = False (w bloku finally)")
+```
+
+### Wyjaśnienie Logiki:
+
+1.  **Stan Początkowy (`_is_startup_phase = True`)**: W konstruktorze ustawiamy flagę. Oznacza to: "Aplikacja startuje, właśnie pobieram najświeższe dane z bazy, więc nie informuj mnie, że w bazie są nowe dane, bo zaraz je wyświetlę".
+2.  **Filtr Powiadomień (`on_db_notification`)**: Nawet jeśli ServiceBroker wyśle komunikat (ponieważ kolejka nie zdążyła się wyczyścić lub przyszło coś w ułamku sekundy po starcie), metoda `on_db_notification` sprawdzi flagę i cicho zignoruje ten komunikat. Zapobiega to zmianie koloru przycisku "Odśwież" na pomarańczowy.
+3.  **Punkt Synchronizacji (`_on_async_data_loaded`)**: To jest jedyne pewne miejsce, w którym wiemy, że dane zostały pobrane z bazy, przetworzone i wstawione do tabeli. Dopiero w tym momencie zdejmujemy flagę (`False`). Od tej chwili każda kolejna zmiana w bazie (wykonana przez kogoś innego) jest faktycznie "nową zmianą" względem tego, co widzi użytkownik, więc alert będzie zasadny.
+
+To podejście jest bezpieczne (fail-safe) i nie wymaga skomplikowanej synchronizacji wątków czyszczących kolejkę.
