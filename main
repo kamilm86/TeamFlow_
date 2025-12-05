@@ -729,7 +729,10 @@ class UpdateRequiredDialog(QDialog):
 class WorkScheduleWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-
+        # --- Flaga fazy startowej ---
+        # Zapobiega wyświetlaniu alertów "Nowe dane" podczas inicjalizacji aplikacji,
+        # kiedy dane i tak są ładowane najświeższe.
+        self._is_startup_phase = True
         self._is_updating_layout = False
         self.user_hidden_days = set()
         self.schedule_control_win = None
@@ -2775,14 +2778,33 @@ class WorkScheduleWindow(QMainWindow):
             return
 
         try:
-            # 1. Przygotowanie danych (logika podobna do poprzedniej)
+            # 1. Przygotowanie danych
             headers = self.schedule_model._column_headers[:len(self.visible_columns)]
             days_in_month = self.schedule_model._days_in_month
             day_headers = self.schedule_model._column_headers[
                 len(self.visible_columns):len(self.visible_columns) + days_in_month]
-            # --- ZMIANA: Tworzymy jeden, połączony nagłówek dnia (np. "Pn 1") ---
-            day_letters = [h.split('<br>')[1] for h in day_headers]
-            day_numbers = [h.split('<br>')[0] for h in day_headers]
+
+            # --- POCZĄTEK POPRAWKI: Bezpieczne parsowanie nagłówków dni ---
+            day_letters = []
+            day_numbers = []
+
+            for h in day_headers:
+                # Sprawdź separator: <br> (HTML) lub \n (Plain Text)
+                if '<br>' in h:
+                    parts = h.split('<br>')
+                else:
+                    parts = h.split('\n')
+
+                # Bezpieczne przypisanie - jeśli split nie zadziałał poprawnie,
+                # cały tekst idzie do numbers, a letters są puste.
+                if len(parts) >= 2:
+                    day_numbers.append(parts[0])
+                    day_letters.append(parts[1])
+                else:
+                    day_numbers.append(h)
+                    day_letters.append("")
+            # --- KONIEC POPRAWKI ---
+
             visible_keys = self.schedule_model._keys
             data_rows = []
             for key in visible_keys:
@@ -2816,7 +2838,7 @@ class WorkScheduleWindow(QMainWindow):
             header_fill = PatternFill(start_color="4F81BD", end_color="4F81BD", fill_type="solid")
             weekend_fill = PatternFill(start_color="FFF2F2F2", end_color="FFF2F2F2", fill_type="solid")
 
-            # --- ZMIANA: Dodajemy dwa wiersze nagłówków w nowej konfiguracji ---
+            # Dodajemy dwa wiersze nagłówków
             ws.append([''] * len(headers) + day_letters)
             ws.append(headers + day_numbers)
 
@@ -4251,9 +4273,13 @@ class WorkScheduleWindow(QMainWindow):
     def on_db_notification(self, table_name: str, year: int, month: int, modifier: str):
         """
         Slot wywoływany, gdy nadejdzie powiadomienie z bazy danych.
-        Implementuje logikę ignorowania własnych zmian, hybrydowe odświeżanie
-        ORAZ obsługę Centrum Powiadomień.
+        Zmieniony, aby ignorować powiadomienia podczas fazy startowej.
         """
+        # --- Ignorowanie powiadomień na starcie ---
+        if self._is_startup_phase:
+            debug_print(f"[SB Listener] Ignoruję powiadomienie (Faza startowa): Tabela={table_name}")
+            return
+
         # 1. Sprawdzenie daty (dla powiadomień specyficznych dla miesiąca - grafik, zdarzenia)
         # Tabela 'appsettings' jest globalna, więc pomijamy dla niej sprawdzanie daty.
         if table_name != 'appsettings':
@@ -4272,9 +4298,7 @@ class WorkScheduleWindow(QMainWindow):
         app_user_normalized = self.current_user_app_login_windows.lower()
 
         if db_user_normalized == app_user_normalized:
-            # --- ZMIANA: Wyjątek dla zmian administracyjnych (appsettings) ---
-            # Pozwalamy na przetworzenie powiadomienia, nawet jeśli sami je wywołaliśmy,
-            # aby upewnić się, że globalna konfiguracja przeładowała się poprawnie.
+            # Wyjątek dla zmian administracyjnych (appsettings)
             if table_name == 'appsettings':
                 debug_print(f"Wymuszam przetworzenie własnej zmiany w '{table_name}' (Administrator).")
             else:
@@ -6406,6 +6430,12 @@ class WorkScheduleWindow(QMainWindow):
 
             debug_print("Pomyślnie zastosowano dane z async loading")
 
+            # --- Wyłączenie fazy startowej ---
+            # Skoro dane zostały załadowane i wyświetlone, możemy zacząć reagować na nowe zmiany z bazy.
+            if self._is_startup_phase:
+                self._is_startup_phase = False
+                debug_print("=== Faza startowa zakończona. Powiadomienia o nowych danych są teraz aktywne. ===")
+
         except Exception as e:
             log_error(f"Błąd podczas stosowania załadowanych danych: {e}", exception=e)
         finally:
@@ -7735,7 +7765,7 @@ class WorkScheduleWindow(QMainWindow):
         for row_index in selected_rows:
             key = self.schedule_model._keys[row_index]
             full_user_data = self.processed_data.get(key, {})
-            email = full_user_data.get('email', '').strip()
+            email = full_user_data.get('sched_email', '').strip()
             if email:
                 recipients.append(email)
             else:
@@ -7771,7 +7801,7 @@ class WorkScheduleWindow(QMainWindow):
         for row_index in selected_rows:
             key = self.schedule_model._keys[row_index]
             full_user_data = self.processed_data.get(key, {})
-            email = full_user_data.get('email', '').strip()
+            email = full_user_data.get('sched_email', '').strip()
             if email:
                 recipient_emails.append(email)
             else:
@@ -7789,152 +7819,6 @@ class WorkScheduleWindow(QMainWindow):
             QMessageBox.information(self, "Informacja",
                                     "Pominięto następujących pracowników z powodu braku adresu e-mail w bazie:<br><br>- " + "<br>- ".join(
                                         missing_email_users))
-
-    # def standardize_date(self, date_obj):
-    #     """
-    #     Standaryzuje format daty do 'YYYY-MM-DD' dla porównań
-    #     """
-    #     if not date_obj:
-    #         return ''
-    #
-    #     # Jeśli to już string, wyciągnij tylko datę
-    #     if isinstance(date_obj, str):
-    #         # Obsługa różnych formatów
-    #         if 'T' in date_obj:  # Format ISO 'YYYY-MM-DDThh:mm:ss'
-    #             return date_obj.split('T')[0]
-    #         elif ' ' in date_obj:  # Format 'YYYY-MM-DD hh:mm:ss'
-    #             return date_obj.split(' ')[0]
-    #         elif len(date_obj) == 10 and date_obj.count('-') == 2:  # Format 'YYYY-MM-DD'
-    #             return date_obj
-    #         # Jeśli nie dopasowano do żadnego formatu, zwróć oryginalny string
-    #         return date_obj
-    #
-    #     # Jeśli to obiekt datetime, skonwertuj na string
-    #     if hasattr(date_obj, 'strftime'):
-    #         return date_obj.strftime('%Y-%m-%d')
-    #
-    #     # W przypadku nieznanego typu, zwróć pusty string
-    #     return ''
-
-    # def diagnose_application_state(self):
-    #     """Wykonuje pełną diagnostykę stanu aplikacji i wyświetla szczegółowe informacje"""
-    #     try:
-    #         debug_print("<br>===== DIAGNOSTYKA STANU APLIKACJI =====")
-    #
-    #         # 1. Sprawdź tabele i dane
-    #         debug_print("<br>--- TABELA GRAFIKU ---")
-    #         debug_print(f"Liczba wierszy: {self.table.rowCount()}")
-    #         debug_print(f"Liczba kolumn: {self.table.columnCount()}")
-    #
-    #         # Sprawdź pierwsze 3 wiersze i kolumny dla przykładu
-    #         debug_print("<br>Przykładowe komórki z tabeli grafiku:")
-    #         for row in range(min(3, self.table.rowCount())):
-    #             for col in range(min(6, self.table.columnCount())):
-    #                 item = self.table.item(row, col)
-    #                 if item:
-    #                     debug_print(f"[{row},{col}] Tekst: {item.text()}")
-    #                     user_role_data = item.data(Qt.UserRole)
-    #                     user_role_2 = item.data(Qt.UserRole + 2)
-    #                     user_role_3 = item.data(Qt.UserRole + 3)
-    #                     debug_print(
-    #                         f"  UserRole: {type(user_role_data)}, UserRole+2: {user_role_2}, UserRole+3: {user_role_3}")
-    #                     if isinstance(user_role_data, dict):
-    #                         debug_print(f"  Zawartość: {user_role_data}")
-    #                 else:
-    #                     debug_print(f"[{row},{col}] Brak elementu")
-    #
-    #         debug_print("<br>--- TABELA ZDARZEŃ ---")
-    #         debug_print(f"Liczba wierszy: {self.events_table.rowCount()}")
-    #         debug_print(f"Liczba kolumn: {self.events_table.columnCount()}")
-    #
-    #         # Sprawdź zawartość events_data
-    #         debug_print(
-    #             f"<br>Liczba zdarzeń w events_data: {len(self.events_data) if hasattr(self, 'events_data') else 'Brak'}")
-    #         if hasattr(self, 'events_data') and self.events_data:
-    #             debug_print("Pierwsze zdarzenie:")
-    #             for key, value in self.events_data[0].items():
-    #                 debug_print(f"  {key}: {value}")
-    #
-    #         # Sprawdź pierwsze 3 wiersze tabeli zdarzeń
-    #         debug_print("<br>Przykładowe wiersze z tabeli zdarzeń:")
-    #         for row in range(min(3, self.events_table.rowCount())):
-    #             row_data = []
-    #             for col in range(self.events_table.columnCount() - 1):  # Pomijamy ostatnią kolumnę z przyciskami
-    #                 item = self.events_table.item(row, col)
-    #                 if item:
-    #                     row_data.append(f"{col}:{item.text()}")
-    #             debug_print(f"Wiersz {row}: {', '.join(row_data)}")
-    #
-    #         # 2. Sprawdź delegaty i style
-    #         debug_print("<br>--- DELEGATY I STYLE ---")
-    #         item_delegate = self.table.itemDelegate()
-    #         debug_print(f"Delegat tabeli grafiku: {item_delegate.__class__.__name__}")
-    #         if isinstance(item_delegate, OvertimeItemDelegate):
-    #             debug_print("  Delegat OvertimeItemDelegate poprawnie przypisany")
-    #         else:
-    #             debug_print("  UWAGA: Delegat OvertimeItemDelegate nie jest przypisany!")
-    #
-    #         # 3. Sprawdź filtrowanie danych
-    #         debug_print("<br>--- FILTROWANIE DANYCH ---")
-    #         if hasattr(self, 'events_data') and self.events_data:
-    #             debug_print(f"Liczba zdarzeń przed filtrowaniem: {len(self.events_data)}")
-    #             # Sprawdź, czy metoda filter_events_table jest wywoływana
-    #             debug_print("Spróbuj wykonać filter_events_table:")
-    #             try:
-    #                 self.filter_events_table()
-    #                 debug_print("  Metoda filter_events_table wykonana bez błędów")
-    #             except Exception as e:
-    #                 debug_print(f"  BŁĄD podczas wykonywania filter_events_table: {e}")
-    #
-    #         debug_print("<br>===== KONIEC DIAGNOSTYKI =====<br>")
-    #
-    #     except Exception as e:
-    #         debug_print(f"BŁĄD podczas diagnostyki: {e}")
-    #         import traceback
-    #         traceback.print_exc()
-
-    # def _get_current_event_filter_params(self):
-    #     """
-    #     Pobiera bieżące parametry filtrowania zdarzeń.
-    #
-    #     Returns:
-    #         dict: Parametry filtrowania
-    #     """
-    #     filter_params = {}
-    #
-    #     # Dodaj filtr typów zdarzeń
-    #     allowed_types = []
-    #     if hasattr(self, 'meetings_checkbox') and self.meetings_checkbox.isChecked():
-    #         allowed_types.append('Spotkanie')
-    #     if hasattr(self, 'trainings_checkbox') and self.trainings_checkbox.isChecked():
-    #         allowed_types.append('Szkolenie')
-    #     if hasattr(self, 'overtime_checkbox') and self.overtime_checkbox.isChecked():
-    #         allowed_types.append('Nadgodziny')
-    #
-    #     if allowed_types:
-    #         filter_params['allowed_types'] = allowed_types
-    #
-    #     # Dodaj filtry tematu i nazwy
-    #     topic_filter = self.topic_filter.text().lower() if hasattr(self,
-    #                                                                'topic_filter') and self.topic_filter.text() else None
-    #     name_filter = self.name_filter.text().lower() if hasattr(self,
-    #                                                              'name_filter') and self.name_filter.text() else None
-    #
-    #     if topic_filter:
-    #         filter_params['topic'] = topic_filter
-    #     if name_filter:
-    #         filter_params['name'] = name_filter
-    #
-    #     # Dodaj filtry zakresu dat
-    #     date_from_str = self.date_from.date().toString('yyyy-MM-dd') if hasattr(self, 'date_from') else None
-    #     date_to_str = self.date_to.date().toString('yyyy-MM-dd') if hasattr(self, 'date_to') else None
-    #
-    #     if date_from_str:
-    #         filter_params['date_from'] = date_from_str
-    #     if date_to_str:
-    #         filter_params['date_to'] = date_to_str
-    #
-    #     return filter_params
 
     def _get_cell_data_for_user_date_pairs(self, user_date_pairs: list) -> list:
         """
