@@ -1,49 +1,130 @@
-To jest brakujący element, o którym wspomniałem wcześniej (założyłem, że już go masz w klasie). Skoro Python zgłasza błąd, że DatabaseManager nie ma atrybutu type_mappings, musimy go zdefiniować w konstruktorze __init__.
-To jest ten słownik, który mapuje typy z formatu string (np. 'int64') na typy Pandasa/NumPy.
-🛠️ Rozwiązanie: Dodaj self.type_mappings do __init__
-Otwórz plik db_m_windows.py i znajdź metodę __init__ w klasie DatabaseManager. Dodaj tam definicję self.type_mappings:
-    def __init__(self):
-        # ... (Twoje istniejące inicjalizacje, np. logger, connections itp.)
+Ten błąd wynika z tego, że w funkcji insert_data przekazujemy teraz dodatkowy argument (sqlalchemy_dtype_dict), ale definicja funkcji create_table_if_not_exists nie została zaktualizowana, aby go przyjąć.
+Przyczyna:
+ * Wywołanie: self.create_table_if_not_exists(engine, sqlalchemy_dtype_dict, df, ...) (7 argumentów łącznie z self).
+ * Definicja: def create_table_if_not_exists(self, engine, df, ...) (6 argumentów łącznie z self).
+Musimy zaktualizować definicję create_table_if_not_exists, aby przyjmowała słownik typów jako argument (nazwijmy go column_types), zamiast generować go wewnątrz.
+Oto poprawiony kod funkcji create_table_if_not_exists. Podmień ją w całości w klasie DatabaseManager.
+🛠️ Poprawiona funkcja create_table_if_not_exists
+    def create_table_if_not_exists(self, engine, column_types: dict, df: pd.DataFrame, 
+                                   table_name: str, schema: str, target_db: str) -> bool:
+        """
+        Tworzy tabelę docelową, jeśli nie istnieje, używając przekazanych typów danych.
+        Argument column_types zawiera obiekty SQLAlchemy.
+        """
         
-        # 💥 DODAJ TĘ DEFINICJĘ:
-        self.type_mappings = {
-            'Oracle': {
-                'int64': 'int64',
-                'float64': 'float64',
-                'datetime64[ns]': 'datetime64[ns]',
-                'object': 'str',
-                'bool': 'int64', # Oracle nie ma boola, konwertujemy na int (0/1)
-                'date': 'datetime64[ns]'
-            },
-            'Impala': {
-                'int64': 'int64',
-                'float64': 'float64',
-                'datetime64[ns]': 'datetime64[ns]',
-                'object': 'str',
-                'bool': 'bool',
-                'date': 'datetime64[ns]'
-            },
-            'SQLServer': {
-                'int64': 'int64',
-                'float64': 'float64',
-                'datetime64[ns]': 'datetime64[ns]',
-                'object': 'str',
-                'bool': 'bool',
-                'date': 'datetime64[ns]'
-            }
-        }
+        # 1. Sprawdzenie, czy tabela już istnieje
+        with engine.connect() as connection:
+            if connection.dialect.has_table(connection, table_name, schema=schema):
+                self.logger.info(f"Tabela {schema}.{table_name} już istnieje.")
+                return True # Tabela istnieje
 
-Alternatywa (Szybka poprawka w insert_data)
-Jeśli nie chcesz modyfikować __init__, możesz zdefiniować ten słownik lokalnie wewnątrz funkcji insert_data (w miejscu, gdzie go używamy).
-W funkcji insert_data, zamień linię:
-numpy_type_mappings = self.type_mappings.get(target_db)
-na:
-            # Definicja lokalna, jeśli nie ma jej w klasie
-            type_mappings_local = {
-                'Oracle': {'int64': 'int64', 'bool': 'int64', 'object': 'str'},
-                'SQLServer': {'int64': 'int64', 'bool': 'bool', 'object': 'str'},
-                'Impala': {'int64': 'int64', 'bool': 'bool', 'object': 'str'}
-            }
-            numpy_type_mappings = type_mappings_local.get(target_db, {})
+        # UWAGA: Tutaj wcześniej było wywołanie map_data_types. 
+        # Teraz pobieramy typy z argumentu 'column_types', który przekazaliśmy z insert_data.
+        
+        columns_def = []
 
-Zalecam jednak dodanie tego do __init__, ponieważ jest to czystsze rozwiązanie. Po dodaniu tego atrybutu błąd zniknie.
+        # 2. Dynamiczne tworzenie definicji kolumn SQL (columns_def)
+        
+        if target_db.lower() == 'oracle':
+            # --- LOGIKA DLA ORACLE ---
+            for col_name, col_type in column_types.items():
+                col_name_sql = f'"{col_name}"' # Cudzysłowy dla nazwy kolumny w Oracle
+                col_type_str = str(col_type).upper()
+                
+                # Dodajemy pusty string na start, żeby móc go nadpisać przez indeks [-1]
+                columns_def.append("") 
+
+                if 'VARCHAR' in col_type_str or 'STRING' in col_type_str:
+                    length = getattr(col_type, 'length', 255)
+                    if length <= 4000:
+                        columns_def[-1] = f"{col_name_sql} VARCHAR2({length})"
+                    else:
+                        columns_def[-1] = f"{col_name_sql} CLOB"
+                elif 'INTEGER' in col_type_str:
+                    columns_def[-1] = f"{col_name_sql} NUMBER(38)"
+                elif 'FLOAT' in col_type_str or 'NUMBER' in col_type_str:
+                    columns_def[-1] = f"{col_name_sql} NUMBER"
+                elif 'TIMESTAMP' in col_type_str or 'DATETIME' in col_type_str:
+                    columns_def[-1] = f"{col_name_sql} TIMESTAMP"
+                elif 'DATE' in col_type_str:
+                    columns_def[-1] = f"{col_name_sql} DATE"
+                elif 'BOOLEAN' in col_type_str:
+                    columns_def[-1] = f"{col_name_sql} NUMBER(1)"
+                else:
+                     # Fallback
+                     columns_def[-1] = f"{col_name_sql} VARCHAR2(100)"
+                     
+        elif target_db.lower() == 'impala':
+            # --- LOGIKA DLA IMPALA ---
+            for col_name, col_type in column_types.items():
+                col_name_sql = f"`{col_name}`"
+                columns_def.append("")
+                
+                if hasattr(col_type, 'length'):
+                    length = getattr(col_type, 'length', 255)
+                    columns_def[-1] = f"{col_name_sql} VARCHAR({length})"
+                elif str(col_type) == 'INTEGER' or 'BIGINT' in str(col_type):
+                    columns_def[-1] = f"{col_name_sql} BIGINT"
+                elif 'FLOAT' in str(col_type):
+                    columns_def[-1] = f"{col_name_sql} DOUBLE"
+                elif 'DATETIME' in str(col_type) or 'TIMESTAMP' in str(col_type):
+                    columns_def[-1] = f"{col_name_sql} TIMESTAMP"
+                elif 'BOOLEAN' in str(col_type):
+                    columns_def[-1] = f"{col_name_sql} BOOLEAN"
+                else:
+                    columns_def[-1] = f"{col_name_sql} STRING"
+                    
+        elif target_db.lower() == 'sqlserver':
+            # --- LOGIKA DLA SQL SERVER ---
+            for col_name, col_type in column_types.items():
+                col_name_sql = f'[{col_name}]'
+                columns_def.append("")
+                
+                col_type_str = str(col_type).upper()
+                
+                if 'VARCHAR' in col_type_str or 'NVARCHAR' in col_type_str or 'STRING' in col_type_str:
+                    length = getattr(col_type, 'length', 4000)
+                    if length is None or length > 4000: # NVARCHAR(MAX)
+                         columns_def[-1] = f"{col_name_sql} NVARCHAR(MAX)"
+                    else:
+                         columns_def[-1] = f"{col_name_sql} NVARCHAR({length})"
+                elif 'INTEGER' in col_type_str or 'BIGINT' in col_type_str:
+                    columns_def[-1] = f"{col_name_sql} BIGINT"
+                elif 'FLOAT' in col_type_str:
+                    columns_def[-1] = f"{col_name_sql} FLOAT"
+                elif 'DATETIME' in col_type_str:
+                    columns_def[-1] = f"{col_name_sql} DATETIME2"
+                elif 'DATE' in col_type_str:
+                    columns_def[-1] = f"{col_name_sql} DATE"
+                elif 'BOOLEAN' in col_type_str or 'BIT' in col_type_str:
+                    columns_def[-1] = f"{col_name_sql} BIT"
+                else:
+                    columns_def[-1] = f"{col_name_sql} NVARCHAR(100)"
+        
+        # 3. Wykonanie zapytania CREATE TABLE
+        if not columns_def:
+            self.logger.warning(f"Brak definicji kolumn dla tabeli {table_name}. Przerwanie tworzenia.")
+            return False
+
+        cols_definition = ',\n'.join(columns_def)
+        create_table_sql = f'CREATE TABLE {schema}.{table_name} (\n{cols_definition}\n)'
+        
+        try:
+            with engine.connect() as connection:
+                connection.execute(create_table_sql)
+                self.logger.info(f"Utworzono nową tabelę {schema}.{table_name} w bazie {target_db}.")
+                return False # Tabela została utworzona (nie istniała wcześniej)
+            
+        except Exception as e:
+            self.logger.error(f"Krytyczny błąd podczas tworzenia tabeli {table_name}: {str(e)}")
+            self.logger.error(f"SQL: {create_table_sql}")
+            raise
+
+🔎 Co zmieniliśmy?
+ * Sygnatura funkcji:
+   * Było: def create_table_if_not_exists(self, engine, df, table_name, schema, target_db)
+   * Jest: def create_table_if_not_exists(self, engine, column_types, df, table_name, schema, target_db)
+   * Dodano column_types jako drugi argument (po engine).
+ * Użycie column_types:
+   * Wewnątrz funkcji usunęliśmy linię column_types = self.map_data_types(...), ponieważ typy są teraz przekazywane jako argument.
+Teraz liczba argumentów w wywołaniu (w insert_data) i w definicji będzie się zgadzać (7 argumentów).
