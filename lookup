@@ -1,128 +1,71 @@
-Oto poprawiony kod dla funkcji create_table_if_not_exists.
-Głównym problemem, który powodował błąd Cannot interpret 'VARCHAR(length=19)', było prawdopodobnie użycie nieprawidłowych ciągów znaków (takich jak 'VARCHAR(length)') w definicjach kolumn dla SQLAlchemy/SQL. W przypadku Oracle, często używa się VARCHAR2 zamiast samego VARCHAR, a długości są kluczowe.
-Poniższa wersja koncentruje się na poprawnym formatowaniu ciągu SQL dla każdej bazy danych, biorąc pod uwagę standardy, które widać w Twoim kodzie.
-🛠️ Poprawiona funkcja create_table_if_not_exists
-Poprawiona funkcja znajduje się w klasie DatabaseManager i skupia się na sekcjach dla Oracle i SQL Server, gdzie najczęściej występują problemy z definicją typów (linia 577 i 605 na Twoim zdjęciu).
-# --- Fragment klasy DatabaseManager ---
-
-def create_table_if_not_exists(self, engine, df: pd.DataFrame, table_name: str, 
-                               schema: str, target_db: str) -> None:
-    
-    """
-    Tworzy tabelę docelową, jeśli nie istnieje, używając dynamicznie
-    mapowanych typów danych dla konkretnej bazy.
-    """
-    
-    # 1. Sprawdzenie, czy tabela już istnieje (poprzez zapytanie systemowe)
-    with engine.connect() as connection:
-        if connection.dialect.has_table(connection, table_name, schema=schema):
-            self.logger.info(f"Tabela {schema}.{table_name} już istnieje.")
-            return True # Tabela istnieje
-
-    # 2. Mapowanie typów
-    # Zakładamy, że ta metoda zwraca słownik: {nazwa_kolumny: typ_sqlalchemy lub nazwa_typu_sql}
-    column_types = self.map_data_types(df, target_db) 
-    columns_def = []
-
-    # 3. Dynamiczne tworzenie definicji kolumn SQL (columns_def)
-    
-    if target_db.lower() == 'oracle':
-        # --- LOGIKA DLA ORACLE ---
-        for col_name, col_type in column_types.items():
-            col_name_sql = f'"{col_name}"' # Cudzysłowy dla nazwy kolumny w Oracle
-
-            if isinstance(col_type, str):
-                # Jeśli col_type jest już ciągiem SQL (np. 'NUMBER(13)'), użyj go
-                columns_def.append(f"{col_name_sql} {col_type}")
-            elif hasattr(col_type, 'length'):
-                length = getattr(col_type, 'length', 4000)
-                if length < 4000:
-                    # 💥 POPRAWKA: Użycie VARCHAR2 i obsługa długości
-                    columns_def.append(f"{col_name_sql} VARCHAR2({length})")
-                else:
-                    columns_def.append(f"{col_name_sql} CLOB")
-            elif hasattr(col_type, 'precision'):
-                 columns_def.append(f'{col_name_sql} NUMBER')
-            elif str(col_type) == 'INTEGER':
-                columns_def.append(f"{col_name_sql} NUMBER(10)")
-            elif str(col_type) == 'FLOAT':
-                columns_def.append(f"{col_name_sql} FLOAT")
-            elif str(col_type) == 'DATETIME':
-                columns_def.append(f"{col_name_sql} TIMESTAMP")
-            elif str(col_type) == 'DATE':
-                columns_def.append(f"{col_name_sql} DATE")
-            else:
-                 # W razie wątpliwości użyj ogólnego VARCHAR2
-                 columns_def.append(f"{col_name_sql} VARCHAR2(100)") 
-                 
-    elif target_db.lower() == 'impala':
-        # --- LOGIKA DLA IMPALA ---
-        # Impala jest prosta, używamy typów SQL jako ciągów
-        for col_name, col_type in column_types.items():
-            col_name_sql = f"`{col_name}`" # Backticks dla Impali
-            
-            if hasattr(col_type, 'length'):
-                length = getattr(col_type, 'length', 255)
-                # Używamy VARCHAR dla Impali
-                columns_def.append(f"{col_name_sql} VARCHAR({length})")
-            elif str(col_type) == 'INTEGER':
-                columns_def.append(f"{col_name_sql} BIGINT")
-            elif str(col_type) == 'FLOAT':
-                columns_def.append(f"{col_name_sql} DOUBLE")
-            elif str(col_type) == 'DATETIME':
-                columns_def.append(f"{col_name_sql} TIMESTAMP")
-            elif str(col_type) == 'DATE':
-                columns_def.append(f"{col_name_sql} DATE")
-            elif str(col_type) == 'BOOLEAN':
-                columns_def.append(f"{col_name_sql} BOOLEAN")
-            else:
-                columns_def.append(f"{col_name_sql} STRING")
-                
-    elif target_db.lower() == 'sqlserver':
-        # --- LOGIKA DLA SQL SERVER ---
-        for col_name, col_type in column_types.items():
-            col_name_sql = f'[{col_name}]' # Nawiasy kwadratowe dla SQL Server
-            
-            if hasattr(col_type, 'length'):
-                length = getattr(col_type, 'length', 4000)
-                if length > 8000:
-                    # Użyj NVARCHAR(MAX) lub NVARCHAR(N)
-                    columns_def.append(f"{col_name_sql} NVARCHAR(MAX)")
-                else:
-                    # Używamy NVARCHAR dla obsługi unicode
-                    columns_def.append(f"{col_name_sql} NVARCHAR({length})")
-            elif str(col_type) == 'INTEGER':
-                columns_def.append(f"{col_name_sql} BIGINT")
-            elif str(col_type) == 'FLOAT':
-                columns_def.append(f"{col_name_sql} FLOAT")
-            elif str(col_type) == 'DATETIME':
-                columns_def.append(f"{col_name_sql} DATETIME2")
-            elif str(col_type) == 'DATE':
-                columns_def.append(f"{col_name_sql} DATE")
-            else:
-                columns_def.append(f"{col_name_sql} NVARCHAR(100)")
-    
-    # 4. Wykonanie zapytania CREATE TABLE
-    if not columns_def:
-        self.logger.warning(f"Brak definicji kolumn dla tabeli {table_name}. Przerwanie tworzenia.")
-        return False
-
-    cols_definition = ',\n'.join(columns_def)
-    create_table_sql = f'CREATE TABLE {schema}.{table_name} (\n{cols_definition}\n)'
-    
-    try:
-        connection.execute(create_table_sql)
-        self.logger.info(f"Utworzono nową tabelę {schema}.{table_name} w bazie {target_db}.")
-        return True # Tabela została utworzona
+Świetnie, że udało Ci się zlokalizować problem!
+Patrząc na Twój kod w sekcji Oracle (linie 577-586) w metodzie create_table_if_not_exists, błąd Cannot interpret 'VARCHAR(length=19)' najprawdopodobniej wynika z błędnego połączenia logiki isinstance z tworzeniem ciągów znaków SQL.
+Masz tam ten fragment:
+# Linia 577 - Oracle
+if target_db.lower() == 'oracle':
+    for col_name, col_type in column_types.items():
+        col_name_sql = f'"{col_name}"'
         
-    except Exception as e:
-        self.logger.error(f"Krytyczny błąd podczas tworzenia tabeli {table_name}: {str(e)}")
-        # Wypisz zapytanie, które spowodowało błąd, aby ułatwić debugowanie
-        self.logger.error(f"Zapytanie SQL, które spowodowało błąd: {create_table_sql}")
-        raise # Wznieś wyjątek, aby zatrzymać zadanie
+        if isinstance(col_type, col_type.VARCHAR): # Prawdopodobnie tutaj jest problem z obiektem
+            length = col_type.length if col_type.length <= 4000 else 4000
+            # Prawdopodobnie tu jest błąd w formatowaniu, lub col_type nie ma atrybutu length
+            columns_def.append(f'{col_name_sql} VARCHAR2({length})') 
+        # ... inne typy
 
-Najważniejsze zmiany i poprawki:
- * Oracle VARCHAR/VARCHAR2: W sekcji Oracle zmieniono podejście na dynamiczne tworzenie ciągów SQL, używając VARCHAR2 dla ciągów o długości mniejszej niż 4000. Jest to bardziej zgodne ze standardami Oracle i prawdopodobnie naprawi błąd mapowania, który pojawił się w logu.
- * Obsługa Długości: Użycie getattr(col_type, 'length', X) pozwala na bezpieczne pobranie atrybutu długości z obiektu typu, zapewniając jednocześnie wartość domyślną, jeśli atrybut nie istnieje.
- * Wypisywanie SQL: Dodano logowanie zapytania CREATE TABLE w bloku except, co jest kluczowe do debugowania błędów dialektu SQL.
- * Poprawione formatowanie nazw kolumn: Użyto cudzysłowów ("nazwa") dla Oracle, backticków (`nazwa`) dla Impali oraz nawiasów kwadratowych ([nazwa]) dla SQL Server, co zwiększa kompatybilność.
+Problem polega na tym, że:
+ * Typy są ciągami znaków, nie obiektami SQLAlchemy: Twoja metoda self.map_data_types (która jest wywoływana w linii 1151) prawdopodobnie zwraca typy jako ciągi znaków (np. 'VARCHAR(19)', 'INTEGER') lub obiekty typu Pandas lub Python, a nie jako obiekty klas SQLAlchemy (sqlalchemy.sql.sqltypes.VARCHAR).
+ * Błędne użycie isinstance: if isinstance(col_type, col_type.VARCHAR): jest niepoprawną konstrukcją Pythona, ponieważ col_type jest zmienną przechowującą typ, a nie modułem z definicją klasy VARCHAR. Powinieneś użyć isinstance(col_type, VARCHAR) (gdzie VARCHAR jest zaimportowaną klasą SQLAlchemy) lub po prostu sprawdzać typ jako ciąg znaków (co robisz dalej).
+🛠️ Poprawiony kod dla sekcji Oracle
+Najbezpieczniej jest zmienić isinstance na sprawdzenie ciągu znaków i użyć metody getattr() do bezpiecznego pobierania długości, nawet jeśli col_type jest już ciągiem znaków lub innym obiektem bez atrybutu length.
+Wprowadź poprawki w liniach 577-586:
+# Linia 577
+if target_db.lower() == 'oracle':
+    for col_name, col_type in column_types.items():
+        col_name_sql = f'"{col_name}"'
+        
+        # 💥 POPRAWKA DLA VARCHAR I DŁUGOŚCI (Zastąp to, co masz w liniach 580-582)
+        # Sprawdzamy, czy typ jest typu 'VARCHAR' (lub zawiera tę nazwę)
+        col_type_str = str(col_type).upper()
+        
+        if 'VARCHAR' in col_type_str or 'STRING' in col_type_str:
+            # Bezpieczne pobieranie długości. Jeśli col_type to obiekt, używamy .length. 
+            # Jeśli jest to ciąg znaków, domyślnie ustawiamy bezpieczną długość.
+            length = getattr(col_type, 'length', 255) # Domyślna długość 255
+            
+            # W Oracle, VARCHAR2 ma limit 4000 bajtów (lub znaków, zależnie od ustawień bazy)
+            if length <= 4000:
+                columns_def.append(f'{col_name_sql} VARCHAR2({length})') 
+            else:
+                # Używamy CLOB dla bardzo długich ciągów w Oracle
+                columns_def.append(f'{col_name_sql} CLOB') 
+                
+        # Kontynuujemy ze standardowymi typami (jak widać na Twoim zdjęciu)
+        elif 'INTEGER' in col_type_str:
+            columns_def.append(f'{col_name_sql} NUMBER(38)') # Zmieniono na NUMBER(38) dla BIGINT
+        elif 'NUMBER' in col_type_str:
+            columns_def.append(f'{col_name_sql} NUMBER')
+        elif 'FLOAT' in col_type_str:
+            columns_def.append(f'{col_name_sql} FLOAT')
+        elif 'TIMESTAMP' in col_type_str or 'DATETIME' in col_type_str:
+            columns_def.append(f'{col_name_sql} TIMESTAMP')
+        elif 'DATE' in col_type_str:
+            columns_def.append(f'{col_name_sql} DATE')
+        elif 'BOOLEAN' in col_type_str:
+            # Boola w Oracle często mapuje się na NUMBER(1)
+            columns_def.append(f'{col_name_sql} NUMBER(1)') 
+        else:
+            # Zabezpieczenie dla nieznanych typów
+            self.logger.warning(f"Nieznany typ {col_type_str} dla Oracle. Domyślnie VARCHAR2(100)")
+            columns_def.append(f'{col_name_sql} NVARCHAR2(100)')
+
+🎯 Dodatkowa uwaga na temat drugiego błędu
+Błąd: Wystąpił wyjątek: cannot unpack non-iterable bool object w zadaniu KDD_CALL
+Ten błąd pojawia się, gdy funkcja oczekuje krotki (np. return True, None), ale dostaje tylko pojedynczą wartość (np. return True).
+Twoja funkcja handle_task (linia 162) zwraca: return True, None oraz return False, None (po włączeniu obsługi błędów w linii 169):
+# Linia 162
+return True, None
+# Linia 172
+return False, None
+
+Jeśli w Twoim kodzie funkcja, która wywołuje handle_task (np. execute_parallel_tasks), próbuje rozpakować wynik jako status, message = handle_task(...), ale przypadkowo w którymś miejscu w kodzie starej wersji funkcja zwracała tylko return True, to ten błąd by się pojawił.
+Upewnij się, że we wszystkich ścieżkach wykonania (w tym w bloku except) handle_task zwraca krotkę (np. True, None lub False, error_msg). Zmiana, którą wprowadziłeś wcześniej (linia 162), powinna to naprawić, o ile nie ma innych miejsc, w których funkcja jest wywoływana i zwraca tylko bool.
