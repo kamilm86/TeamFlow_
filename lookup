@@ -1,54 +1,58 @@
-Masz rację. Problem jest w linii 580 (i podobnych) w Twojej oryginalnej funkcji create_table_if_not_exists.
-Błąd jest spowodowany próbą użycia obiektu, który nie jest zdefiniowany ani zaimportowany w tym kontekście, co prowadzi do błędnej interpretacji przez SQLAlchemy podczas próby utworzenia tabeli.
-1. Dlaczego błąd występuje
-Linia 580 w Twoim kodzie wygląda tak:
-        if isinstance(col_type, col_type.VARCHAR):
+Masz rację, jeśli wprowadziłeś zmiany, a błąd jest ten sam (Cannot interpret 'VARCHAR(length=19)'), oznacza to, że problem leży w sposobie generowania definicji kolumn dla Oracle, a nie w samym sprawdzeniu typu. W Twoim kodzie widzę, że polegasz na obiektach typu SQLAlchemy do pobrania długości (col_type.length), co jest dobre, ale sposób, w jaki te obiekty są używane w ciągu znaków SQL, jest prawdopodobnie nieprawidłowy dla Twojej wersji bazy danych lub sterownika.
+Problem tkwi w tym, że sterownik Oracle w SQLAlchemy nie rozpoznaje ciągu 'VARCHAR(length=19)' jako poprawnej definicji kolumny, ponieważ oczekuje czystego typu SQL (np. VARCHAR2(19)) lub obiektu typu SQLAlchemy.
+Przeanalizujmy, jak to powinno wyglądać, koncentrując się na logice mapowania typu w create_table_if_not_exists (linie 577-590).
+🛠️ Poprawa Logiki Mapowania Typów dla Oracle
+Ponieważ Twoje wcześniejsze próby z isinstance były problematyczne, a nowsza próba z prostym formatowaniem ciągu zawiodła, musimy bezpiecznie wyodrębnić długość i użyć poprawnej nazwy typu dla Oracle (VARCHAR2).
+Zastąp logikę dla target_db.lower() == 'oracle' w create_table_if_not_exists (linie 577-590) poniższą, bardziej defensywną wersją:
+# Wewnątrz def create_table_if_not_exists (linia ~577)
 
- * col_type jest zmienną: col_type przechowuje aktualny typ danych kolumny (np. Integer, Float lub VARCHAR(19)).
- * Brak atrybutu VARCHAR: col_type (czyli obiekt typu danych) nie ma atrybutu o nazwie .VARCHAR. Jeśli col_type jest obiektem typu SQLAlchemy, powinieneś użyć klasy VARCHAR (zaimportowanej z sqlalchemy). Jeśli jest ciągiem znaków (co jest bardziej prawdopodobne), ta konstrukcja w ogóle nie działa.
-Ponieważ widzimy, że typy są traktowane jako ciągi (np. 'VARCHAR(length=19)'), bezpieczne jest przejście na logikę sprawdzania ciągu znaków zamiast używania isinstance dla obiektów typów SQLAlchemy.
-2. Poprawiony kod dla sekcji Oracle (Linie 577-590)
-Poniższy kod zastępuje problematyczne użycie isinstance i bezpiecznie tworzy ciągi SQL, co naprawi błąd:
-# Wewnątrz klasy DatabaseManager
-# def create_table_if_not_exists(...):
+if target_db.lower() == 'oracle':
+    for col_name, col_type in column_types.items():
+        col_name_sql = f'"{col_name}"' # Nazwy kolumn w cudzysłowach
+        col_type_str = str(col_type).upper() 
+        columns_def.append("") # Dodajemy placeholder
 
-# ...
-    if target_db.lower() == 'oracle':
-        # import sqlalchemy.types as types # Jeśli zechcesz używać obiektów
-        
-        for col_name, col_type in column_types.items():
-            col_name_sql = f'"{col_name}"' # Cudzysłowy dla Oracle
-            col_type_str = str(col_type).upper() # Konwersja na ciąg znaków (np. 'VARCHAR(19)')
-
-            # 💥 NAPRAWIONA LOGIKA: Zamiast isinstance, sprawdzamy ciąg znaków
-            if 'VARCHAR' in col_type_str or 'STRING' in col_type_str:
-                
-                # Bezpieczne pobieranie długości. Jeśli col_type ma atrybut length, użyj go.
-                length = getattr(col_type, 'length', 255) 
-                
-                # Ograniczenie długości do standardowego limitu VARCHAR2 w Oracle
-                if length <= 4000:
-                    columns_def.append(f'{col_name_sql} VARCHAR2({length})')
-                else:
-                    # CLOB dla długich ciągów
-                    columns_def.append(f'{col_name_sql} CLOB')
-                    
-            elif 'INTEGER' in col_type_str:
-                columns_def.append(f'{col_name_sql} NUMBER(38)')
-            elif 'NUMBER' in col_type_str or 'FLOAT' in col_type_str:
-                columns_def.append(f'{col_name_sql} NUMBER')
-            elif 'TIMESTAMP' in col_type_str or 'DATETIME' in col_type_str:
-                columns_def.append(f'{col_name_sql} TIMESTAMP')
-            elif 'DATE' in col_type_str:
-                columns_def.append(f'{col_name_sql} DATE')
-            elif 'BOOLEAN' in col_type_str:
-                columns_def.append(f'{col_name_sql} NUMBER(1)') 
+        # 💥 POPRAWKA DLA TYPÓW Z DŁUGOŚCIĄ (VARCHAR/STRING)
+        if 'VARCHAR' in col_type_str or 'STRING' in col_type_str:
+            
+            # Próbujemy pobrać długość. Jeśli to obiekt SQLAlchemy, ma atrybut 'length'.
+            # Jeśli to inny obiekt, domyślnie 255.
+            length = getattr(col_type, 'length', 255) 
+            
+            # W Oracle używamy VARCHAR2, maksymalna długość 4000
+            if length <= 4000:
+                # Używamy czystego typu SQL
+                columns_def[-1] = f'{col_name_sql} VARCHAR2({length})' 
             else:
-                self.logger.warning(f"Nieznany typ {col_type_str} dla Oracle. Domyślnie VARCHAR2(100)")
-                columns_def.append(f'{col_name_sql} NVARCHAR2(100)')
+                # Używamy CLOB dla większych danych
+                columns_def[-1] = f'{col_name_sql} CLOB'
 
-# ... dalsza część funkcji
+        # 💥 OBSŁUGA TYPÓW LICZBOWYCH I DAT
+        elif 'INTEGER' in col_type_str:
+            columns_def[-1] = f'{col_name_sql} NUMBER(38)' # Odpowiednik BIGINT
+        elif 'FLOAT' in col_type_str or 'NUMBER' in col_type_str:
+            columns_def[-1] = f'{col_name_sql} NUMBER'
+        elif 'TIMESTAMP' in col_type_str or 'DATETIME' in col_type_str:
+            columns_def[-1] = f'{col_name_sql} TIMESTAMP'
+        elif 'DATE' in col_type_str:
+            columns_def[-1] = f'{col_name_sql} DATE'
+        elif 'BOOLEAN' in col_type_str:
+            columns_def[-1] = f'{col_name_sql} NUMBER(1)' 
+        
+        # 💥 Zabezpieczenie na wypadek braku przypisania (powinno być usunięte w końcowej wersji)
+        if not columns_def[-1]:
+             self.logger.warning(f"Nieznany typ dla kolumny {col_name}: {col_type_str}. Domyślnie VARCHAR2(100)")
+             columns_def[-1] = f'{col_name_sql} VARCHAR2(100)'
 
-3. Co z błędem cannot unpack non-iterable bool object?
-Poprawienie logiki mapowania typów powinno rozwiązać pierwszy błąd. Drugi błąd (cannot unpack non-iterable bool object) jest prawdopodobnie spowodowany tym, że funkcja create_table_if_not_exists rzuciła wyjątek, a kod nadrzędny (insert_data lub handle_task) nie obsłużył tego poprawnie i próbował rozpakować prostą wartość logiczną (np. True lub False) jako krotkę.
-Ponieważ w Twoim kodzie create_table_if_not_exists nie zwraca żadnej wartości (tylko rzuca raise), to błąd VARCHAR jest źródłem całego niepowodzenia. Naprawienie mapowania typów powinno naprawić oba problemy, ponieważ kod w ogóle nie dojdzie do miejsca, w którym ten drugi, dziwny błąd jest generowany.
+    # ... dalsza część funkcji
+
+🎯 Kluczowe punkty do sprawdzenia:
+ * Potwierdź, co zwraca map_data_types (Linia 1151):
+   * Jeśli zwraca obiekty SQLAlchemy (np. sqlalchemy.VARCHAR(19)), to Twoja poprzednia logika oparta na col_type.length była poprawna, ale problemem było to, że Twój kod w linii 580 nie był w stanie uzyskać dostępu do VARCHAR (bo nie został zaimportowany).
+   * Jeśli zwraca ciągi znaków (np. 'VARCHAR(19)'), to nowa logika z getattr(col_type, 'length', 255) powinna działać, bo nie polega na istnieniu atrybutu, tylko na domyślnej wartości.
+   Ponieważ błąd mówi Cannot interpret 'VARCHAR(length=19)', oznacza to, że gdzieś wcześniej (prawdopodobnie w map_data_types lub w sekcji df_to_load.astype(dtype_dict) w insert_data) typ jest konwertowany na ten nieprawidłowy ciąg znaków, a następnie przekazywany do funkcji create_table.
+ * Użyj repr() do debugowania:
+   W metodzie create_table_if_not_exists, przed pętlą for col_name, col_type in column_types.items():, dodaj:
+   self.logger.info(f"Typy kolumn: {repr(column_types)}")
+
+   Następnie sprawdź w logach, jak dokładnie wygląda obiekt col_type dla tej problematycznej kolumny. Jeśli wygląda on na obiekt SQLAlchemy, upewnij się, że używasz VARCHAR2 w ciągu SQL.
