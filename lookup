@@ -1,94 +1,128 @@
-Oto pełny zapis poprawionej funkcji handle_task w klasie TaskManager. Zmiana polega na dodaniu obsługi nowego parametru lookup_keys i przekazaniu go do db_manager.insert_data w sekcji ładowania danych.
-# --- Klasa TaskManager (plik importy.py) ---
+Oto poprawiony kod dla funkcji create_table_if_not_exists.
+Głównym problemem, który powodował błąd Cannot interpret 'VARCHAR(length=19)', było prawdopodobnie użycie nieprawidłowych ciągów znaków (takich jak 'VARCHAR(length)') w definicjach kolumn dla SQLAlchemy/SQL. W przypadku Oracle, często używa się VARCHAR2 zamiast samego VARCHAR, a długości są kluczowe.
+Poniższa wersja koncentruje się na poprawnym formatowaniu ciągu SQL dla każdej bazy danych, biorąc pod uwagę standardy, które widać w Twoim kodzie.
+🛠️ Poprawiona funkcja create_table_if_not_exists
+Poprawiona funkcja znajduje się w klasie DatabaseManager i skupia się na sekcjach dla Oracle i SQL Server, gdzie najczęściej występują problemy z definicją typów (linia 577 i 605 na Twoim zdjęciu).
+# --- Fragment klasy DatabaseManager ---
 
-def handle_task(self, task: dict):
+def create_table_if_not_exists(self, engine, df: pd.DataFrame, table_name: str, 
+                               schema: str, target_db: str) -> None:
     
-    task_name = task.get('name', 'Nieznane Zadanie')
-    start_time = datetime.now()
+    """
+    Tworzy tabelę docelową, jeśli nie istnieje, używając dynamicznie
+    mapowanych typów danych dla konkretnej bazy.
+    """
     
-    try:
-        # Zapis początkowy logu
-        self._log_task(task_name, status='Running', start_time=start_time)
-        self.logger.info(f"Rozpoczynanie zadania: {task_name}")
+    # 1. Sprawdzenie, czy tabela już istnieje (poprzez zapytanie systemowe)
+    with engine.connect() as connection:
+        if connection.dialect.has_table(connection, table_name, schema=schema):
+            self.logger.info(f"Tabela {schema}.{table_name} już istnieje.")
+            return True # Tabela istnieje
 
-        # 1. Obsługa delete_temp
-        if task.get('delete_temp'):
-            self.logger.info("Wykonywanie czyszczenia tabel tymczasowych")
-            self.db_manager.drop_oracle_tables_with_keywords('Oracle', 'TEMP') # Zakładam, że ta metoda jest zdefiniowana
+    # 2. Mapowanie typów
+    # Zakładamy, że ta metoda zwraca słownik: {nazwa_kolumny: typ_sqlalchemy lub nazwa_typu_sql}
+    column_types = self.map_data_types(df, target_db) 
+    columns_def = []
 
-        # 2. Obsługa delete_query
-        if task.get('delete_query'):
-            self.logger.info("Wykonywanie zapytania usuwającego dane")
-            self.db_manager.execute_sql(task['destination_db'], task['delete_query'])
+    # 3. Dynamiczne tworzenie definicji kolumn SQL (columns_def)
+    
+    if target_db.lower() == 'oracle':
+        # --- LOGIKA DLA ORACLE ---
+        for col_name, col_type in column_types.items():
+            col_name_sql = f'"{col_name}"' # Cudzysłowy dla nazwy kolumny w Oracle
 
-        # 3. Obsługa fetch_sql (pobieranie danych)
-        df = None
-        fetch_params = task.get('date_param')
-        if task.get('fetch_sql'):
-            self.logger.info(f"Pobieram i wstawiam dane: {task['sql_table']}")
+            if isinstance(col_type, str):
+                # Jeśli col_type jest już ciągiem SQL (np. 'NUMBER(13)'), użyj go
+                columns_def.append(f"{col_name_sql} {col_type}")
+            elif hasattr(col_type, 'length'):
+                length = getattr(col_type, 'length', 4000)
+                if length < 4000:
+                    # 💥 POPRAWKA: Użycie VARCHAR2 i obsługa długości
+                    columns_def.append(f"{col_name_sql} VARCHAR2({length})")
+                else:
+                    columns_def.append(f"{col_name_sql} CLOB")
+            elif hasattr(col_type, 'precision'):
+                 columns_def.append(f'{col_name_sql} NUMBER')
+            elif str(col_type) == 'INTEGER':
+                columns_def.append(f"{col_name_sql} NUMBER(10)")
+            elif str(col_type) == 'FLOAT':
+                columns_def.append(f"{col_name_sql} FLOAT")
+            elif str(col_type) == 'DATETIME':
+                columns_def.append(f"{col_name_sql} TIMESTAMP")
+            elif str(col_type) == 'DATE':
+                columns_def.append(f"{col_name_sql} DATE")
+            else:
+                 # W razie wątpliwości użyj ogólnego VARCHAR2
+                 columns_def.append(f"{col_name_sql} VARCHAR2(100)") 
+                 
+    elif target_db.lower() == 'impala':
+        # --- LOGIKA DLA IMPALA ---
+        # Impala jest prosta, używamy typów SQL jako ciągów
+        for col_name, col_type in column_types.items():
+            col_name_sql = f"`{col_name}`" # Backticks dla Impali
             
-            df = self.db_manager.fetch_data(
-                source_db=task['source_db'],
-                fetch_sql=task['fetch_sql'],
-                params=fetch_params,
-                split_by_semicolon=True if task.get('split_by_semicolon') is not False else False
-            )
-
-        # 4. Obsługa insert_missing (wstawianie brakujących wierszy - stara logika)
-        if task.get('insert_missing') and task.get('key_columns'):
-             # ... (Twoja logika dla 'insert_missing' – zostawiam Twoje oryginalne wywołanie)
-             self.logger.info("Tryb: wstawiamy tylko brakujące wiersze po kluczach")
-             self.db_manager.insert_data(...) # Twoje oryginalne wywołanie
-        
-        # 5. Obsługa wstawiania danych (standardowe lub z lookup)
-        if 'destination_db' in task and df is not None:
-            self.logger.info(f"Wstawianie danych do bazy {task['destination_db']} - tabela {task['sql_table']}")
+            if hasattr(col_type, 'length'):
+                length = getattr(col_type, 'length', 255)
+                # Używamy VARCHAR dla Impali
+                columns_def.append(f"{col_name_sql} VARCHAR({length})")
+            elif str(col_type) == 'INTEGER':
+                columns_def.append(f"{col_name_sql} BIGINT")
+            elif str(col_type) == 'FLOAT':
+                columns_def.append(f"{col_name_sql} DOUBLE")
+            elif str(col_type) == 'DATETIME':
+                columns_def.append(f"{col_name_sql} TIMESTAMP")
+            elif str(col_type) == 'DATE':
+                columns_def.append(f"{col_name_sql} DATE")
+            elif str(col_type) == 'BOOLEAN':
+                columns_def.append(f"{col_name_sql} BOOLEAN")
+            else:
+                columns_def.append(f"{col_name_sql} STRING")
+                
+    elif target_db.lower() == 'sqlserver':
+        # --- LOGIKA DLA SQL SERVER ---
+        for col_name, col_type in column_types.items():
+            col_name_sql = f'[{col_name}]' # Nawiasy kwadratowe dla SQL Server
             
-            # 💥 NOWOŚĆ: POBRANIE KLUCZY LOOKUP
-            lookup_keys = task.get('lookup_keys', None)
-            
-            self.db_manager.insert_data(
-                df=df,
-                target_db=task['destination_db'],
-                table_name=task['sql_table'],
-                schema=task['schema'],
-                batch_size=task.get('batch_size', 1500000), 
-                if_exists=task.get('if_exists', 'append'),
-                # 💥 PRZEKAZANIE KLUCZY LOOKUP
-                lookup_keys=lookup_keys 
-            )
-
-        # 6. Obsługa execute_query
-        if 'execute_query' in task:
-            self.logger.info("Wykonywanie zapytania")
-            self.db_manager.execute_sql(task['source_db'], task['execute_query'], task.get('date_param'))
-
-        # 7. Obsługa procedure
-        if 'procedure' in task:
-            self.logger.info("Wykonywanie procedury")
-            self.db_manager.execute_sql(task['source_db'], task['procedure'])
-
-        # 8. Obsługa merge (stara logika)
-        if 'merge' in task:
-            self.logger.info("Wykonywanie MERGE")
-            target_table = f" {task['schema']}.{task['sql_table']}"
-            source_table = f" {task['schema']}.{task['merge'][0]}"
-            self.db_manager.execute_merge_via_procedure(
-                db_name=task['destination_db'], 
-                source_table=source_table, 
-                target_table=target_table, 
-                key_columns=task['key_columns']) # Zakładam, że ta metoda jest zdefiniowana
-            
-
-        end_time = datetime.now()
-        self._log_task(task_name, status='SUCCESS', start_time=start_time, end_time=end_time)
-        self.logger.info(f"Zadanie {task_name} zakończone pomyślnie. Czas trwania: {end_time - start_time}")
-        return True
-        
-    except Exception as e:
-        end_time = datetime.now()
-        error_msg = f"Błąd podczas wykonywania zadania {task_name}: {str(e)}"
-        self._log_task(task_name, status='ERROR', start_time=start_time, end_time=end_time, message=error_msg)
-        self.logger.error(error_msg)
+            if hasattr(col_type, 'length'):
+                length = getattr(col_type, 'length', 4000)
+                if length > 8000:
+                    # Użyj NVARCHAR(MAX) lub NVARCHAR(N)
+                    columns_def.append(f"{col_name_sql} NVARCHAR(MAX)")
+                else:
+                    # Używamy NVARCHAR dla obsługi unicode
+                    columns_def.append(f"{col_name_sql} NVARCHAR({length})")
+            elif str(col_type) == 'INTEGER':
+                columns_def.append(f"{col_name_sql} BIGINT")
+            elif str(col_type) == 'FLOAT':
+                columns_def.append(f"{col_name_sql} FLOAT")
+            elif str(col_type) == 'DATETIME':
+                columns_def.append(f"{col_name_sql} DATETIME2")
+            elif str(col_type) == 'DATE':
+                columns_def.append(f"{col_name_sql} DATE")
+            else:
+                columns_def.append(f"{col_name_sql} NVARCHAR(100)")
+    
+    # 4. Wykonanie zapytania CREATE TABLE
+    if not columns_def:
+        self.logger.warning(f"Brak definicji kolumn dla tabeli {table_name}. Przerwanie tworzenia.")
         return False
 
+    cols_definition = ',\n'.join(columns_def)
+    create_table_sql = f'CREATE TABLE {schema}.{table_name} (\n{cols_definition}\n)'
+    
+    try:
+        connection.execute(create_table_sql)
+        self.logger.info(f"Utworzono nową tabelę {schema}.{table_name} w bazie {target_db}.")
+        return True # Tabela została utworzona
+        
+    except Exception as e:
+        self.logger.error(f"Krytyczny błąd podczas tworzenia tabeli {table_name}: {str(e)}")
+        # Wypisz zapytanie, które spowodowało błąd, aby ułatwić debugowanie
+        self.logger.error(f"Zapytanie SQL, które spowodowało błąd: {create_table_sql}")
+        raise # Wznieś wyjątek, aby zatrzymać zadanie
+
+Najważniejsze zmiany i poprawki:
+ * Oracle VARCHAR/VARCHAR2: W sekcji Oracle zmieniono podejście na dynamiczne tworzenie ciągów SQL, używając VARCHAR2 dla ciągów o długości mniejszej niż 4000. Jest to bardziej zgodne ze standardami Oracle i prawdopodobnie naprawi błąd mapowania, który pojawił się w logu.
+ * Obsługa Długości: Użycie getattr(col_type, 'length', X) pozwala na bezpieczne pobranie atrybutu długości z obiektu typu, zapewniając jednocześnie wartość domyślną, jeśli atrybut nie istnieje.
+ * Wypisywanie SQL: Dodano logowanie zapytania CREATE TABLE w bloku except, co jest kluczowe do debugowania błędów dialektu SQL.
+ * Poprawione formatowanie nazw kolumn: Użyto cudzysłowów ("nazwa") dla Oracle, backticków (`nazwa`) dla Impali oraz nawiasów kwadratowych ([nazwa]) dla SQL Server, co zwiększa kompatybilność.
