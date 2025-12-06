@@ -98,3 +98,158 @@ Kluczowa zmiana to blok except, który wyłapuje ORA-01439. Dzięki temu skrypt:
  * Oracle rzuci błąd "nie mogę, bo są dane".
  * Python złapie błąd, wypisze ostrzeżenie (warning) zamiast błędu (error).
  * Proces pójdzie dalej do insert_data i spróbuje wstawić dane. Jeśli INITIATEDDATETIME to data w formacie stringowym pasującym do formatu Oracle, wstawienie się uda.
+
+Oto pełny, naprawiony kod funkcji check_column_size.
+Został on wzbogacony o blok try-except, który specyficznie wyłapuje błąd ORA-01439. Dzięki temu, gdy skrypt spróbuje zmienić typ kolumny (np. z DATE na VARCHAR), a Oracle odmówi, skrypt tylko zaloguje ostrzeżenie i pójdzie dalej, zamiast przerywać całe zadanie.
+📄 Pełny kod check_column_size
+Upewnij się, że na górze pliku masz import: from sqlalchemy import text.
+    def check_column_size(self, engine, df: pd.DataFrame, table_name: str, schema: str, target_db: str) -> None:
+        """
+        Sprawdza i dostosowuje rozmiar kolumn w tabeli (Oracle i SQL Server).
+        Obsługuje błąd ORA-01439 (blokada zmiany typu dla niepustych kolumn).
+        """
+        if df.empty:
+            return
+
+        # Używamy text() do surowych zapytań SQL
+        from sqlalchemy import text
+
+        # Pobieramy mapowanie typów, aby wiedzieć, które kolumny są tekstowe w Pythonie
+        # Używamy tutaj Twojej funkcji mapującej
+        column_types = self.map_data_types(df, target_db)
+
+        try:
+            with engine.connect() as connection:
+                
+                # --- LOGIKA DLA ORACLE ---
+                if target_db.lower() == 'oracle':
+                    # 1. Pobieramy informacje o obecnych kolumnach w bazie
+                    # ALL_TAB_COLUMNS zawiera nazwy, typy i długości
+                    sql_check = f"""
+                        SELECT COLUMN_NAME, DATA_TYPE, DATA_LENGTH, CHAR_LENGTH 
+                        FROM ALL_TAB_COLUMNS 
+                        WHERE TABLE_NAME = '{table_name.upper()}' 
+                          AND OWNER = '{schema.upper()}'
+                    """
+                    existing_cols = connection.execute(text(sql_check)).fetchall()
+                    
+                    # Tworzymy słownik: { 'NAZWA_KOLUMNY': {'type': 'VARCHAR2', 'len': 100} }
+                    # CHAR_LENGTH jest lepsze dla VARCHAR2, DATA_LENGTH dla innych
+                    existing_cols_dict = {
+                        row[0].upper(): {'type': row[1], 'len': row[3] if row[3] else row[2]} 
+                        for row in existing_cols
+                    }
+
+                    for col_name in df.columns:
+                        col_upper = col_name.upper()
+                        
+                        # Jeśli kolumny nie ma w bazie, pomijamy (zostanie dodana lub wyrzuci błąd przy insercie)
+                        if col_upper not in existing_cols_dict:
+                            continue
+
+                        current_info = existing_cols_dict[col_upper]
+                        current_len = current_info['len']
+                        current_type = current_info['type']
+                        
+                        # Sprawdzamy typ w Pythonie (z mapowania)
+                        col_type_obj = column_types.get(col_name)
+                        col_type_str = str(col_type_obj).upper()
+
+                        # Interesuje nas tylko weryfikacja kolumn tekstowych (VARCHAR, STRING, CLOB)
+                        # Ignorujemy liczby i daty, bo ich "długość" działa inaczej
+                        is_text_col = 'VARCHAR' in col_type_str or 'STRING' in col_type_str or 'CLOB' in col_type_str
+                        
+                        if is_text_col:
+                            # Obliczamy faktyczną długość danych w DataFrame + margines 20%
+                            max_len_in_df = df[col_name].astype(str).map(len).max()
+                            if pd.isna(max_len_in_df): 
+                                max_len_in_df = 0
+                            
+                            required_len = int(max_len_in_df * 1.2)
+                            
+                            # Jeśli wymagana długość jest większa niż obecna w bazie
+                            # I obecna kolumna to nie jest już CLOB (który jest ogromny)
+                            if required_len > current_len and current_type not in ['CLOB', 'NCLOB', 'LONG', 'BLOB']:
+                                
+                                alter_sql = ""
+                                try:
+                                    if required_len > 4000:
+                                        self.logger.info(f"Wykryto potrzebę zmiany kolumny {col_name} na CLOB (wymagane: {required_len})")
+                                        alter_sql = f'ALTER TABLE "{schema}"."{table_name}" MODIFY ("{col_name}" CLOB)'
+                                    else:
+                                        self.logger.info(f"Zwiększanie kolumny {col_name} z {current_len} na {required_len}")
+                                        alter_sql = f'ALTER TABLE "{schema}"."{table_name}" MODIFY ("{col_name}" VARCHAR2({required_len}))'
+                                    
+                                    # Wykonanie zmiany
+                                    connection.execute(text(alter_sql))
+                                    self.logger.info(f"Pomyślnie zmieniono rozmiar kolumny {col_name}.")
+                                    
+                                except Exception as e:
+                                    # 💥 KLUCZOWA POPRAWKA DLA ORA-01439 💥
+                                    error_str = str(e)
+                                    if "ORA-01439" in error_str:
+                                        self.logger.warning(
+                                            f"Ignoruję zmianę typu/rozmiaru dla '{col_name}' (Błąd ORA-01439). "
+                                            f"Baza zawiera dane, a typy są niekompatybilne (np. DATE vs VARCHAR). "
+                                            f"Próba wstawienia danych nastąpi bez zmian w strukturze."
+                                        )
+                                    elif "ORA-01441" in error_str:
+                                        self.logger.warning(f"Nie można zmniejszyć długości kolumny {col_name}, ponieważ zawiera ona dane.")
+                                    else:
+                                        # Inne błędy logujemy jako Warning, żeby nie przerywać procesu
+                                        self.logger.warning(f"Nie udało się zmienić rozmiaru kolumny {col_name}: {e}")
+
+                # --- LOGIKA DLA SQL SERVER ---
+                elif target_db.lower() == 'sqlserver':
+                    
+                    sql_check = f"""
+                        SELECT COLUMN_NAME, CHARACTER_MAXIMUM_LENGTH 
+                        FROM INFORMATION_SCHEMA.COLUMNS 
+                        WHERE TABLE_SCHEMA = '{schema}' 
+                          AND TABLE_NAME = '{table_name}'
+                    """
+                    existing_cols = connection.execute(text(sql_check)).fetchall()
+                    existing_cols_dict = {row[0]: row[1] for row in existing_cols}
+
+                    for col_name in df.columns:
+                        if col_name not in existing_cols_dict:
+                            continue
+                            
+                        current_len = existing_cols_dict[col_name]
+                        # W SQL Server -1 oznacza MAX
+                        if current_len == -1: 
+                            continue
+
+                        # Sprawdzamy czy to kolumna tekstowa w Pythonie
+                        col_type_obj = column_types.get(col_name)
+                        if 'VARCHAR' in str(col_type_obj).upper() or 'NVARCHAR' in str(col_type_obj).upper():
+                            
+                            max_len_in_df = df[col_name].astype(str).map(len).max()
+                            if pd.isna(max_len_in_df): max_len_in_df = 0
+                            required_len = int(max_len_in_df * 1.2)
+
+                            # Jeśli obecna długość to nie None (czyli nie MAX) i wymagana jest większa
+                            if current_len is not None and required_len > current_len:
+                                try:
+                                    alter_sql = ""
+                                    if required_len > 4000:
+                                        alter_sql = f'ALTER TABLE [{schema}].[{table_name}] ALTER COLUMN [{col_name}] NVARCHAR(MAX)'
+                                    else:
+                                        alter_sql = f'ALTER TABLE [{schema}].[{table_name}] ALTER COLUMN [{col_name}] NVARCHAR({required_len})'
+                                    
+                                    self.logger.info(f"SQL Server: Zwiększanie kolumny {col_name} na {required_len}")
+                                    connection.execute(text(alter_sql))
+                                except Exception as e:
+                                    self.logger.warning(f"Błąd zmiany kolumny SQL Server {col_name}: {e}")
+
+        except Exception as e:
+            # Globalny catch dla funkcji - nie chcemy, żeby sprawdzanie rozmiaru wywaliło cały import
+            self.logger.error(f"Ogólny błąd podczas sprawdzania rozmiaru kolumn: {e}")
+
+Co robi ten kod?
+ * Iteruje po kolumnach: Sprawdza każdą kolumnę z DataFrame.
+ * Porównuje: Sprawdza, czy w DataFrame jest tekst dłuższy niż limit ustawiony w bazie danych.
+ * Próbuje zmienić: Jeśli w DataFrame jest dłuższy tekst, próbuje wykonać ALTER TABLE.
+ * Chwyta ORA-01439: Jeśli Oracle rzuci błąd "nie mogę zmienić typu, bo są dane", Python to wyłapie, wypisze żółte ostrzeżenie w logach i pozwoli programowi działać dalej.
+Po wklejeniu tej funkcji Twój proces insert_data powinien przejść ten etap bez błędu krytycznego.
+
