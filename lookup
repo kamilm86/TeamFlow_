@@ -275,3 +275,86 @@ Pamiętaj, aby tę funkcję umieścić wewnątrz Twojej klasy DatabaseManager i 
  * self.logger (do logowania).
  * Bibliotek pandas, uuid oraz typing.
  * Aktywnego połączenia conn przekazanego z funkcji insert_data.
+
+Aby w pełni zaimplementować zadanie z lookup_keys w pliku importy.py, musisz dodać definicję klucza do słownika zadania oraz zaktualizować metodę handle_task w klasie TaskManager, tak aby przekazywała ten klucz do db_manager.insert_data.
+Poniżej przedstawiam, jak należy zmodyfikować kluczowe sekcje w pliku importy.py.
+1. Modyfikacja klasy TaskManager (handle_task)
+Musimy upewnić się, że w metodzie handle_task jest pobierany i przekazywany parametr lookup_keys. Zgodnie ze strukturą Twojego kodu, ta modyfikacja dotyczy miejsca, w którym wywoływana jest funkcja db_manager.insert_data (okolice linii 157 na jednym z Twoich zdjęć).
+# --- Fragment klasy TaskManager w pliku importy.py ---
+
+def handle_task(self, task: dict):
+    # ... (Twój istniejący kod: logowanie 'Running', pobieranie delete_temp, delete_query, fetch_sql, itp.)
+    
+    try:
+        # ... (Twój istniejący kod: obsługa delete_temp, delete_query, fetch_sql)
+        
+        df = self.db_manager.fetch_data(
+            source_db=task['source_db'],
+            fetch_sql=fetch_sql,
+            params=fetch_params,
+            split_by_semicolon=True if task.get('split_by_semicolon') is not False else False
+        )
+        
+        # ... (Twój istniejący kod: obsługa task.get('insert_missing') i 'merge')
+        
+        # --- SEKCJA WSTAWIANIA DANYCH (LINIA ~157) ---
+        if 'destination_db' in task:
+            self.logger.info(f"Wstawianie danych do bazy {task['destination_db']}...")
+            
+            # 💥 NOWOŚĆ: POBIERAMY KLUCZE LOOKUP Z DEFINICJI ZADANIA
+            lookup_keys = task.get('lookup_keys', None)
+            
+            self.db_manager.insert_data(
+                df=df,
+                target_db=task['destination_db'],
+                table_name=task['sql_table'],
+                schema=task['schema'],
+                batch_size=task.get('batch_size', 1500000), # Użycie Twojego domyślnego batch_size
+                if_exists=task.get('if_exists', 'append'),
+                # 💥 PRZEKAZANIE KLUCZY LOOKUP DO db_manager.insert_data
+                lookup_keys=lookup_keys 
+            )
+
+        # ... (Twój istniejący kod: obsługa 'procedure' i 'merge')
+        
+        end_time = datetime.now()
+        self.logger.info(f"Zakończono pomyślnie zadanie {task['name']}. Trwało: {end_time - start_time}")
+        return True
+        
+    except Exception as e:
+    # ... (Twój istniejący kod obsługi błędów)
+
+2. Dodanie lookup_keys w definicji zadania (tasks)
+W sekcji tasks = [...] (okolice linii 278), wystarczy teraz dodać parametr lookup_keys do słowników, dla których chcesz włączyć mechanizm insert-if-not-exists.
+Przykład modyfikacji dla zadania 'KDD_CALL_ID_TEL' (linia 334):
+# --- Fragment z definicji zadań w pliku importy.py (metoda main) ---
+
+tasks = [
+    # ... Twoje istniejące zadania (BOX_CALL, OUT_CALL, itd.) ...
+    
+    {
+        'name': 'KDD_CALL_ID_TEL',
+        'delete_query': 'truncate table KDD_CALL_ID_TEL drop storage',
+        'fetch_sql': f"SELECT * FROM [Korytko].[dbo].[KDD_CALL_ID_TEL]",
+        'source_db': 'Korytko',
+        'destination_db': 'Oracle',
+        'sql_table': 'KDD_CALL_ID_TEL',
+        'schema': 'UI_KRMBS67', # Zmienione na przykład
+        'if_exists': 'append',
+        
+        # 💥 DODAJ KLUCZ LOOKUP: ID_TEL i DATA są kluczami unikalności
+        'lookup_keys': ['ID_TEL', 'INITIATEDDATETIME'], 
+        
+    },
+    
+    # ... pozostałe zadania ...
+]
+
+Podsumowanie
+Po wdrożeniu sekcji 1 i 2, system będzie działał następująco:
+ * TaskManager.handle_task pobierze listę kluczy (['ID_TEL', 'INITIATEDDATETIME']) ze słownika zadania.
+ * Przekaże ją do metody db_manager.insert_data.
+ * db_manager.insert_data przekaże klucze dalej do _custom_merge_insert.
+ * _custom_merge_insert użyje kluczy do utworzenia tymczasowej tabeli, a następnie wykona optymalną kwerendę MERGE/INSERT WHERE NOT EXISTS w celu wstawienia tylko nowych rekordów.
+
+
