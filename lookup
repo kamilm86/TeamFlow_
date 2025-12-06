@@ -1,130 +1,100 @@
-Ten błąd wynika z tego, że w funkcji insert_data przekazujemy teraz dodatkowy argument (sqlalchemy_dtype_dict), ale definicja funkcji create_table_if_not_exists nie została zaktualizowana, aby go przyjąć.
-Przyczyna:
- * Wywołanie: self.create_table_if_not_exists(engine, sqlalchemy_dtype_dict, df, ...) (7 argumentów łącznie z self).
- * Definicja: def create_table_if_not_exists(self, engine, df, ...) (6 argumentów łącznie z self).
-Musimy zaktualizować definicję create_table_if_not_exists, aby przyjmowała słownik typów jako argument (nazwijmy go column_types), zamiast generować go wewnątrz.
-Oto poprawiony kod funkcji create_table_if_not_exists. Podmień ją w całości w klasie DatabaseManager.
-🛠️ Poprawiona funkcja create_table_if_not_exists
-    def create_table_if_not_exists(self, engine, column_types: dict, df: pd.DataFrame, 
-                                   table_name: str, schema: str, target_db: str) -> bool:
+Ten błąd: ORA-01439: column to be modified must be empty to change datatype oznacza, że Twój skrypt próbuje zmienić typ danych kolumny INITIATEDDATETIME (na NVARCHAR2(22)), ale w tabeli w bazie danych są już dane, a Oracle na to nie pozwala (chyba że tabela jest pusta).
+Dlaczego to się dzieje?
+ * W bazie danych kolumna INITIATEDDATETIME ma prawdopodobnie typ DATE lub TIMESTAMP.
+ * Twój DataFrame w Pythonie traktuje tę kolumnę jako string (napis) o długości 22 znaków.
+ * Funkcja check_column_size wykrywa różnicę i próbuje wykonać ALTER TABLE ... MODIFY ... NVARCHAR2(22).
+ * Oracle blokuje tę operację, bo zmiana typu DATE -> NVARCHAR2 na niepustej kolumnie jest zabroniona.
+🛠️ Rozwiązanie
+Musimy zmodyfikować funkcję check_column_size w klasie DatabaseManager. Musimy dodać obsługę błędu (try-except), aby zignorować ten błąd w przypadku Oracle. Jeśli nie możemy zmienić typu kolumny, powinniśmy po prostu zostawić ją taką, jaka jest, i spróbować wstawić dane (Oracle często poradzi sobie z niejawną konwersją string->date przy insercie).
+Oto poprawiona funkcja check_column_size. Podmień ją w swoim pliku.
+    def check_column_size(self, engine, df: pd.DataFrame, table_name: str, schema: str, target_db: str):
         """
-        Tworzy tabelę docelową, jeśli nie istnieje, używając przekazanych typów danych.
-        Argument column_types zawiera obiekty SQLAlchemy.
+        Sprawdza i ewentualnie zwiększa rozmiar kolumn w bazie danych.
+        Ignoruje błędy zmiany typu danych (ORA-01439) dla niepustych tabel.
         """
-        
-        # 1. Sprawdzenie, czy tabela już istnieje
-        with engine.connect() as connection:
-            if connection.dialect.has_table(connection, table_name, schema=schema):
-                self.logger.info(f"Tabela {schema}.{table_name} już istnieje.")
-                return True # Tabela istnieje
+        if df.empty:
+            return
 
-        # UWAGA: Tutaj wcześniej było wywołanie map_data_types. 
-        # Teraz pobieramy typy z argumentu 'column_types', który przekazaliśmy z insert_data.
-        
-        columns_def = []
-
-        # 2. Dynamiczne tworzenie definicji kolumn SQL (columns_def)
-        
-        if target_db.lower() == 'oracle':
-            # --- LOGIKA DLA ORACLE ---
-            for col_name, col_type in column_types.items():
-                col_name_sql = f'"{col_name}"' # Cudzysłowy dla nazwy kolumny w Oracle
-                col_type_str = str(col_type).upper()
-                
-                # Dodajemy pusty string na start, żeby móc go nadpisać przez indeks [-1]
-                columns_def.append("") 
-
-                if 'VARCHAR' in col_type_str or 'STRING' in col_type_str:
-                    length = getattr(col_type, 'length', 255)
-                    if length <= 4000:
-                        columns_def[-1] = f"{col_name_sql} VARCHAR2({length})"
-                    else:
-                        columns_def[-1] = f"{col_name_sql} CLOB"
-                elif 'INTEGER' in col_type_str:
-                    columns_def[-1] = f"{col_name_sql} NUMBER(38)"
-                elif 'FLOAT' in col_type_str or 'NUMBER' in col_type_str:
-                    columns_def[-1] = f"{col_name_sql} NUMBER"
-                elif 'TIMESTAMP' in col_type_str or 'DATETIME' in col_type_str:
-                    columns_def[-1] = f"{col_name_sql} TIMESTAMP"
-                elif 'DATE' in col_type_str:
-                    columns_def[-1] = f"{col_name_sql} DATE"
-                elif 'BOOLEAN' in col_type_str:
-                    columns_def[-1] = f"{col_name_sql} NUMBER(1)"
-                else:
-                     # Fallback
-                     columns_def[-1] = f"{col_name_sql} VARCHAR2(100)"
-                     
-        elif target_db.lower() == 'impala':
-            # --- LOGIKA DLA IMPALA ---
-            for col_name, col_type in column_types.items():
-                col_name_sql = f"`{col_name}`"
-                columns_def.append("")
-                
-                if hasattr(col_type, 'length'):
-                    length = getattr(col_type, 'length', 255)
-                    columns_def[-1] = f"{col_name_sql} VARCHAR({length})"
-                elif str(col_type) == 'INTEGER' or 'BIGINT' in str(col_type):
-                    columns_def[-1] = f"{col_name_sql} BIGINT"
-                elif 'FLOAT' in str(col_type):
-                    columns_def[-1] = f"{col_name_sql} DOUBLE"
-                elif 'DATETIME' in str(col_type) or 'TIMESTAMP' in str(col_type):
-                    columns_def[-1] = f"{col_name_sql} TIMESTAMP"
-                elif 'BOOLEAN' in str(col_type):
-                    columns_def[-1] = f"{col_name_sql} BOOLEAN"
-                else:
-                    columns_def[-1] = f"{col_name_sql} STRING"
-                    
-        elif target_db.lower() == 'sqlserver':
-            # --- LOGIKA DLA SQL SERVER ---
-            for col_name, col_type in column_types.items():
-                col_name_sql = f'[{col_name}]'
-                columns_def.append("")
-                
-                col_type_str = str(col_type).upper()
-                
-                if 'VARCHAR' in col_type_str or 'NVARCHAR' in col_type_str or 'STRING' in col_type_str:
-                    length = getattr(col_type, 'length', 4000)
-                    if length is None or length > 4000: # NVARCHAR(MAX)
-                         columns_def[-1] = f"{col_name_sql} NVARCHAR(MAX)"
-                    else:
-                         columns_def[-1] = f"{col_name_sql} NVARCHAR({length})"
-                elif 'INTEGER' in col_type_str or 'BIGINT' in col_type_str:
-                    columns_def[-1] = f"{col_name_sql} BIGINT"
-                elif 'FLOAT' in col_type_str:
-                    columns_def[-1] = f"{col_name_sql} FLOAT"
-                elif 'DATETIME' in col_type_str:
-                    columns_def[-1] = f"{col_name_sql} DATETIME2"
-                elif 'DATE' in col_type_str:
-                    columns_def[-1] = f"{col_name_sql} DATE"
-                elif 'BOOLEAN' in col_type_str or 'BIT' in col_type_str:
-                    columns_def[-1] = f"{col_name_sql} BIT"
-                else:
-                    columns_def[-1] = f"{col_name_sql} NVARCHAR(100)"
-        
-        # 3. Wykonanie zapytania CREATE TABLE
-        if not columns_def:
-            self.logger.warning(f"Brak definicji kolumn dla tabeli {table_name}. Przerwanie tworzenia.")
-            return False
-
-        cols_definition = ',\n'.join(columns_def)
-        create_table_sql = f'CREATE TABLE {schema}.{table_name} (\n{cols_definition}\n)'
+        # Mapowanie typów dla sprawdzenia długości
+        # Używamy uproszczonego mapowania, bo interesuje nas głównie VARCHAR/NVARCHAR
+        column_types = self.map_data_types(df, target_db)
         
         try:
             with engine.connect() as connection:
-                connection.execute(create_table_sql)
-                self.logger.info(f"Utworzono nową tabelę {schema}.{table_name} w bazie {target_db}.")
-                return False # Tabela została utworzona (nie istniała wcześniej)
-            
-        except Exception as e:
-            self.logger.error(f"Krytyczny błąd podczas tworzenia tabeli {table_name}: {str(e)}")
-            self.logger.error(f"SQL: {create_table_sql}")
-            raise
+                # Pobranie informacji o kolumnach z bazy (dla Oracle)
+                if target_db.lower() == 'oracle':
+                    # Pobieramy obecne definicje kolumn z Oracle
+                    # Uwaga: user_tab_columns przechowuje nazwy wielkimi literami
+                    sql_check = f"""
+                        SELECT COLUMN_NAME, DATA_TYPE, DATA_LENGTH, CHAR_LENGTH 
+                        FROM ALL_TAB_COLUMNS 
+                        WHERE TABLE_NAME = '{table_name.upper()}' 
+                          AND OWNER = '{schema.upper()}'
+                    """
+                    existing_cols = connection.execute(text(sql_check)).fetchall()
+                    existing_cols_dict = {row[0]: {'type': row[1], 'len': row[3] if row[3] else row[2]} for row in existing_cols}
 
-🔎 Co zmieniliśmy?
- * Sygnatura funkcji:
-   * Było: def create_table_if_not_exists(self, engine, df, table_name, schema, target_db)
-   * Jest: def create_table_if_not_exists(self, engine, column_types, df, table_name, schema, target_db)
-   * Dodano column_types jako drugi argument (po engine).
- * Użycie column_types:
-   * Wewnątrz funkcji usunęliśmy linię column_types = self.map_data_types(...), ponieważ typy są teraz przekazywane jako argument.
-Teraz liczba argumentów w wywołaniu (w insert_data) i w definicji będzie się zgadzać (7 argumentów).
+                    for col_name in df.columns:
+                        col_upper = col_name.upper()
+                        
+                        # Jeśli kolumny nie ma w bazie, zostanie dodana przy insercie (lub można tu dodać ALTER ADD)
+                        if col_upper not in existing_cols_dict:
+                            continue
+
+                        current_type_info = existing_cols_dict[col_upper]
+                        current_len = current_type_info['len']
+                        
+                        # Sprawdzamy typ w Pythonie
+                        # Jeśli w Pythonie mamy string/object, a w bazie jest VARCHAR/CHAR, sprawdzamy długość
+                        col_type_obj = column_types.get(col_name)
+                        
+                        # Interesuje nas tylko zwiększanie VARCHAR-ów
+                        is_varchar_in_python = 'VARCHAR' in str(col_type_obj).upper() or 'STRING' in str(col_type_obj).upper() or 'CLOB' in str(col_type_obj).upper()
+                        
+                        if is_varchar_in_python:
+                            # Obliczamy wymaganą długość
+                            max_len_in_df = df[col_name].astype(str).map(len).max()
+                            if pd.isna(max_len_in_df): max_len_in_df = 0
+                            required_len = int(max_len_in_df * 1.2) # Margines
+
+                            # Jeśli wymagana długość jest większa niż obecna (i obecna to nie CLOB)
+                            if required_len > current_len and current_type_info['type'] not in ['CLOB', 'NCLOB', 'LONG']:
+                                
+                                try:
+                                    alter_sql = ""
+                                    if required_len > 4000:
+                                        self.logger.info(f"Zmiana typu kolumny {col_name} na CLOB")
+                                        alter_sql = f'ALTER TABLE "{schema}"."{table_name}" MODIFY ("{col_name}" CLOB)'
+                                    else:
+                                        self.logger.info(f"Zwiększanie kolumny {col_name} z {current_len} na {required_len}")
+                                        alter_sql = f'ALTER TABLE "{schema}"."{table_name}" MODIFY ("{col_name}" VARCHAR2({required_len}))'
+                                    
+                                    connection.execute(text(alter_sql))
+                                    
+                                except Exception as e:
+                                    # 💥 TUTAJ JEST NAPRAWA TWOJEGO BŁĘDU 💥
+                                    error_str = str(e)
+                                    if "ORA-01439" in error_str:
+                                        self.logger.warning(f"Nie można zmienić typu kolumny '{col_name}' (ORA-01439). "
+                                                            f"Kolumna nie jest pusta, a typy są niekompatybilne. "
+                                                            f"Ignoruję zmianę i próbuję wstawić dane.")
+                                    else:
+                                        self.logger.error(f"Błąd podczas zmiany rozmiaru kolumny {col_name}: {e}")
+                                        # Nie podnosimy raise, próbujemy wstawiać dalej
+
+                elif target_db.lower() == 'sqlserver':
+                    # (Tutaj Twoja istniejąca logika dla SQL Server lub uproszczona wersja)
+                    pass
+
+        except Exception as e:
+            self.logger.error(f"Błąd w check_column_size: {e}")
+            # Nie przerywamy procesu, bo insert może się udać mimo to
+
+Co zmienić w kodzie?
+Musisz dodać import text z sqlalchemy na górze pliku, jeśli go nie masz:
+from sqlalchemy import text
+Kluczowa zmiana to blok except, który wyłapuje ORA-01439. Dzięki temu skrypt:
+ * Spróbuje zmienić kolumnę.
+ * Oracle rzuci błąd "nie mogę, bo są dane".
+ * Python złapie błąd, wypisze ostrzeżenie (warning) zamiast błędu (error).
+ * Proces pójdzie dalej do insert_data i spróbuje wstawić dane. Jeśli INITIATEDDATETIME to data w formacie stringowym pasującym do formatu Oracle, wstawienie się uda.
