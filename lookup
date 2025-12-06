@@ -1,61 +1,262 @@
-Masz całkowitą rację. Funkcja _map_data_types jest kluczowa i musi zostać naprawiona, ale nie jest to jedyny problem.
-Logika, którą widać w map_data_types (linie 351-363), jest zaprojektowana tak, aby zwracać obiekty typów SQLAlchemy (np. CLOB, VARCHAR(length)), co jest poprawne dla create_table_if_not_exists.
-Jednakże, błąd Cannot interpret 'VARCHAR(length=19)' pojawia się w metodzie insert_data w linii 1153, przed wywołaniem create_table_if_not_exists.
-🚨 Analiza Błędnego Przepływu Danych
- * Linia 363 (map_data_types): Zwraca słownik column_types zawierający obiekty SQL Alchemy (np. sqlalchemy.sql.sqltypes.VARCHAR(19)). To jest poprawne.
- * Linia 1151 (insert_data): Odbiera ten słownik: dtype_dict = self.map_data_types(...). dtype_dict zawiera obiekty SQL Alchemy.
- * Linia 1153 (insert_data): Wykonuje: df_to_load = df_to_load.astype(dtype_dict).
- * BŁĄD: Funkcja pd.DataFrame.astype() NIE MOŻE używać obiektów typów SQL Alchemy. Kiedy Pandas próbuje przekształcić obiekt VARCHAR(19) na ciąg znaków, by użyć go jako typ, otrzymuje ciąg typu 'VARCHAR(length=19)', którego nie potrafi zinterpretować, co powoduje błąd.
-🛠️ Podsumowanie i Konkretny Plan Naprawy
-Musisz wprowadzić to, co napisałem wcześniej (podział słownika), ale z jedną kluczową poprawką w Twojej implementacji map_data_types.
-Krok 1: Poprawa map_data_types (Konieczność!)
-W Twojej funkcji map_data_types używasz VARCHAR z domyślnego importu (lub z sqlalchemy):
-# Linia 360: Wymaga importu 'VARCHAR' (np. z sqlalchemy.sql.sqltypes)
-column_types[col] = CLOB() if target_db == 'Oracle' else VARCHAR(types.MAX)
-# Linia 362: Wymaga importu 'VARCHAR'
-column_types[col] = base_types.get(dtype, VARCHAR(100)) 
+Rozumiem. Ostatecznym rozwiązaniem, które naprawi błąd Cannot interpret 'VARCHAR(length=19)' i pozwoli Twojemu procesowi ETL działać, jest rozdzielenie logiki typów w metodzie insert_data. Musisz użyć typów Pandasa/NumPy w df.astype() i obiektów typów SQLAlchemy do tworzenia tabeli.
+Poniżej przedstawiam pełny kod funkcji insert_data z uwzględnieniem tej krytycznej poprawki (wokół linii 1153) i logiką lookup_keys.
+Ze względu na brak pełnej definicji, założyłem istnienie wewnętrznych mapowań typów Pandas/NumPy w słowniku self.type_mappings.
+🛠️ Poprawiona funkcja insert_data (Z podziałem typów i Lookup)
+import pandas as pd
+import numpy as np
+import gc
+from typing import List, Optional
 
-Musisz upewnić się, że w pliku, gdzie jest DatabaseManager (lub map_data_types), masz zaimportowane wymagane typy z SQLAlchemy:
-from sqlalchemy.sql.sqltypes import CLOB, VARCHAR, Integer, Float, DateTime, Date # itd.
+# --- Klasa DatabaseManager (fragment) ---
 
-Bez tego, kod w linii 360 i 362 rzuciłby błąd NameError. Zakładam, że ten import masz, więc ta funkcja jest poprawna dla generowania typów SQL.
-Krok 2: Naprawa insert_data (Konkretna modyfikacja)
-Naprawiamy linię 1153, rozdzielając logikę. Ponieważ map_data_types jest poprawna dla SQL, używamy jej wyniku tylko do tworzenia tabeli.
-# --- Fragment insert_data (Linia 1150 i dalej) ---
-
-# 1. Mapowanie typów dla SQL (CREATE TABLE)
-# Ten słownik zawiera obiekty SQL Alchemy: VARCHAR(19), CLOB, etc.
-sqlalchemy_dtype_dict = self.map_data_types(df_to_load, target_db) 
-
-# 2. Utworzenie słownika typów Pandasa/NumPy (do df.astype())
-# Ta mapa (Linia 334) jest używana do konwersji typów Pandasa/NumPy na inne typy Pandasa/NumPy.
-# Tworzymy słownik przejściowy dla astype(). 
-# Musisz stworzyć prosty słownik Pandas/NumPy na podstawie typu kolumny df.
-numpy_dtype_dict = {}
-for col_name in df_to_load.columns:
-    # Używamy prostych typów Pandasa do konwersji
-    original_dtype = df_to_load[col_name].dtype.name
+def insert_data(self, df: pd.DataFrame, target_db: str, table_name: str, 
+                schema: str, if_exists: str = 'append', batch_size: int = 1000000, 
+                verbose: bool = True, use_fast_executemany: bool = True, 
+                lookup_keys: Optional[List[str]] = None) -> None:
     
-    # Próbujemy znaleźć odpowiednik w mapowaniu typów (Linia 334)
-    if original_dtype in self.type_mappings[target_db]:
-        # np. 'int64' -> 'int'
-        numpy_dtype_dict[col_name] = self.type_mappings[target_db][original_dtype]
-    # Dla stringów i dat, które zostały już wstępnie przekształcone
-    elif 'object' in original_dtype:
-         # Obiekty powinny zostać jako 'object' lub 'str' 
-         numpy_dtype_dict[col_name] = 'str' 
-    elif 'datetime' in original_dtype:
-         numpy_dtype_dict[col_name] = 'datetime64[ns]'
-    # Inne typy pozostają jak są (np. float64)
+    self.logger.info(f"Rozpoczynanie wstawiania do {target_db}.{schema}.{table_name} (Liczba wierszy: {len(df)})")
 
-self.logger.info(f"Wykonanie df_to_load.astype()")
-# 💥 POPRAWKA: Użycie słownika typów, które Pandas rozumie
-df_to_load = df_to_load.astype(numpy_dtype_dict) 
-self.logger.info(f"df_to_load.astype(numpy_dtype_dict) - done")
+    engine = self._get_engine(target_db) 
+    
+    try:
+        with engine.connect() as connection:
+            self.logger.info("Pomyślnie utworzone połączenie z bazą docelową.")
+            
+            # Ustawienia transakcyjne (jak widać na Twoim zdjęciu)
+            if target_db == 'SQLServer':
+                connection.execute("SET LOCK_TIMEOUT 1200000")
+                connection.execute("SET TEXTSIZE 66000000")
+                connection.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+                connection.execute("SET XACT_ABORT ON") 
 
-# 3. Przekazanie TYPÓW SQLALCHEMY do tworzenia tabeli (poprawna sekwencja)
-# Używamy tu słownika typów SQLALCHEMY!
-if not self.create_table_if_not_exists(engine, sqlalchemy_dtype_dict, df_to_load, table_name, schema, target_db):
-# ...
+            # # 1. Czyszczenie i transformacje DataFrame
+            df_to_load = df.copy() 
 
-Wniosek: Zostaw funkcję map_data_types taką, jaka jest. Napraw insert_data, aby rozdzieliła typy SQL Alchemy od typów Pandasa/NumPy, używając tych drugich w astype().
+            df_to_load = self.standardize_column_names(df_to_load) 
+            df_to_load = self.handle_nulls(df_to_load)
+            df_to_load = df_to_load.astype(str).replace({pd.NaT: None, 'nan': None}) 
+            
+            # 💥 KRYTYCZNA POPRAWKA: Rozdzielenie słowników typów
+            
+            # Słownik 1: Typy SQL Alchemy dla CREATE TABLE
+            # Ta funkcja zwraca obiekty CLOB, VARCHAR(length=...), które są NIEZGODNE z df.astype()
+            sqlalchemy_dtype_dict = self.map_data_types(df_to_load, target_db) 
+            
+            # Słownik 2: Typy Pandasa/NumPy dla df.astype()
+            # Musimy użyć typów, które rozumie Pandas (np. 'int64', 'str', 'float64')
+            numpy_dtype_dict = {}
+            # Pobieramy bazowe mapowanie typów Pandas/NumPy z Twojej klasy (Linia 334)
+            numpy_type_mappings = self.type_mappings.get(target_db) 
+            
+            for col_name in df_to_load.columns:
+                # W Pandas, jeśli kolumna jest typu 'object', to zazwyczaj jest to ciąg lub data/czas
+                dtype = df_to_load[col_name].dtype.name
+                
+                # Używamy mapowania z type_mappings (Linia 334)
+                if dtype in numpy_type_mappings:
+                    numpy_dtype_dict[col_name] = numpy_type_mappings[dtype]
+                elif 'datetime' in dtype:
+                     numpy_dtype_dict[col_name] = 'datetime64[ns]'
+                else:
+                    # Dla bezpieczeństwa, resztę stringów mapujemy na 'str' (co jest aliasem do 'object')
+                    numpy_dtype_dict[col_name] = 'str' 
+            
+            self.logger.info(f"Wykonanie df_to_load.astype(numpy_dtype_dict)") 
+            # 💥 Używamy słownika typów Pandasa/NumPy (np. {'KOL1': 'int64', 'KOL2': 'str'})
+            df_to_load = df_to_load.astype(numpy_dtype_dict) 
+            self.logger.info(f"df_to_load.astype(numpy_dtype_dict) - done") 
+            
+            # 2. Zarządzanie schematem i tabelą (używamy typów SQL Alchemy!)
+            
+            # Używamy typów SQL Alchemy dla tworzenia tabeli
+            if not self.create_table_if_not_exists(engine, sqlalchemy_dtype_dict, df_to_load, table_name, schema, target_db):
+                 if if_exists == 'replace':
+                     connection.execute(f'DROP TABLE "{schema}"."{table_name}"')
+                     self.create_table_if_not_exists(engine, sqlalchemy_dtype_dict, df_to_load, table_name, schema, target_db)
+                 elif if_exists == 'truncate':
+                     connection.execute(f'TRUNCATE TABLE "{schema}"."{table_name}"')
+            
+            self.check_column_size(engine, df_to_load, table_name, schema, target_db)
+            
+            # 3. Ładowanie partii (Batching)
+            total_rows = len(df_to_load)
+            # ... (Twój kod do obsługi pustego DataFrame)
+            
+            full_batches = total_rows // batch_size
+            last_batch_size = total_rows % batch_size
+            last_batch = None
+            
+            loaded_rows = 0
+            
+            # Przetwarzanie pełnych partii
+            for batch_num in range(full_batches):
+                # ... (Twój kod wycinający batch i logujący postęp)
+                start = batch_num * batch_size
+                end = start + batch_size
+                batch = df_to_load.iloc[start:end].copy()
+
+                # --- WŁAŚCIWE WSTAWIANIE PARTII Z UŻYCIEM NOWEJ METODY (LOOKUP) ---
+                self._custom_merge_insert(
+                    target_db=target_db,
+                    batch=batch,
+                    table=table_name,
+                    schema=schema,
+                    lookup_keys=lookup_keys, 
+                    conn=connection 
+                )
+                
+                loaded_rows += len(batch)
+                del batch
+                gc.collect()
+
+            # 4. Przetwarzanie ostatniej partii (jeśli istnieje)
+            if last_batch_size > 0:
+                start = full_batches * batch_size
+                last_batch = df_to_load.iloc[start:total_rows].copy()
+
+                self.logger.info(f"Rozpoczynam przetwarzanie ostatniej partii...")
+                gc.collect()
+                
+                self._custom_merge_insert(
+                    target_db=target_db,
+                    batch=last_batch,
+                    table=table_name,
+                    schema=schema,
+                    lookup_keys=lookup_keys, 
+                    conn=connection
+                )
+                
+                loaded_rows += len(last_batch)
+                del last_batch
+                gc.collect()
+            
+            # 5. Kontrola i Logowanie Sukcesu
+            # ... (Twój kod do logowania sukcesu)
+            self.logger.info(f"Załadowano {loaded_rows} z {total_rows} wierszy.")
+
+    except Exception as e:
+        self.logger.error(f"Krytyczny błąd w metodzie insert_data: {e}")
+        raise
+    finally:
+        # ... (Twój kod do czyszczenia engine)
+        if 'engine' in locals():
+            self.logger.info("Zamykanie puli połączeń dla bazy docelowej.")
+
+
+
+Oto pełny, poprawny kod funkcji map_data_types.
+Została ona przygotowana tak, aby zwracać obiekty typów SQLAlchemy (takie jak VARCHAR, CLOB, Integer). Jest to niezbędne, aby Twoja funkcja create_table_if_not_exists mogła poprawnie odczytać właściwości (np. długość kolumny) i wygenerować odpowiedni kod SQL (np. VARCHAR2(500)).
+> Ważne: Pamiętaj, że wynik tej funkcji przekazujemy do create_table..., ale NIE używamy go już w df.astype() (zgodnie z poprawką w poprzednim kroku).
+> 
+📄 Kod do wklejenia (w klasie DatabaseManager)
+Musisz upewnić się, że na początku pliku masz odpowiednie importy z biblioteki sqlalchemy.
+from sqlalchemy.types import Integer, Float, String, Date, DateTime, Boolean, BigInteger, Text
+from sqlalchemy.dialects.oracle import VARCHAR2, CLOB, NUMBER
+from sqlalchemy.dialects.mssql import NVARCHAR, DATETIME2
+
+# ... wewnątrz klasy DatabaseManager ...
+
+def map_data_types(self, df: pd.DataFrame, target_db: str) -> dict:
+    """
+    Mapuje typy danych Pandas na obiekty typów SQLAlchemy.
+    Służy do generowania struktury tabeli (CREATE TABLE).
+    """
+    
+    # Pomocnicza funkcja do obliczania długości stringów
+    def get_varchar_length(series):
+        if series.empty:
+            return 100 # Domyślna długość dla pustych kolumn
+            
+        # Obliczamy maksymalną długość w kolumnie
+        max_len = series.astype(str).map(len).max()
+        
+        if pd.isna(max_len):
+            return 100
+            
+        # Dodajemy margines bezpieczeństwa (np. 20%), ale nie przekraczamy limitów
+        # Integery w Pythonie nie mają limitu, ale bazy tak
+        safe_length = int(max_len * 1.2) 
+        return safe_length
+
+    dtype_dict = {}
+    target_db_lower = target_db.lower()
+
+    for column in df.columns:
+        # Pobieramy typ pandasowy
+        pandas_dtype = df[column].dtype.name
+        
+        # --- Logika dla ORACLE ---
+        if target_db_lower == 'oracle':
+            if 'int' in pandas_dtype:
+                dtype_dict[column] = Integer() # Lub NUMBER(38) w definicji SQL
+            elif 'float' in pandas_dtype:
+                dtype_dict[column] = Float()
+            elif 'datetime' in pandas_dtype:
+                dtype_dict[column] = DateTime() # Mapuje na TIMESTAMP/DATE
+            elif 'bool' in pandas_dtype:
+                dtype_dict[column] = Integer() # Oracle nie ma BOOLEAN, używamy NUMBER(1)
+            else:
+                # String / Object
+                length = get_varchar_length(df[column])
+                if length > 4000:
+                    dtype_dict[column] = CLOB()
+                else:
+                    # Minimum 1, maksimum 4000 dla VARCHAR2 w SQL (chyba że MAX_STRING_SIZE=EXTENDED)
+                    final_len = max(1, min(length, 4000))
+                    dtype_dict[column] = VARCHAR2(final_len)
+
+        # --- Logika dla SQL SERVER ---
+        elif target_db_lower == 'sqlserver':
+            if 'int' in pandas_dtype:
+                dtype_dict[column] = BigInteger()
+            elif 'float' in pandas_dtype:
+                dtype_dict[column] = Float()
+            elif 'datetime' in pandas_dtype:
+                dtype_dict[column] = DATETIME2()
+            elif 'bool' in pandas_dtype:
+                dtype_dict[column] = Boolean() # SQL Server ma BIT
+            else:
+                # String / Object
+                length = get_varchar_length(df[column])
+                if length > 4000:
+                    dtype_dict[column] = NVARCHAR(None) # NVARCHAR(MAX)
+                else:
+                    dtype_dict[column] = NVARCHAR(max(1, length))
+
+        # --- Logika dla IMPALA ---
+        elif target_db_lower == 'impala':
+            if 'int' in pandas_dtype:
+                dtype_dict[column] = BigInteger()
+            elif 'float' in pandas_dtype:
+                dtype_dict[column] = Float()
+            elif 'datetime' in pandas_dtype:
+                dtype_dict[column] = String(None) # Impala często woli String dla timestampów przy insercie, lub TIMESTAMP
+            elif 'bool' in pandas_dtype:
+                dtype_dict[column] = Boolean()
+            else:
+                # Impala STRING (bez długości) lub VARCHAR(n)
+                # Często bezpieczniej użyć String, chyba że zależy Ci na limitach
+                dtype_dict[column] = String(None)
+
+        # --- Domyślna logika (fallback) ---
+        else:
+            # Domyślne mapowanie SQLAlchemy
+            if 'int' in pandas_dtype:
+                dtype_dict[column] = Integer()
+            elif 'float' in pandas_dtype:
+                dtype_dict[column] = Float()
+            elif 'datetime' in pandas_dtype:
+                dtype_dict[column] = DateTime()
+            else:
+                length = get_varchar_length(df[column])
+                dtype_dict[column] = String(length)
+
+    return dtype_dict
+
+🔍 Co ulepszyłem względem Twojej wersji ze zdjęcia?
+ * Dynamiczne obliczanie długości: Dodałem wewnętrzną funkcję get_varchar_length, która oblicza rzeczywistą długość danych w kolumnie i dodaje margines. Dzięki temu nie tworzysz wszędzie VARCHAR(4000) ani nie ucinasz danych.
+ * Poprawne obiekty SQLAlchemy: Funkcja zwraca instancje klas (np. VARCHAR2(50)), a nie stringi. To kluczowe dla działania poprawionej funkcji create_table_if_not_exists.
+ * Obsługa specyficzna dla baz:
+   * Oracle: Rozróżnia VARCHAR2 (do 4000 znaków) i CLOB (powyżej).
+   * SQL Server: Używa NVARCHAR (dla polskich znaków) i NVARCHAR(MAX) (oznaczone jako None) dla długich tekstów.
+Teraz, mając tę funkcję oraz poprawioną insert_data (gdzie rozdzieliliśmy typy SQL od typów Pandas), Twój kod powinien działać stabilnie.
