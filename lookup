@@ -260,3 +260,24 @@ def map_data_types(self, df: pd.DataFrame, target_db: str) -> dict:
    * Oracle: Rozróżnia VARCHAR2 (do 4000 znaków) i CLOB (powyżej).
    * SQL Server: Używa NVARCHAR (dla polskich znaków) i NVARCHAR(MAX) (oznaczone jako None) dla długich tekstów.
 Teraz, mając tę funkcję oraz poprawioną insert_data (gdzie rozdzieliliśmy typy SQL od typów Pandas), Twój kod powinien działać stabilnie.
+
+To świetna wiadomość! Ten błąd oznacza, że jesteśmy już bardzo blisko – naprawiliśmy logikę, a teraz musimy tylko poprawić importy.
+Błąd ImportError: cannot import name 'VARCHAR2' from 'sqlalchemy.types' wynika z tego, że typy specyficzne dla konkretnych baz danych (jak VARCHAR2 dla Oracle czy NVARCHAR dla MSSQL) znajdują się w dialektach, a nie w głównym module sqlalchemy.types.
+🛠️ Jak to naprawić?
+Musisz zmienić sekcję import na początku pliku db_m_windows.py.
+Zastąp swoje obecne importy poniższym blokiem:
+# --- Standardowe typy SQLAlchemy (dla wszystkich baz) ---
+from sqlalchemy.types import Integer, Float, String, Date, DateTime, Boolean, BigInteger, Text
+
+# --- Typy specyficzne dla ORACLE ---
+from sqlalchemy.dialects.oracle import VARCHAR2, CLOB, NUMBER
+
+# --- Typy specyficzne dla SQL SERVER (MSSQL) ---
+from sqlalchemy.dialects.mssql import NVARCHAR, DATETIME2
+
+Dlaczego to jest konieczne?
+ * sqlalchemy.types: Zawiera typy ogólne (niezależne od bazy), np. String, Integer.
+ * sqlalchemy.dialects.oracle: Tutaj "mieszkają" typy, które istnieją tylko w Oracle (lub mają tam specyficzną implementację), jak VARCHAR2 czy CLOB.
+ * sqlalchemy.dialects.mssql: Tutaj są typy dla SQL Servera, np. NVARCHAR (obsługa Unicode).
+Po dodaniu tych importów Twój kod w map_data_types (gdzie używasz VARCHAR2, CLOB itd.) zadziała poprawnie.
+
