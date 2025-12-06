@@ -1,58 +1,82 @@
-Masz rację, jeśli wprowadziłeś zmiany, a błąd jest ten sam (Cannot interpret 'VARCHAR(length=19)'), oznacza to, że problem leży w sposobie generowania definicji kolumn dla Oracle, a nie w samym sprawdzeniu typu. W Twoim kodzie widzę, że polegasz na obiektach typu SQLAlchemy do pobrania długości (col_type.length), co jest dobre, ale sposób, w jaki te obiekty są używane w ciągu znaków SQL, jest prawdopodobnie nieprawidłowy dla Twojej wersji bazy danych lub sterownika.
-Problem tkwi w tym, że sterownik Oracle w SQLAlchemy nie rozpoznaje ciągu 'VARCHAR(length=19)' jako poprawnej definicji kolumny, ponieważ oczekuje czystego typu SQL (np. VARCHAR2(19)) lub obiektu typu SQLAlchemy.
-Przeanalizujmy, jak to powinno wyglądać, koncentrując się na logice mapowania typu w create_table_if_not_exists (linie 577-590).
-🛠️ Poprawa Logiki Mapowania Typów dla Oracle
-Ponieważ Twoje wcześniejsze próby z isinstance były problematyczne, a nowsza próba z prostym formatowaniem ciągu zawiodła, musimy bezpiecznie wyodrębnić długość i użyć poprawnej nazwy typu dla Oracle (VARCHAR2).
-Zastąp logikę dla target_db.lower() == 'oracle' w create_table_if_not_exists (linie 577-590) poniższą, bardziej defensywną wersją:
-# Wewnątrz def create_table_if_not_exists (linia ~577)
+Masz absolutną rację. Jeśli dodałeś logowanie w create_table_if_not_exists, a ono się nie pojawia, a błąd Cannot interpret 'VARCHAR(length=19)' nadal występuje, to problem musi leżeć wcześniej – w miejscu, gdzie te typy są przygotowywane.
+Lokalizacja błędu: Metoda map_data_types (około linii 1151 w insert_data) lub wcześniej w insert_data.
+🚨 Analiza Błędu w insert_data
+Spójrzmy na ten fragment kodu w insert_data (linia 1146-1152):
+# Linia 1146
+# Czyszczenie nazw kolumn i typów (jak na zdjęciach)
+df_to_load = self.standardize_column_names(df_to_load) 
+df_to_load = self.handle_nulls(df_to_load)
+df_to_load = df_to_load.astype(str).replace({pd.NaT: None, 'nan': None}) 
 
-if target_db.lower() == 'oracle':
-    for col_name, col_type in column_types.items():
-        col_name_sql = f'"{col_name}"' # Nazwy kolumn w cudzysłowach
-        col_type_str = str(col_type).upper() 
-        columns_def.append("") # Dodajemy placeholder
+# Linia 1150
+# Mapowanie typów i pobranie kolumn_def dla CREATE TABLE
+dtype_dict = self.map_data_types(df_to_load, target_db) 
+self.logger.info(f"df_to_load.astype(dtype_dict)") # Ten log jest niepoprawny, bo to jest string
+df_to_load = df_to_load.astype(dtype_dict) 
+# Linia 1154
+self.logger.info(f"df_to_load.astype(dtype_dict) - done") 
 
-        # 💥 POPRAWKA DLA TYPÓW Z DŁUGOŚCIĄ (VARCHAR/STRING)
-        if 'VARCHAR' in col_type_str or 'STRING' in col_type_str:
-            
-            # Próbujemy pobrać długość. Jeśli to obiekt SQLAlchemy, ma atrybut 'length'.
-            # Jeśli to inny obiekt, domyślnie 255.
-            length = getattr(col_type, 'length', 255) 
-            
-            # W Oracle używamy VARCHAR2, maksymalna długość 4000
-            if length <= 4000:
-                # Używamy czystego typu SQL
-                columns_def[-1] = f'{col_name_sql} VARCHAR2({length})' 
-            else:
-                # Używamy CLOB dla większych danych
-                columns_def[-1] = f'{col_name_sql} CLOB'
+Hipoteza błędu:
+Błąd Cannot interpret 'VARCHAR(length=19)' pojawia się w metodzie insert_data w linii 1153: df_to_load = df_to_load.astype(dtype_dict).
+ * Twoja metoda map_data_types (widać ją na pierwszym zdjęciu, linie 353-363) tworzy dtype_dict zawierający mapowania kolumn na obiekty typów SQLAlchemy (np. VARCHAR(length=...)).
+ * pd.DataFrame.astype() NIE obsługuje bezpośrednio obiektów typów SQLAlchemy (takich jak VARCHAR(19)). Oczekuje on albo nazw typów Pythona/NumPy/Pandas (np. 'int64', 'float64', 'datetime64[ns]') lub natywnych obiektów typów Pythona (int, float, datetime.date).
+ * Kiedy Pandas widzi obiekt VARCHAR(19) w dtype_dict, próbuje skonwertować go na ciąg znaków, co daje 'VARCHAR(length=19)' (lub coś podobnego), a następnie Pandas próbuje użyć tego ciągu jako typu docelowego, co kończy się błędem interpretacji.
+Kluczowe jest to, że musisz wykonać astype() używając TYPÓW PANDAS/NUMPY, a dopiero potem użyć TYPÓW SQLALCHEMY do utworzenia tabeli.
+🚀 Poprawka Implementacji
+Musimy rozdzielić słownik typów na dwa cele: jeden do transformacji DataFrame (numpy_dtype_dict) i drugi do definicji kolumn SQL (sqlalchemy_dtype_dict).
+Krok 1: Modyfikacja map_data_types
+Zmień logikę w map_data_types, aby tworzyła obiekty typu SQLAlchemy tylko dla kolumn typu 'object' (VARCHAR/STRING) i kolumn dla których konieczne jest określenie długości.
+Zaktualizuj kod map_data_types (ok. linii 353), aby zwracał SŁOWNIK TYPÓW SQLALCHEMY (do CREATE TABLE), a NIE SŁOWNIK TYPÓW NUMPY (do astype):
+# Wewnątrz def map_data_types(self, df: pd.DataFrame, target_db: str) -> Dict:
+# ...
+    # 💥 WAŻNE: W tym miejscu musisz upewnić się, że to co zwracasz
+    # to słownik zawierający OBIEKTY TYPÓW SQLALCHEMY, które Twoja metoda
+    # create_table_if_not_exists potrafi zinterpretować.
+    
+    # Nie musimy modyfikować tego kodu, o ile on zwraca obiekty SQLALCHEMY 
+    # (np. VARCHAR, DECIMAL, itp.), które są potem przekazywane do create_table_if_not_exists. 
+    # PROBLEM jest w insert_data, która używa tego do astype!
+# ...
 
-        # 💥 OBSŁUGA TYPÓW LICZBOWYCH I DAT
-        elif 'INTEGER' in col_type_str:
-            columns_def[-1] = f'{col_name_sql} NUMBER(38)' # Odpowiednik BIGINT
-        elif 'FLOAT' in col_type_str or 'NUMBER' in col_type_str:
-            columns_def[-1] = f'{col_name_sql} NUMBER'
-        elif 'TIMESTAMP' in col_type_str or 'DATETIME' in col_type_str:
-            columns_def[-1] = f'{col_name_sql} TIMESTAMP'
-        elif 'DATE' in col_type_str:
-            columns_def[-1] = f'{col_name_sql} DATE'
-        elif 'BOOLEAN' in col_type_str:
-            columns_def[-1] = f'{col_name_sql} NUMBER(1)' 
-        
-        # 💥 Zabezpieczenie na wypadek braku przypisania (powinno być usunięte w końcowej wersji)
-        if not columns_def[-1]:
-             self.logger.warning(f"Nieznany typ dla kolumny {col_name}: {col_type_str}. Domyślnie VARCHAR2(100)")
-             columns_def[-1] = f'{col_name_sql} VARCHAR2(100)'
+Krok 2: Modyfikacja insert_data (Naprawienie linii 1153)
+W funkcji insert_data, w miejscu, w którym wywołujesz df_to_load.astype(dtype_dict), musisz podać słownik typów Pandasa/Numpy, a nie typów SQL Alchemy.
+Zastąp linie 1151-1153 w insert_data:
+# --- Fragment insert_data (wokół linii 1151) ---
 
-    # ... dalsza część funkcji
+# 1. Pobranie SŁOWNIKA TYPÓW SQLALCHEMY do CREATE TABLE (Twoja istniejąca logika)
+sqlalchemy_dtype_dict = self.map_data_types(df_to_load, target_db) 
 
-🎯 Kluczowe punkty do sprawdzenia:
- * Potwierdź, co zwraca map_data_types (Linia 1151):
-   * Jeśli zwraca obiekty SQLAlchemy (np. sqlalchemy.VARCHAR(19)), to Twoja poprzednia logika oparta na col_type.length była poprawna, ale problemem było to, że Twój kod w linii 580 nie był w stanie uzyskać dostępu do VARCHAR (bo nie został zaimportowany).
-   * Jeśli zwraca ciągi znaków (np. 'VARCHAR(19)'), to nowa logika z getattr(col_type, 'length', 255) powinna działać, bo nie polega na istnieniu atrybutu, tylko na domyślnej wartości.
-   Ponieważ błąd mówi Cannot interpret 'VARCHAR(length=19)', oznacza to, że gdzieś wcześniej (prawdopodobnie w map_data_types lub w sekcji df_to_load.astype(dtype_dict) w insert_data) typ jest konwertowany na ten nieprawidłowy ciąg znaków, a następnie przekazywany do funkcji create_table.
- * Użyj repr() do debugowania:
-   W metodzie create_table_if_not_exists, przed pętlą for col_name, col_type in column_types.items():, dodaj:
-   self.logger.info(f"Typy kolumn: {repr(column_types)}")
+# 2. Utworzenie SŁOWNIKA TYPÓW NUMPY/PANDAS do operacji df.astype()
+# Wyciągamy nazwy typów Pandasa/NumPy z Twojej wewnętrznej mapy type_mappings (Linia 333)
+numpy_type_mappings = self.type_mappings.get(target_db) # Zakładam, że type_mappings jest dostępny jako self.type_mappings
 
-   Następnie sprawdź w logach, jak dokładnie wygląda obiekt col_type dla tej problematycznej kolumny. Jeśli wygląda on na obiekt SQLAlchemy, upewnij się, że używasz VARCHAR2 w ciągu SQL.
+# Tworzymy słownik dla df.astype()
+numpy_dtype_dict = {}
+for col_name, sql_type_obj in sqlalchemy_dtype_dict.items():
+    # Znajdź typ Pandasa/NumPy, który odpowiada oryginalnemu typowi kolumny
+    original_dtype = df_to_load[col_name].dtype.name
+    
+    # Mapowanie na typ Pandasa/NumPy
+    if original_dtype in numpy_type_mappings:
+        numpy_dtype_dict[col_name] = numpy_type_mappings[original_dtype]
+    elif 'datetime' in original_dtype:
+        numpy_dtype_dict[col_name] = 'datetime64[ns]'
+    # Jeśli typ to object i ma być string/varchar, to często jest już OK, ale dla bezpieczeństwa
+    elif original_dtype == 'object':
+         # Możesz tutaj zostawić go jako 'object' lub użyć 'str'
+         numpy_dtype_dict[col_name] = 'str' 
+
+
+self.logger.info(f"Wykonanie df_to_load.astype(numpy_dtype_dict)") 
+# 💥 POPRAWKA: Użycie słownika typów Pandasa/NumPy
+df_to_load = df_to_load.astype(numpy_dtype_dict) 
+
+self.logger.info(f"df_to_load.astype(numpy_dtype_dict) - done") 
+
+# 3. Przekazanie TYPÓW SQLALCHEMY do tworzenia tabeli (create_table_if_not_exists)
+# Ta funkcja użyje teraz poprawnego słownika typów SQL
+if not self.create_table_if_not_exists(engine, sqlalchemy_dtype_dict, df_to_load, table_name, schema, target_db):
+# ...
+
+Wniosek:
+Naprawiając linię 1153 w insert_data i używając tylko typów Pandas/NumPy w metodzie astype, usuniesz przyczynę błędu Cannot interpret 'VARCHAR(length=19)'. Wtedy Twoja funkcja create_table_if_not_exists otrzyma prawidłowe obiekty typów SQL Alchemy, które zostaną poprawnie sformatowane na potrzeby kwerendy CREATE TABLE.
