@@ -1,0 +1,277 @@
+Absolutnie. Widzę, że masz dobrze zorganizowaną klasę DatabaseManager i używasz zaawansowanych technik takich jak batching, dynamiczne mapowanie typów danych (map_data_types), obsługę połączeń i różne strategie wstawiania (Oracle, SQL Server, Impala).
+Poniżej przedstawiam pełny kod metody insert_data, łączący Twoją oryginalną logikę z proponowanym mechanizmem lookup/MERGE i korzystający z Twoich istniejących pomocniczych metod (jak te, które widać na zdjęciach).
+Ze względu na to, że nie mam dostępu do pełnej klasy i wszystkich Twoich metod, założyłem istnienie i poprawność Twoich wewnętrznych metod:
+ * _get_engine
+ * self.handle_nulls
+ * self.standardize_column_names
+ * self.map_data_types
+ * self.check_column_size
+ * self.create_table_if_not_exists
+ * self._custom_merge_insert (wklejona w poprzedniej odpowiedzi)
+🧩 Pełny kod metody insert_data (z Lookup/Merge)
+import pandas as pd
+import numpy as np
+import gc
+from typing import List, Optional
+
+# Założenie: Poniższa funkcja znajduje się w klasie DatabaseManager
+def insert_data(self, df: pd.DataFrame, target_db: str, table_name: str, 
+                schema: str, if_exists: str = 'append', batch_size: int = 1000000, 
+                verbose: bool = True, use_fast_executemany: bool = True, 
+                lookup_keys: Optional[List[str]] = None) -> None:
+    
+    """
+    Wstawia dane z DataFrame do bazy docelowej (target_db).
+    Obsługuje batching, czyszczenie danych, mapowanie typów oraz opcjonalny lookup (MERGE/NOT EXISTS).
+    
+    Args:
+        df (pd.DataFrame): DataFrame do wstawienia.
+        target_db (str): Nazwa bazy docelowej (np. 'Oracle', 'SQLServer', 'Impala').
+        table_name (str): Nazwa tabeli docelowej.
+        schema (str): Nazwa schematu docelowego.
+        if_exists (str): Jak obsłużyć istniejącą tabelę ('append', 'replace').
+        batch_size (int): Liczba rekordów w pojedynczej partii.
+        verbose (bool): Czy logować postęp.
+        use_fast_executemany (bool): Użycie optymalizacji dla SQL Server.
+        lookup_keys (Optional[List[str]]): Lista kluczy kolumn do użycia w lookup (INSERT WHERE NOT EXISTS).
+                                           Jeśli None, używa standardowego INSERT/APPEND.
+    """
+
+    self.logger.info(f"Rozpoczynanie wstawiania do {target_db}.{schema}.{table_name} (Liczba wierszy: {len(df)})")
+
+    # 1. Przygotowanie: Pobranie Engine i Połączenie
+    engine = self._get_engine(target_db) # Zakładam, że ta metoda działa
+    
+    try:
+        with engine.connect() as connection:
+            self.logger.info("Pomyślnie utworzone połączenie z bazą docelową.")
+            
+            # Ustawienia transakcyjne (jak widać na Twoim zdjęciu)
+            # W SQL Server, te ustawienia mogą być ważne
+            if target_db == 'SQLServer':
+                connection.execute("SET LOCK_TIMEOUT 1200000")
+                connection.execute("SET TEXTSIZE 66000000")
+                connection.execute("SET TRANSACTION ISOLATION LEVEL READ COMMITTED")
+                connection.execute("SET XACT_ABORT ON") # Ważne dla transakcji
+
+            # 2. Czyszczenie i transformacje DataFrame
+            df_to_load = df.copy() # Pracujemy na kopii
+
+            # Czyszczenie nazw kolumn i typów (jak na zdjęciach)
+            df_to_load = self.standardize_column_names(df_to_load) 
+            df_to_load = self.handle_nulls(df_to_load)
+            df_to_load = df_to_load.astype(str).replace({pd.NaT: None, 'nan': None}) # Typowe czyszczenie przed konwersją
+            
+            # Mapowanie typów i pobranie kolumn_def dla CREATE TABLE
+            dtype_dict = self.map_data_types(df_to_load, target_db) 
+            df_to_load = df_to_load.astype(dtype_dict)
+            
+            # 3. Zarządzanie schematem i tabelą
+            if not self.create_table_if_not_exists(self, engine, df_to_load, table_name, schema, target_db):
+                 # Możliwość obsługi 'replace' lub 'append' przez drop/truncate jeśli if_exists != 'append'
+                 if if_exists == 'replace':
+                     connection.execute(f'DROP TABLE "{schema}"."{table_name}"')
+                     self.create_table_if_not_exists(self, engine, df_to_load, table_name, schema, target_db)
+                 elif if_exists == 'truncate':
+                     connection.execute(f'TRUNCATE TABLE "{schema}"."{table_name}"')
+            
+            # Upewnienie się, że rozmiary kolumn VARCHAR są wystarczające
+            self.check_column_size(engine, df_to_load, table_name, schema, target_db)
+            
+            # 4. Ładowanie partii (Batching)
+            total_rows = len(df_to_load)
+            if total_rows == 0:
+                self.logger.warning("DataFrame jest pusty. Zakończenie wstawiania.")
+                return
+
+            full_batches = total_rows // batch_size
+            last_batch_size = total_rows % batch_size
+            last_batch = None
+            
+            loaded_rows = 0
+            
+            # Przetwarzanie pełnych partii
+            for batch_num in range(full_batches):
+                start = batch_num * batch_size
+                end = start + batch_size
+                batch = df_to_load.iloc[start:end].copy()
+                
+                # Opcjonalne zbieranie śmieci
+                if verbose and batch_num % 10 == 0:
+                    gc.collect()
+
+                if verbose:
+                    current_progress = (end / total_rows) * 100
+                    self.logger.info(f"Wstawianie partii {batch_num+1}/{full_batches+1} ({len(batch)} wierszy) do {schema}.{table_name}. Postęp: {current_progress:.2f}%")
+                
+                # --- WŁAŚCIWE WSTAWIANIE PARTII Z UŻYCIEM NOWEJ METODY ---
+                # Używamy metody merge/insert, która obsłuży zarówno standardowy INSERT, jak i INSERT WHERE NOT EXISTS (lookup)
+                self._custom_merge_insert(
+                    target_db=target_db,
+                    batch=batch,
+                    table=table_name,
+                    schema=schema,
+                    lookup_keys=lookup_keys, # Klucze lookup są tu przekazywane
+                    conn=connection
+                )
+                
+                loaded_rows += len(batch)
+                del batch
+                gc.collect()
+
+
+            # 5. Przetwarzanie ostatniej partii (jeśli istnieje)
+            if last_batch_size > 0:
+                start = full_batches * batch_size
+                last_batch = df_to_load.iloc[start:total_rows].copy()
+
+                self.logger.info(f"Rozpoczynam przetwarzanie ostatniej partii (Liczba wierszy: {len(last_batch)})")
+                gc.collect()
+                
+                # --- WŁAŚCIWE WSTAWIANIE OSTATNIEJ PARTII Z UŻYCIEM NOWEJ METODY ---
+                self._custom_merge_insert(
+                    target_db=target_db,
+                    batch=last_batch,
+                    table=table_name,
+                    schema=schema,
+                    lookup_keys=lookup_keys, # Klucze lookup są tu przekazywane
+                    conn=connection
+                )
+                
+                loaded_rows += len(last_batch)
+                del last_batch
+                gc.collect()
+            
+            # 6. Kontrola i Logowanie Sukcesu
+            self.logger.info(f"Załadowano {loaded_rows} z {total_rows} wierszy.")
+            if loaded_rows != total_rows:
+                self.logger.warning(f"Różnica w załadowanej liczbie wierszy: {total_rows - loaded_rows} wierszy.")
+            else:
+                self.logger.info(f"Pomyślnie załadowano wszystkie {loaded_rows} wierszy do {schema}.{table_name}.")
+
+    except Exception as e:
+        self.logger.error(f"Krytyczny błąd w metodzie insert_data: {e}")
+        # Możesz dodać rollback, jeśli używasz ręcznych transakcji, ale przy with engine.connect() jest to często automatyczne.
+        raise
+    finally:
+        if 'engine' in locals():
+            self.logger.info("Zamykanie puli połączeń dla bazy docelowej.")
+            # engine.dispose() - zależy od Twojej implementacji get_engine
+
+📋 Implementacja _custom_merge_insert
+Pamiętaj, aby wkleić również kod funkcji _custom_merge_insert, którą przedstawiłem wcześniej, ponieważ jest ona kluczowa dla obsługi klucza lookup_keys:
+# --- Implementacja funkcji z poprzedniej odpowiedzi (skrót) ---
+def _custom_merge_insert(self, target_db: str, batch: pd.DataFrame, table: str, schema: str,
+                         lookup_keys: List[str], conn) -> None:
+    # ... (kod, który tworzy tabelę tymczasową, wykonuje MERGE/NOT EXISTS INSERT i usuwa tabelę)
+    pass # Pamiętaj, aby wkleić tu faktyczną implementację
+
+Oczywiście, oto pełny kod dla funkcji _custom_merge_insert, który implementuje logikę INSERT WHERE NOT EXISTS (lookup) z użyciem tabeli tymczasowej.
+Funkcja ta dynamicznie generuje i wykonuje kwerendy SQL (MERGE dla Oracle, INSERT INTO ... NOT EXISTS dla innych) po wczytaniu partii danych do tymczasowej tabeli w bazie docelowej.
+import pandas as pd
+import uuid
+from typing import List
+
+# --- Funkcja _custom_merge_insert (w klasie DatabaseManager) ---
+
+def _custom_merge_insert(self, target_db: str, batch: pd.DataFrame, table: str, schema: str,
+                         lookup_keys: List[str], conn) -> None:
+    
+    """
+    Realizuje wstawienie rekordów, które nie istnieją (lookup)
+    z użyciem tabeli tymczasowej i kwerendy MERGE/NOT EXISTS.
+    Jeśli lookup_keys jest puste, używa standardowego INSERT (poprzez to_sql).
+    
+    Args:
+        target_db (str): Nazwa bazy docelowej (np. 'Oracle', 'SQLServer', 'Impala').
+        batch (pd.DataFrame): Partia danych do wstawienia.
+        table (str): Nazwa tabeli docelowej.
+        schema (str): Nazwa schematu docelowego.
+        lookup_keys (List[str]): Lista kluczy kolumn do użycia w lookup.
+        conn: Aktywne połączenie SQLAlchemy (z engine.connect()).
+    """
+    
+    # 1. Sprawdzenie, czy ma być użyty lookup
+    if not lookup_keys:
+        self.logger.info("Brak kluczy lookup. Użycie standardowego wstawiania (to_sql).")
+        # Możesz tutaj zastąpić to_sql swoimi niestandardowymi funkcjami insertującymi,
+        # np. self._custom_insert_oracle(...)
+        batch.to_sql(table, conn, schema=schema, if_exists='append', index=False)
+        return
+
+    # 2. Przygotowanie: Tabela tymczasowa
+    # Użycie UUID gwarantuje unikalność nazwy tymczasowej tabeli
+    temp_table_name = f"TEMP_{uuid.uuid4().hex}"
+    
+    self.logger.info(f"Tworzenie tymczasowej tabeli {temp_table_name} dla partii ({len(batch)} rekordów).")
+    
+    try:
+        # Użycie to_sql do szybkiego utworzenia tabeli tymczasowej z danymi
+        batch.to_sql(temp_table_name, conn, schema=schema, if_exists='replace', index=False)
+        
+        # Przygotowanie listy kolumn i nazw tabel w formacie SQL z cudzysłowami
+        # Zakładamy, że używasz cudzysłowów dla nazw kolumn generowanych przez to_sql i w bazie
+        all_cols_quoted = [f'"{col}"' for col in batch.columns]
+        all_cols_str = ", ".join(all_cols_quoted)
+        
+        # Przygotowanie warunku połączenia (JOIN)
+        join_conditions = " AND ".join([f"T.\"{key}\" = S.\"{key}\"" for key in lookup_keys])
+        
+        sql_query = ""
+        
+        if target_db == 'Oracle':
+            # --- Oracle: Użycie MERGE ---
+            
+            # W MERGE VALUES musimy odwołać się do kolumn w tabeli źródłowej (S)
+            values_cols = ', '.join([f"S.{col}" for col in all_cols_quoted])
+            
+            sql_query = f"""
+            MERGE INTO "{schema}"."{table}" T
+            USING "{schema}"."{temp_table_name}" S
+            ON ({join_conditions})
+            WHEN NOT MATCHED THEN
+                INSERT ({all_cols_str})
+                VALUES ({values_cols})
+            """
+            
+        elif target_db in ['SQLServer', 'Impala']:
+            # --- SQL Server / Impala: Użycie NOT EXISTS (bezpieczna alternatywa) ---
+            
+            # Warunek NOT EXISTS
+            where_not_exists = " AND ".join([f"T.\"{key}\" = S.\"{key}\"" for key in lookup_keys])
+            
+            # Wybór kolumn z tabeli źródłowej (S)
+            select_cols = ', '.join([f"S.{col}" for col in all_cols_quoted])
+            
+            sql_query = f"""
+            INSERT INTO "{schema}"."{table}" ({all_cols_str})
+            SELECT
+                {select_cols}
+            FROM
+                "{schema}"."{temp_table_name}" S
+            WHERE NOT EXISTS (
+                SELECT 1
+                FROM "{schema}"."{table}" T
+                WHERE {where_not_exists}
+            )
+            """
+        else:
+            raise NotImplementedError(f"Lookup/MERGE nie jest zaimplementowany dla bazy danych: {target_db}")
+
+        self.logger.info("Wykonanie operacji MERGE/NOT EXISTS INSERT.")
+        conn.execute(sql_query)
+        
+    finally:
+        # 3. Czyszczenie: Usunięcie tabeli tymczasowej (ZAWSZE musi się wykonać)
+        self.logger.info(f"Usuwanie tymczasowej tabeli {temp_table_name}.")
+        
+        try:
+            # Użycie parametru 'schema' jest ważne
+            conn.execute(f'DROP TABLE "{schema}"."{temp_table_name}"')
+        except Exception as e:
+            self.logger.error(f"Nie udało się usunąć tabeli tymczasowej {temp_table_name}: {e}")
+
+Pamiętaj, aby tę funkcję umieścić wewnątrz Twojej klasy DatabaseManager i upewnić się, że ma dostęp do:
+ * self.logger (do logowania).
+ * Bibliotek pandas, uuid oraz typing.
+ * Aktywnego połączenia conn przekazanego z funkcji insert_data.
