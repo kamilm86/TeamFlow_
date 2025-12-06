@@ -1,71 +1,54 @@
-Świetnie, że udało Ci się zlokalizować problem!
-Patrząc na Twój kod w sekcji Oracle (linie 577-586) w metodzie create_table_if_not_exists, błąd Cannot interpret 'VARCHAR(length=19)' najprawdopodobniej wynika z błędnego połączenia logiki isinstance z tworzeniem ciągów znaków SQL.
-Masz tam ten fragment:
-# Linia 577 - Oracle
-if target_db.lower() == 'oracle':
-    for col_name, col_type in column_types.items():
-        col_name_sql = f'"{col_name}"'
-        
-        if isinstance(col_type, col_type.VARCHAR): # Prawdopodobnie tutaj jest problem z obiektem
-            length = col_type.length if col_type.length <= 4000 else 4000
-            # Prawdopodobnie tu jest błąd w formatowaniu, lub col_type nie ma atrybutu length
-            columns_def.append(f'{col_name_sql} VARCHAR2({length})') 
-        # ... inne typy
+Masz rację. Problem jest w linii 580 (i podobnych) w Twojej oryginalnej funkcji create_table_if_not_exists.
+Błąd jest spowodowany próbą użycia obiektu, który nie jest zdefiniowany ani zaimportowany w tym kontekście, co prowadzi do błędnej interpretacji przez SQLAlchemy podczas próby utworzenia tabeli.
+1. Dlaczego błąd występuje
+Linia 580 w Twoim kodzie wygląda tak:
+        if isinstance(col_type, col_type.VARCHAR):
 
-Problem polega na tym, że:
- * Typy są ciągami znaków, nie obiektami SQLAlchemy: Twoja metoda self.map_data_types (która jest wywoływana w linii 1151) prawdopodobnie zwraca typy jako ciągi znaków (np. 'VARCHAR(19)', 'INTEGER') lub obiekty typu Pandas lub Python, a nie jako obiekty klas SQLAlchemy (sqlalchemy.sql.sqltypes.VARCHAR).
- * Błędne użycie isinstance: if isinstance(col_type, col_type.VARCHAR): jest niepoprawną konstrukcją Pythona, ponieważ col_type jest zmienną przechowującą typ, a nie modułem z definicją klasy VARCHAR. Powinieneś użyć isinstance(col_type, VARCHAR) (gdzie VARCHAR jest zaimportowaną klasą SQLAlchemy) lub po prostu sprawdzać typ jako ciąg znaków (co robisz dalej).
-🛠️ Poprawiony kod dla sekcji Oracle
-Najbezpieczniej jest zmienić isinstance na sprawdzenie ciągu znaków i użyć metody getattr() do bezpiecznego pobierania długości, nawet jeśli col_type jest już ciągiem znaków lub innym obiektem bez atrybutu length.
-Wprowadź poprawki w liniach 577-586:
-# Linia 577
-if target_db.lower() == 'oracle':
-    for col_name, col_type in column_types.items():
-        col_name_sql = f'"{col_name}"'
+ * col_type jest zmienną: col_type przechowuje aktualny typ danych kolumny (np. Integer, Float lub VARCHAR(19)).
+ * Brak atrybutu VARCHAR: col_type (czyli obiekt typu danych) nie ma atrybutu o nazwie .VARCHAR. Jeśli col_type jest obiektem typu SQLAlchemy, powinieneś użyć klasy VARCHAR (zaimportowanej z sqlalchemy). Jeśli jest ciągiem znaków (co jest bardziej prawdopodobne), ta konstrukcja w ogóle nie działa.
+Ponieważ widzimy, że typy są traktowane jako ciągi (np. 'VARCHAR(length=19)'), bezpieczne jest przejście na logikę sprawdzania ciągu znaków zamiast używania isinstance dla obiektów typów SQLAlchemy.
+2. Poprawiony kod dla sekcji Oracle (Linie 577-590)
+Poniższy kod zastępuje problematyczne użycie isinstance i bezpiecznie tworzy ciągi SQL, co naprawi błąd:
+# Wewnątrz klasy DatabaseManager
+# def create_table_if_not_exists(...):
+
+# ...
+    if target_db.lower() == 'oracle':
+        # import sqlalchemy.types as types # Jeśli zechcesz używać obiektów
         
-        # 💥 POPRAWKA DLA VARCHAR I DŁUGOŚCI (Zastąp to, co masz w liniach 580-582)
-        # Sprawdzamy, czy typ jest typu 'VARCHAR' (lub zawiera tę nazwę)
-        col_type_str = str(col_type).upper()
-        
-        if 'VARCHAR' in col_type_str or 'STRING' in col_type_str:
-            # Bezpieczne pobieranie długości. Jeśli col_type to obiekt, używamy .length. 
-            # Jeśli jest to ciąg znaków, domyślnie ustawiamy bezpieczną długość.
-            length = getattr(col_type, 'length', 255) # Domyślna długość 255
-            
-            # W Oracle, VARCHAR2 ma limit 4000 bajtów (lub znaków, zależnie od ustawień bazy)
-            if length <= 4000:
-                columns_def.append(f'{col_name_sql} VARCHAR2({length})') 
-            else:
-                # Używamy CLOB dla bardzo długich ciągów w Oracle
-                columns_def.append(f'{col_name_sql} CLOB') 
+        for col_name, col_type in column_types.items():
+            col_name_sql = f'"{col_name}"' # Cudzysłowy dla Oracle
+            col_type_str = str(col_type).upper() # Konwersja na ciąg znaków (np. 'VARCHAR(19)')
+
+            # 💥 NAPRAWIONA LOGIKA: Zamiast isinstance, sprawdzamy ciąg znaków
+            if 'VARCHAR' in col_type_str or 'STRING' in col_type_str:
                 
-        # Kontynuujemy ze standardowymi typami (jak widać na Twoim zdjęciu)
-        elif 'INTEGER' in col_type_str:
-            columns_def.append(f'{col_name_sql} NUMBER(38)') # Zmieniono na NUMBER(38) dla BIGINT
-        elif 'NUMBER' in col_type_str:
-            columns_def.append(f'{col_name_sql} NUMBER')
-        elif 'FLOAT' in col_type_str:
-            columns_def.append(f'{col_name_sql} FLOAT')
-        elif 'TIMESTAMP' in col_type_str or 'DATETIME' in col_type_str:
-            columns_def.append(f'{col_name_sql} TIMESTAMP')
-        elif 'DATE' in col_type_str:
-            columns_def.append(f'{col_name_sql} DATE')
-        elif 'BOOLEAN' in col_type_str:
-            # Boola w Oracle często mapuje się na NUMBER(1)
-            columns_def.append(f'{col_name_sql} NUMBER(1)') 
-        else:
-            # Zabezpieczenie dla nieznanych typów
-            self.logger.warning(f"Nieznany typ {col_type_str} dla Oracle. Domyślnie VARCHAR2(100)")
-            columns_def.append(f'{col_name_sql} NVARCHAR2(100)')
+                # Bezpieczne pobieranie długości. Jeśli col_type ma atrybut length, użyj go.
+                length = getattr(col_type, 'length', 255) 
+                
+                # Ograniczenie długości do standardowego limitu VARCHAR2 w Oracle
+                if length <= 4000:
+                    columns_def.append(f'{col_name_sql} VARCHAR2({length})')
+                else:
+                    # CLOB dla długich ciągów
+                    columns_def.append(f'{col_name_sql} CLOB')
+                    
+            elif 'INTEGER' in col_type_str:
+                columns_def.append(f'{col_name_sql} NUMBER(38)')
+            elif 'NUMBER' in col_type_str or 'FLOAT' in col_type_str:
+                columns_def.append(f'{col_name_sql} NUMBER')
+            elif 'TIMESTAMP' in col_type_str or 'DATETIME' in col_type_str:
+                columns_def.append(f'{col_name_sql} TIMESTAMP')
+            elif 'DATE' in col_type_str:
+                columns_def.append(f'{col_name_sql} DATE')
+            elif 'BOOLEAN' in col_type_str:
+                columns_def.append(f'{col_name_sql} NUMBER(1)') 
+            else:
+                self.logger.warning(f"Nieznany typ {col_type_str} dla Oracle. Domyślnie VARCHAR2(100)")
+                columns_def.append(f'{col_name_sql} NVARCHAR2(100)')
 
-🎯 Dodatkowa uwaga na temat drugiego błędu
-Błąd: Wystąpił wyjątek: cannot unpack non-iterable bool object w zadaniu KDD_CALL
-Ten błąd pojawia się, gdy funkcja oczekuje krotki (np. return True, None), ale dostaje tylko pojedynczą wartość (np. return True).
-Twoja funkcja handle_task (linia 162) zwraca: return True, None oraz return False, None (po włączeniu obsługi błędów w linii 169):
-# Linia 162
-return True, None
-# Linia 172
-return False, None
+# ... dalsza część funkcji
 
-Jeśli w Twoim kodzie funkcja, która wywołuje handle_task (np. execute_parallel_tasks), próbuje rozpakować wynik jako status, message = handle_task(...), ale przypadkowo w którymś miejscu w kodzie starej wersji funkcja zwracała tylko return True, to ten błąd by się pojawił.
-Upewnij się, że we wszystkich ścieżkach wykonania (w tym w bloku except) handle_task zwraca krotkę (np. True, None lub False, error_msg). Zmiana, którą wprowadziłeś wcześniej (linia 162), powinna to naprawić, o ile nie ma innych miejsc, w których funkcja jest wywoływana i zwraca tylko bool.
+3. Co z błędem cannot unpack non-iterable bool object?
+Poprawienie logiki mapowania typów powinno rozwiązać pierwszy błąd. Drugi błąd (cannot unpack non-iterable bool object) jest prawdopodobnie spowodowany tym, że funkcja create_table_if_not_exists rzuciła wyjątek, a kod nadrzędny (insert_data lub handle_task) nie obsłużył tego poprawnie i próbował rozpakować prostą wartość logiczną (np. True lub False) jako krotkę.
+Ponieważ w Twoim kodzie create_table_if_not_exists nie zwraca żadnej wartości (tylko rzuca raise), to błąd VARCHAR jest źródłem całego niepowodzenia. Naprawienie mapowania typów powinno naprawić oba problemy, ponieważ kod w ogóle nie dojdzie do miejsca, w którym ten drugi, dziwny błąd jest generowany.
