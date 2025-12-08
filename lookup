@@ -1,37 +1,39 @@
-Tak, masz 100% racji. Problemem jest wartość <NA>.
-🔍 Co się dzieje?
- * Pandas i <NA>: Nowe wersje Pandasa używają specjalnego znacznika <NA> dla brakujących danych.
- * Konwersja na String: Kiedy w kodzie robisz df.astype(numpy_dtype_dict) (lub wcześniej astype(str)), ten znacznik zamienia się na dosłowny napis (string) o treści "<NA>".
- * Baza Danych (Oracle): Oracle otrzymuje polecenie: Wstaw do kolumny liczbowej (TIMEINIVR) tekst "<NA>".
- * Błąd: Oracle próbuje to sparsować jako liczbę, nie potrafi i rzuca błąd ORA-01722: invalid number (nieprawidłowa liczba).
-Błąd A value is required for bind parameter jest efektem ubocznym tego, jak SQLAlchemy gubi się przy mapowaniu błędnych danych w batchu.
-🛠️ Rozwiązanie: Czyszczenie <NA>
-Musimy zamienić wszystkie wystąpienia napisów "<NA>", 'nan', itp. na pythonowy None. SQLAlchemy zamieni None na SQL-owy NULL, który Oracle przyjmie bez problemu.
-Dodaj ten fragment kodu w funkcji insert_data, zaraz po wykonaniu astype.
-Poprawiony fragment insert_data (w pliku db_m_windows.py):
-            # ... (wcześniejszy kod)
-            
+Masz dobrą intuicję, ale w świecie Pythona i SQLAlchemy to właśnie None jest tłumaczony na SQL-owy NULL. Jeśli przekażesz tekst "NULL", Oracle potraktuje go jako napis i wyrzuci błąd, bo nie może wpisać tekstu do kolumny liczbowej.
+Błąd ORA-01722: invalid number oznacza, że mimo Twoich prób zamiany, w kolumnie, która w Oracle jest liczbą (np. TIMEINIVR lub CALLDURATION), nadal znajduje się jakiś tekst (np. pusty string '', spacja ' ' albo uparte '<NA>'), którego Oracle nie umie zamienić na liczbę.
+Samo .replace({'<NA>': None}) może nie zadziałać, jeśli <NA> jest częścią dłuższego napisu lub jeśli typ kolumny w Pandas to object.
+🛠️ Rozwiązanie: "Atomowe" czyszczenie liczb
+Musimy zrobić coś bardziej radykalnego: wymusić konwersję na liczby. Wszystko, co nie jest liczbą (tekst, śmieci, <NA>), zostanie zamienione na NaN, a potem na None.
+Wklej ten fragment w metodzie insert_data zamiast poprzedniego bloku czyszczenia (zaraz po astype).
             self.logger.info(f"Wykonanie df_to_load.astype(numpy_dtype_dict)") 
             df_to_load = df_to_load.astype(numpy_dtype_dict) 
             self.logger.info(f"df_to_load.astype(numpy_dtype_dict) - done") 
             
-            # 💥💥💥 DODAJ TO TUTAJ 💥💥💥
-            # Zamieniamy stringowe reprezentacje braków danych na prawdziwe None (SQL NULL)
-            # To naprawi błąd ORA-01722 i problem z "<NA>"
+            # 💥💥💥 NOWA, SKUTECZNIEJSZA METODA CZYSZCZENIA 💥💥💥
+            import numpy as np
+
+            # 1. Najpierw ogólne czyszczenie znanych tekstowych reprezentacji NULLi
             df_to_load = df_to_load.replace({
-                '<NA>': None, 
-                'nan': None, 
-                'NaN': None, 
-                'None': None,
-                'NaT': None,
-                pd.NA: None  # Na wypadek gdyby coś zostało jako obiekt pd.NA
+                '<NA>': np.nan, 'nan': np.nan, 'NaN': np.nan, 'None': np.nan, 'NaT': np.nan,
+                '': np.nan,  # Puste stringi też zamieniamy na NaN
+                ' ': np.nan  # Spacje też
             })
-            self.logger.info("Wyczyszczono wartości <NA> na None.")
+
+            # 2. BRUTALNE wymuszenie liczb dla kolumn, które mają trafić do Oracle jako liczby
+            # Sprawdzamy, które kolumny w mapowaniu (numpy_dtype_dict) są liczbowe
+            for col, dtype in numpy_dtype_dict.items():
+                if 'int' in dtype or 'float' in dtype:
+                    # errors='coerce' zamieni każde "<NA>", "brak", "błąd" na NaN
+                    df_to_load[col] = pd.to_numeric(df_to_load[col], errors='coerce')
+
+            # 3. Ostateczna zamiana NaN (float) na None (SQL NULL)
+            # where(cond, other) -> tam gdzie cond jest False, wstawia other.
+            # Czyli: tam gdzie NIE JEST null, zostaw wartość, w przeciwnym razie wstaw None.
+            df_to_load = df_to_load.where(pd.notnull(df_to_load), None)
+            
+            self.logger.info("Wyczyszczono dane: wymuszono typy liczbowe i zamieniono NaN na None.")
             # 💥💥💥 KONIEC POPRAWKI 💥💥💥
 
-            # 2. Zarządzanie schematem i tabelą
-            # ... (dalszy kod)
-
-Dlaczego pd.NA : None może nie wystarczyć?
-Jeśli wcześniej zrobiłeś astype(str) lub astype('string'), obiekt pd.NA zamienił się już w zwykły napis "<NA>". Dlatego w słowniku replace kluczowe jest podanie '<NA>' w cudzysłowie.
-Po dodaniu tego fragmentu, dane trafią do Oracle jako NULL, a błąd zniknie.
+Dlaczego to zadziała?
+ * pd.to_numeric(..., errors='coerce'): To jest klucz. Ta funkcja bierze kolumnę i próbuje zrobić z niej liczby. Jeśli napotka tekst <NA> (lub cokolwiek innego nieliczbowego), nie wyrzuci błędu, tylko wstawi tam NaN.
+ * df.where(pd.notnull(df), None): To jest najpewniejszy sposób w Pandasie, żeby zamienić NaN (którego bazy nie lubią) na pythonowe None (które SQLAlchemy kocha i zamienia na NULL).
+Teraz Oracle dostanie albo czystą liczbę, albo czysty NULL. Błąd ORA-01722 powinien zniknąć.
