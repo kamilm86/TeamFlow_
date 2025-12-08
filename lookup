@@ -262,3 +262,100 @@ Dlatego wywołując ją, musisz podać:
  * df_to_load
  * table_name... i resztę.
 Po dodaniu tego argumentu w tych 2-3 miejscach wywołania, błąd zniknie.
+
+
+To bardzo częsty problem. W kodzie masz warunki logiczne (if ... == 'SQLServer'), które sterują składnią SQL, ale jako parametr target_db przekazujesz nazwę konkretnej instancji bazy (np. 'Korytko', 'DW_PROD'), żeby _get_engine wiedział, z czym się połączyć.
+Rozwiązaniem jest stworzenie mapowania (słownika), który przetłumaczy "nazwę bazy" (np. Korytko) na "typ systemu" (np. SQLServer).
+Oto jak to zrobić w 2 krokach:
+Krok 1: Dodaj mapowanie w __init__
+W klasie DatabaseManager, w metodzie __init__, zdefiniuj słownik, który przypisuje Twoje nazwy baz do typów systemów.
+    def __init__(self):
+        # ... (Twoje istniejące inicjalizacje) ...
+        
+        # 💥 MAPOWANIE: Nazwa Bazy -> Typ Systemu
+        self.db_system_map = {
+            # Twoje nazwy MSSQL
+            'Korytko': 'SQLServer',
+            'KDD': 'SQLServer',
+            'I3_IC': 'SQLServer',
+            'DW_PROD': 'SQLServer',
+            
+            # Twoje nazwy Oracle
+            'Oracle': 'Oracle',
+            'DWH_ORA': 'Oracle',
+            
+            # Twoje nazwy Impala
+            'Impala': 'Impala'
+        }
+
+Krok 2: Użyj tego mapowania w insert_data
+Teraz musimy zmodyfikować funkcję insert_data, aby na samym początku ustalała, z jakim systemem ma do czynienia, niezależnie od nazwy połączenia.
+Wklej ten fragment na samym początku funkcji insert_data:
+    def insert_data(self, df: pd.DataFrame, target_db: str, table_name: str, 
+                    schema: str, if_exists: str = 'append', batch_size: int = 1000000, 
+                    verbose: bool = True, use_fast_executemany: bool = True,
+                    **kwargs) -> None:
+        
+        from sqlalchemy import text
+        import numpy as np
+        import gc
+
+        # 💥 1. ROZWIĄZANIE PROBLEMU NAZWY BAZY 💥
+        # Sprawdzamy, jaki to typ systemu (np. 'Korytko' -> 'SQLServer')
+        # Jeśli nazwy nie ma w mapie, używamy oryginalnej nazwy (target_db)
+        target_system = self.db_system_map.get(target_db, target_db)
+        
+        # Logujemy dla pewności
+        self.logger.info(f"Insert do: {target_db} (System: {target_system}). Tabela: {schema}.{table_name}")
+        
+        # 2. Pobieramy silnik po ORYGINALNEJ nazwie (bo tam są hasła w self.connections)
+        engine = self._get_engine(target_db) 
+        
+        try:
+            with engine.connect() as connection:
+                # 3. Używamy target_system do warunków logicznych!
+                if target_system == 'SQLServer':
+                    try:
+                        connection.execute(text("SET LOCK_TIMEOUT 1200000"))
+                        connection.execute(text("SET TRANSACTION ISOLATION LEVEL READ COMMITTED"))
+                    except Exception:
+                        pass 
+
+                # ... (Transformacje DataFrame) ...
+                
+                # ... (Reszta kodu bez zmian, aż do mapowania typów) ...
+
+                # 4. W mapowaniu typów też używamy SYSTEMU, nie nazwy bazy
+                sqlalchemy_dtype_dict = self.map_data_types(df_to_load, target_system) 
+                
+                # 5. W lokalnym mapowaniu typów też używamy SYSTEMU
+                local_type_mappings = {
+                    'Oracle': {'int64': 'int64', 'object': 'str', 'bool': 'int64'},
+                    'SQLServer': {'int64': 'int64', 'bool': 'bool', 'object': 'str'}, # Tu wpadnie 'Korytko'
+                    'Impala': {'int64': 'int64', 'bool': 'bool', 'object': 'str'}
+                }
+                numpy_type_mappings = local_type_mappings.get(target_system, {})
+
+                # ... (Dalsza część funkcji insert_data) ...
+                
+                # 6. Przy tworzeniu tabeli i sprawdzaniu kolumn też przekaż target_system!
+                # UWAGA: Tutaj musisz podmienić 'target_db' na 'target_system' w wywołaniach:
+                
+                table_created = self.create_table_if_not_exists(
+                    engine, sqlalchemy_dtype_dict, df_to_load, table_name, schema, target_system
+                )
+                
+                # ...
+                
+                self.check_column_size(
+                    engine, df_to_load, table_name, schema, target_system
+                )
+
+                # ... (Reszta funkcji bez zmian) ...
+
+Co to zmienia?
+ * Zmienna target_db (np. 'Korytko') służy tylko do pobrania połączenia (get_engine).
+ * Nowa zmienna target_system (np. 'SQLServer') służy do całej logiki if (if target_system == 'Oracle', mapowanie typów, składnia SQL).
+Dzięki temu możesz wywołać funkcję tak:
+insert_data(..., target_db='Korytko')
+A kod automatycznie zrozumie: "Aha, to jest Korytko, czyli używam składni SQL Servera".
