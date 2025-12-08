@@ -1,98 +1,37 @@
-To jest kluczowy moment. Jeśli proces trwa bardzo długo, to brak indeksu jest głównym winowajcą.
-🚀 O ile przyspieszy indeks?
-Drastycznie. To różnica rzędu rzędu wielkości (np. z 2 godzin do 2 minut).
- * Bez indeksu: Baza danych dla każdego wstawianego wiersza musi przeszukać całą tabelę docelową linijka po linijce, aby sprawdzić, czy klucz istnieje (tzw. Full Table Scan). Przy milionach rekordów to miliardy operacji.
- * Z indeksem: Baza używa drzewa binarnego. Sprawdzenie istnienia to ułamek sekundy.
-⚠️ Problem uprawnień
-Skoro nie mogłeś utworzyć tabeli tymczasowej (CREATE TABLE), istnieje bardzo duże ryzyko, że nie będziesz miał też uprawnień do CREATE INDEX.
-Mimo to, przygotowałem dla Ciebie funkcję, która:
- * Sprawdza, czy indeks na danych kolumnach już istnieje.
- * Jeśli nie – próbuje go utworzyć.
- * Jeśli nie ma uprawnień – łapie błąd i loguje ostrzeżenie (wtedy musimy użyć "Planu B" - filtrowania w Pythonie).
-Rozwiązanie 1: Funkcja sprawdzająca i tworząca indeksy (Dodaj do DatabaseManager)
-Wklej tę metodę do klasy DatabaseManager.
-    def ensure_index_exists(self, target_db: str, table: str, schema: str, lookup_keys: List[str]) -> None:
-        """
-        Sprawdza czy istnieje indeks na kolumnach lookup_keys.
-        Jeśli nie - próbuje go utworzyć.
-        """
-        if not lookup_keys:
-            return
+Tak, masz 100% racji. Problemem jest wartość <NA>.
+🔍 Co się dzieje?
+ * Pandas i <NA>: Nowe wersje Pandasa używają specjalnego znacznika <NA> dla brakujących danych.
+ * Konwersja na String: Kiedy w kodzie robisz df.astype(numpy_dtype_dict) (lub wcześniej astype(str)), ten znacznik zamienia się na dosłowny napis (string) o treści "<NA>".
+ * Baza Danych (Oracle): Oracle otrzymuje polecenie: Wstaw do kolumny liczbowej (TIMEINIVR) tekst "<NA>".
+ * Błąd: Oracle próbuje to sparsować jako liczbę, nie potrafi i rzuca błąd ORA-01722: invalid number (nieprawidłowa liczba).
+Błąd A value is required for bind parameter jest efektem ubocznym tego, jak SQLAlchemy gubi się przy mapowaniu błędnych danych w batchu.
+🛠️ Rozwiązanie: Czyszczenie <NA>
+Musimy zamienić wszystkie wystąpienia napisów "<NA>", 'nan', itp. na pythonowy None. SQLAlchemy zamieni None na SQL-owy NULL, który Oracle przyjmie bez problemu.
+Dodaj ten fragment kodu w funkcji insert_data, zaraz po wykonaniu astype.
+Poprawiony fragment insert_data (w pliku db_m_windows.py):
+            # ... (wcześniejszy kod)
+            
+            self.logger.info(f"Wykonanie df_to_load.astype(numpy_dtype_dict)") 
+            df_to_load = df_to_load.astype(numpy_dtype_dict) 
+            self.logger.info(f"df_to_load.astype(numpy_dtype_dict) - done") 
+            
+            # 💥💥💥 DODAJ TO TUTAJ 💥💥💥
+            # Zamieniamy stringowe reprezentacje braków danych na prawdziwe None (SQL NULL)
+            # To naprawi błąd ORA-01722 i problem z "<NA>"
+            df_to_load = df_to_load.replace({
+                '<NA>': None, 
+                'nan': None, 
+                'NaN': None, 
+                'None': None,
+                'NaT': None,
+                pd.NA: None  # Na wypadek gdyby coś zostało jako obiekt pd.NA
+            })
+            self.logger.info("Wyczyszczono wartości <NA> na None.")
+            # 💥💥💥 KONIEC POPRAWKI 💥💥💥
 
-        from sqlalchemy import text
-        
-        # Nazwa indeksu (musi być unikalna i krótka, Oracle ma limit 30 znaków w starszych wersjach)
-        # Tworzymy nazwę np. IDX_TABELA_COL1_COL2
-        short_table = table[:10]
-        cols_suffix = "_".join([k[:3] for k in lookup_keys])[:10]
-        index_name = f"IDX_{short_table}_{cols_suffix}".upper()
-        
-        cols_str = ", ".join([f'"{col}"' for col in lookup_keys])
-        
-        engine = self._get_engine(target_db)
-        
-        try:
-            with engine.connect() as connection:
-                # 1. Sprawdzenie czy indeks istnieje (Oracle)
-                if target_db.lower() == 'oracle':
-                    # Sprawdzamy czy istnieje JAKIKOLWIEK indeks zawierający te kolumny jako wiodące
-                    # To uproszczone sprawdzenie - sprawdzamy po prostu czy nazwa indeksu, którą chcemy nadać, już jest
-                    check_sql = f"""
-                        SELECT COUNT(*) FROM ALL_INDEXES 
-                        WHERE INDEX_NAME = '{index_name}' AND OWNER = '{schema.upper()}'
-                    """
-                    count = connection.execute(text(check_sql)).scalar()
-                    
-                    if count > 0:
-                        self.logger.info(f"Indeks {index_name} już istnieje.")
-                        return
+            # 2. Zarządzanie schematem i tabelą
+            # ... (dalszy kod)
 
-                    # 2. Próba utworzenia indeksu
-                    self.logger.info(f"Próba utworzenia indeksu {index_name} na kolumnach: {lookup_keys}...")
-                    create_sql = f'CREATE INDEX "{schema}"."{index_name}" ON "{schema}"."{table}" ({cols_str})'
-                    connection.execute(text(create_sql))
-                    self.logger.info(f"Pomyślnie utworzono indeks {index_name}.")
-                    
-                elif target_db.lower() == 'sqlserver':
-                    # Logika dla SQL Server (IF NOT EXISTS...)
-                    create_sql = f"""
-                    IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = '{index_name}' AND object_id = OBJECT_ID('{schema}.{table}'))
-                    BEGIN
-                        CREATE INDEX [{index_name}] ON [{schema}].[{table}] ({", ".join([f"[{k}]" for k in lookup_keys])})
-                    END
-                    """
-                    connection.execute(text(create_sql))
-                    self.logger.info(f"Zweryfikowano/Utworzono indeks {index_name} w SQL Server.")
-
-        except Exception as e:
-            # 💥 Jeśli nie masz uprawnień, tutaj wpadniemy
-            error_msg = str(e)
-            if "ORA-01031" in error_msg: # Insufficient privileges
-                self.logger.warning(f"BRAK UPRAWNIEŃ do tworzenia indeksów na tabeli {table}. "
-                                    f"Proces insertu będzie BARDZO WOLNY.")
-            else:
-                self.logger.warning(f"Nie udało się utworzyć indeksu: {e}")
-
-Gdzie to wywołać?
-Dodaj wywołanie tej funkcji w insert_data przed pętlą przetwarzającą batche, np. zaraz po check_column_size:
-# Wewnątrz insert_data, okolice linii 1165 (po check_column_size)
-
-# ...
-self.check_column_size(engine, df_to_load, table_name, schema, target_db)
-
-# 💥 NOWE: Próba utworzenia indeksu przed insertem
-if lookup_keys:
-    self.ensure_index_exists(target_db, table_name, schema, lookup_keys)
-
-# 4. Ładowanie partii (Batching)
-# ...
-
-🚨 Plan B: Co jeśli NIE MASZ uprawnień do indeksów? (Opcja Python)
-Jeśli dostaniesz ORA-01031 (brak uprawnień) przy tworzeniu indeksu, a tabela jest duża, metoda SQL NOT EXISTS nigdy nie skończy się w rozsądnym czasie.
-Wtedy musisz zmienić strategię na filtrowanie w Pythonie. Jest to jedyne szybkie wyjście przy braku uprawnień DB.
-Logika:
- * Pobierz tylko klucze z bazy do Pythona (jest to szybkie, nawet przy milionach wierszy, jeśli to tylko 1-2 kolumny).
- * Usuń z DataFrame wiersze, które już są w tym zbiorze kluczy.
- * Wykonaj szybki, zwykły INSERT (bez WHERE NOT EXISTS).
-Zmieniona funkcja _custom_merge_insert dla Planu B (Filtrowanie w RAM):
-Jeśli okaże się, że indeksy nie wchodzą w grę, napisz, a podam kod, który pobiera klucze (SELECT ID FROM TABLE) do set() w Pythonie i filtruje DataFrame przed wysłaniem. To zużyje trochę więcej RAMu (ok. 50-100MB na 2mln rekordów), ale będzie nieporównywalnie szybsze niż insert bez indeksu.
+Dlaczego pd.NA : None może nie wystarczyć?
+Jeśli wcześniej zrobiłeś astype(str) lub astype('string'), obiekt pd.NA zamienił się już w zwykły napis "<NA>". Dlatego w słowniku replace kluczowe jest podanie '<NA>' w cudzysłowie.
+Po dodaniu tego fragmentu, dane trafią do Oracle jako NULL, a błąd zniknie.
