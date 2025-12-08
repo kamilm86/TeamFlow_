@@ -1,90 +1,112 @@
-To świetna wiadomość! Przeszliśmy przez najtrudniejsze błędy związane z typami danych (ORA-01439 jest teraz poprawnie ignorowany jako WARNING).
-Aktualny błąd: Not an executable object: 'DROP TABLE ...' oraz Not an executable object: '\n MERGE INTO ...'
-🔍 Diagnoza
-Ten błąd występuje w nowszych wersjach biblioteki SQLAlchemy (wersja 2.0+).
-Biblioteka ta nie pozwala już na przekazywanie "zwykłego tekstu" (stringa) bezpośrednio do funkcji connection.execute(). Każde zapytanie SQL napisane jako tekst musi być "opakowane" w funkcję text().
-🛠️ Rozwiązanie
-Musisz poprawić funkcję _custom_merge_insert (tę, którą dodaliśmy do obsługi lookupu). Trzeba w niej dodać text(...) w dwóch miejscach: przy wykonywaniu MERGE i przy usuwaniu tabeli tymczasowej.
-Oto poprawiony kod. Podmień całą funkcję _custom_merge_insert w swojej klasie DatabaseManager.
+Tak, to zmienia postać rzeczy. Jeśli nie masz uprawnień do tworzenia tabel (nawet tymczasowych), to poprzednia metoda z MERGE i tabelą TEMP_... nie zadziała (zwróci błąd ORA-01031: insufficient privileges).
+Musimy zmienić podejście na takie, które operuje wyłącznie na docelowej tabeli. Mamy dwie główne opcje:
+ * Opcja SQL (Zalecana): Zmodyfikowanie zapytania INSERT tak, aby dla każdego wiersza sprawdzało, czy rekord już istnieje (używając konstrukcji INSERT ... SELECT ... FROM DUAL WHERE NOT EXISTS). To działa w ramach executemany i nie wymaga tworzenia nowych obiektów.
+ * Opcja Python (Alternatywna): Pobranie istniejących kluczy do Pythona, przefiltrowanie DataFrame i wstawienie tylko "czystych" danych.
+Zdecydowanie polecam Opcję SQL, ponieważ jest bezpieczniejsza dla spójności danych i łatwiejsza do wdrożenia w Twoim kodzie.
+🛠️ Rozwiązanie: INSERT z warunkiem NOT EXISTS (bez tabeli tymczasowej)
+Podmień funkcję _custom_merge_insert na poniższą wersję. Została ona przepisana tak, aby nie tworzyć tabeli tymczasowej. Zamiast tego konstruuje sprytne zapytanie INSERT, które samo pilnuje unikalności.
+Zaktualizowany kod _custom_merge_insert
     def _custom_merge_insert(self, target_db: str, batch: pd.DataFrame, table: str, schema: str,
                              lookup_keys: List[str], conn) -> None:
         """
-        Realizuje wstawienie rekordów, które nie istnieją (lookup)
-        z użyciem tabeli tymczasowej i kwerendy MERGE/NOT EXISTS.
+        Wstawia dane pomijając duplikaty (Lookup) BEZ tworzenia tabel tymczasowych.
+        Używa konstrukcji SQL 'INSERT ... WHERE NOT EXISTS'.
         """
-        # IMPORT KONIECZNY DO POPRAWKI
-        from sqlalchemy import text 
+        from sqlalchemy import text
 
         if not lookup_keys:
-            self.logger.info("Brak kluczy lookup. Użycie standardowego wstawiania (to_sql).")
+            # Standardowy insert jeśli brak kluczy lookup
             batch.to_sql(table, conn, schema=schema, if_exists='append', index=False)
             return
 
-        # 1. Przygotowanie: Tabela tymczasowa
-        import uuid
-        temp_table_name = f"TEMP_{uuid.uuid4().hex}"
-        
-        self.logger.info(f"Tworzenie tymczasowej tabeli {temp_table_name} dla partii ({len(batch)} rekordów).")
-        
-        try:
-            # Wstawienie danych do tabeli tymczasowej
-            batch.to_sql(temp_table_name, conn, schema=schema, if_exists='replace', index=False)
-            
-            # Przygotowanie kolumn
-            all_cols_quoted = [f'"{col}"' for col in batch.columns]
-            all_cols_str = ", ".join(all_cols_quoted)
-            
-            # Warunki złączenia
-            join_conditions = " AND ".join([f"T.\"{key}\" = S.\"{key}\"" for key in lookup_keys])
-            
-            sql_query = ""
-            
-            if target_db.lower() == 'oracle':
-                # --- Oracle: MERGE ---
-                values_cols = ', '.join([f"S.{col}" for col in all_cols_quoted])
-                
-                sql_query = f"""
-                MERGE INTO "{schema}"."{table}" T
-                USING "{schema}"."{temp_table_name}" S
-                ON ({join_conditions})
-                WHEN NOT MATCHED THEN
-                    INSERT ({all_cols_str})
-                    VALUES ({values_cols})
-                """
-                
-            elif target_db in ['SQLServer', 'Impala']:
-                # --- SQL Server / Impala: NOT EXISTS ---
-                where_not_exists = " AND ".join([f"T.\"{key}\" = S.\"{key}\"" for key in lookup_keys])
-                select_cols = ', '.join([f"S.{col}" for col in all_cols_quoted])
-                
-                sql_query = f"""
-                INSERT INTO "{schema}"."{table}" ({all_cols_str})
-                SELECT {select_cols}
-                FROM "{schema}"."{temp_table_name}" S
-                WHERE NOT EXISTS (
-                    SELECT 1
-                    FROM "{schema}"."{table}" T
-                    WHERE {where_not_exists}
-                )
-                """
-            
-            self.logger.info("Wykonanie operacji MERGE/NOT EXISTS INSERT.")
-            
-            # 💥 POPRAWKA 1: Opakowanie zapytania w text()
-            conn.execute(text(sql_query))
-            
-        finally:
-            # 3. Czyszczenie: Usunięcie tabeli tymczasowej
-            self.logger.info(f"Usuwanie tymczasowej tabeli {temp_table_name}.")
-            try:
-                # 💥 POPRAWKA 2: Opakowanie zapytania DROP w text()
-                drop_sql = f'DROP TABLE "{schema}"."{temp_table_name}"'
-                conn.execute(text(drop_sql))
-            except Exception as e:
-                self.logger.error(f"Nie udało się usunąć tabeli tymczasowej {temp_table_name}: {e}")
+        self.logger.info(f"Wstawianie z pominięciem duplikatów (metoda bez tabel tymczasowych).")
 
-Co dokładnie się zmieniło?
- * Dodałem from sqlalchemy import text na początku funkcji.
- * Zmieniłem conn.execute(sql_query) na conn.execute(text(sql_query)).
- * Zmieniłem conn.execute(f'DROP TABLE ...') na conn.execute(text(f'DROP TABLE ...')).
-Po tej zmianie operacja MERGE powinna się wykonać poprawnie!
+        # 1. Przygotowanie danych do wstawienia (lista słowników)
+        # Zamieniamy NaN na None, aby baza przyjęła to jako NULL
+        data_to_insert = batch.where(pd.notnull(batch), None).to_dict(orient='records')
+        
+        if not data_to_insert:
+            return
+
+        # 2. Budowanie zapytania SQL w zależności od bazy
+        sql_query = ""
+
+        # Pobranie nazw kolumn z DataFrame
+        columns = list(batch.columns)
+        quoted_cols = [f'"{col}"' for col in columns] # Nazwy kolumn w cudzysłowach
+        
+        # Przygotowanie placeholderów (bind variables)
+        # W SQLAlchemy używamy :nazwa_kolumny
+        bind_vars = [f":{col}" for col in columns]
+
+        if target_db.lower() == 'oracle':
+            # --- ORACLE: INSERT SELECT FROM DUAL WHERE NOT EXISTS ---
+            
+            # Budujemy warunek WHERE (np. T."ID" = :ID AND T."DATA" = :DATA)
+            where_clause_parts = []
+            for key in lookup_keys:
+                where_clause_parts.append(f'T."{key}" = :{key}')
+            where_clause = " AND ".join(where_clause_parts)
+
+            cols_str = ", ".join(quoted_cols)
+            binds_str = ", ".join(bind_vars)
+
+            # Magiczna konstrukcja dla Oracle:
+            # Wstawiamy wartości (:val1, :val2) pobierając je z wirtualnej tabeli DUAL,
+            # ale TYLKO JEŚLI w tabeli docelowej NIE MA takiego klucza.
+            sql_query = f"""
+            INSERT INTO "{schema}"."{table}" T ({cols_str})
+            SELECT {binds_str} FROM DUAL
+            WHERE NOT EXISTS (
+                SELECT 1 FROM "{schema}"."{table}" T
+                WHERE {where_clause}
+            )
+            """
+
+        elif target_db.lower() == 'sqlserver':
+            # --- SQL SERVER: IF NOT EXISTS ... INSERT ---
+            
+            # Budujemy warunek (np. [ID] = @ID AND [DATA] = @DATA)
+            # Uwaga: SQL Server używa @ w T-SQL, ale SQLAlchemy mapuje :nazwa na parametry
+            where_clause_parts = []
+            for key in lookup_keys:
+                where_clause_parts.append(f'TARGET.[{key}] = :{key}')
+            where_clause = " AND ".join(where_clause_parts)
+            
+            cols_str = ", ".join([f"[{col}]" for col in columns])
+            binds_str = ", ".join(bind_vars)
+
+            sql_query = f"""
+            IF NOT EXISTS (SELECT 1 FROM [{schema}].[{table}] AS TARGET WHERE {where_clause})
+            BEGIN
+                INSERT INTO [{schema}].[{table}] ({cols_str})
+                VALUES ({binds_str})
+            END
+            """
+            
+        elif target_db.lower() == 'impala':
+             # Impala nie obsługuje łatwo parametrów w VALUES przy NOT EXISTS w ten sposób.
+             # Dla Impali bezpieczniej jest wrócić do standardowego append i liczyć na unikalność,
+             # lub użyć metody filtrowania w Pythonie (którą mogę opisać, jeśli używasz Impali).
+             self.logger.warning("Metoda lookup bez tabel tymczasowych dla Impali może być wolna. Używam standardowego insert.")
+             batch.to_sql(table, conn, schema=schema, if_exists='append', index=False)
+             return
+
+        # 3. Wykonanie masowe (Batch execution)
+        try:
+            # executemany w SQLAlchemy 2.0 robi się przekazując listę słowników jako drugi argument
+            conn.execute(text(sql_query), data_to_insert)
+            self.logger.info(f"Przetworzono partię {len(data_to_insert)} rekordów.")
+            
+        except Exception as e:
+            self.logger.error(f"Błąd podczas wstawiania warunkowego: {e}")
+            raise
+
+💡 Dlaczego to zadziała?
+ * Brak CREATE TABLE: Cała operacja odbywa się w jednym zapytaniu INSERT, do którego masz uprawnienia (skoro możesz wstawiać dane).
+ * Atomowość: Baza danych dla każdego wiersza "w locie" sprawdza WHERE NOT EXISTS.
+ * Wydajność: Chociaż jest to nieco wolniejsze niż MERGE na całej tabeli, przy executemany (które SQLAlchemy optymalizuje pod spodem używając tablic parametrów Oracle), jest to bardzo wydajne rozwiązanie.
+⚠️ Ważna uwaga wydajnościowa
+Aby to rozwiązanie działało szybko, kolumny zdefiniowane w lookup_keys (np. INITIATEDDATETIME) POWINNY mieć założony INDEKS na bazie docelowej Oracle. Bez indeksu baza będzie musiała skanować całą tabelę dla każdego wstawianego wiersza, co przy milionach rekordów będzie bardzo wolne.
+Jeśli masz uprawnienia tylko do INSERT/SELECT, ale nie możesz tworzyć indeksów, a tabela jest duża, ten proces może zwolnić. Wtedy jedynym ratunkiem jest "Opcja Python" (filtrowanie danych przed wysłaniem do bazy).
+Daj znać, czy to rozwiązanie ruszyło!
