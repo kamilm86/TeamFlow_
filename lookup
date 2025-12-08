@@ -1,62 +1,55 @@
-To błąd programistyczny (nie bazy danych). Kod w funkcji insert_data próbuje odwołać się do słownika self.type_mappings, którego nie zdefiniowaliśmy w __init__ Twojej klasy.
-Aby to naprawić szybko i bezboleśnie (bez szukania metody __init__), zdefiniujemy ten słownik lokalnie wewnątrz funkcji insert_data. Dzięki temu funkcja będzie samowystarczalna.
-Oto ostateczna, pełna wersja funkcji insert_data.
-Zawiera ona:
- * Naprawę błędu type_mappings (definicja lokalna).
- * Agresywne czyszczenie danych (zamiana przecinków na kropki, usuwanie <NA>, wymuszanie liczb) – żeby uniknąć ORA-01722.
- * Plan B (Filtrowanie w RAM) – wywołanie funkcji filtrującej zamiast SQL-owego lookupu.
-Wklej ten kod w miejsce starej funkcji insert_data:
+Rozumiem. Czasem "lepsze jest wrogiem dobrego". Skoro wersja z lookup generuje zbyt wiele problemów środowiskowych (błędy sterowników, typów, uprawnień), najrozsądniej jest wrócić do sprawdzonego, standardowego mechanizmu, zachowując jednak krytyczne poprawki (naprawa typów i czyszczenie danych), które odkryliśmy podczas debugowania.
+Oto zestaw 3 funkcji, które przywrócą stabilność Twojemu procesowi.
+Podmień je w pliku db_m_windows.py w klasie DatabaseManager.
+1. Funkcja insert_data (Wersja Stabilna)
+Ta wersja:
+ * USUWA logikę lookup (brak skomplikowanych zapytań).
+ * ZACHOWUJE naprawę błędu typów (VARCHAR(length=...)).
+ * ZACHOWUJE agresywne czyszczenie danych (zamiana , na . i usuwanie <NA>), co zapobiegnie błędowi ORA-01722.
+ * Używa standardowego to_sql, który jest najbezpieczniejszy.
+<!-- end list -->
     def insert_data(self, df: pd.DataFrame, target_db: str, table_name: str, 
                     schema: str, if_exists: str = 'append', batch_size: int = 1000000, 
-                    verbose: bool = True, use_fast_executemany: bool = True, 
-                    lookup_keys: Optional[List[str]] = None) -> None:
+                    verbose: bool = True, use_fast_executemany: bool = True,
+                    **kwargs) -> None: # kwargs łapie ewentualne lookup_keys i je ignoruje
         
         from sqlalchemy import text
         import numpy as np
         import gc
 
-        self.logger.info(f"Rozpoczynanie wstawiania do {target_db}.{schema}.{table_name} (Wierszy: {len(df)})")
+        self.logger.info(f"Rozpoczynanie wstawiania (STANDARD) do {target_db}.{schema}.{table_name} (Wierszy: {len(df)})")
         engine = self._get_engine(target_db) 
         
         try:
             with engine.connect() as connection:
-                # Ustawienia dla SQL Server (opcjonalne, bezpieczne)
+                # Ustawienia dla SQL Server
                 if target_db == 'SQLServer':
                     try:
                         connection.execute(text("SET LOCK_TIMEOUT 1200000"))
                         connection.execute(text("SET TRANSACTION ISOLATION LEVEL READ COMMITTED"))
                     except Exception:
-                        pass # Ignorujemy jeśli sterownik nie obsługuje
+                        pass 
 
                 # 1. Transformacje DataFrame
                 df_to_load = df.copy() 
                 df_to_load = self.standardize_column_names(df_to_load) 
                 df_to_load = self.handle_nulls(df_to_load)
                 
-                # Wstępne czyszczenie stringów
+                # Wstępne czyszczenie
                 df_to_load = df_to_load.astype(str).replace({pd.NaT: None, 'nan': None, '<NA>': None}) 
                 
-                # --- ROZDZIELENIE TYPÓW (NAPRAWA BŁĘDU VARCHAR) ---
-                # Typy SQL dla create_table (zwraca obiekty SQLAlchemy)
+                # --- NAPRAWA TYPÓW (Oddzielenie SQL od Pandas) ---
+                # Typy SQL dla create_table
                 sqlalchemy_dtype_dict = self.map_data_types(df_to_load, target_db) 
                 
-                # 💥💥💥 NAPRAWA BŁĘDU type_mappings 💥💥💥
-                # Definiujemy mapowanie LOKALNIE, żeby nie musieć zmieniać __init__
+                # Typy Numpy dla astype (Definicja lokalna dla bezpieczeństwa)
                 local_type_mappings = {
-                    'Oracle': {
-                        'int64': 'int64',
-                        'float64': 'float64',
-                        'datetime64[ns]': 'datetime64[ns]',
-                        'object': 'str',
-                        'bool': 'int64', # Oracle nie ma boola
-                        'date': 'datetime64[ns]'
-                    },
+                    'Oracle': {'int64': 'int64', 'float64': 'float64', 'datetime64[ns]': 'datetime64[ns]', 'object': 'str', 'bool': 'int64', 'date': 'datetime64[ns]'},
                     'SQLServer': {'int64': 'int64', 'bool': 'bool', 'object': 'str'},
                     'Impala': {'int64': 'int64', 'bool': 'bool', 'object': 'str'}
                 }
                 numpy_type_mappings = local_type_mappings.get(target_db, {})
 
-                # Budujemy słownik typów dla Pandas astype
                 numpy_dtype_dict = {}
                 for col_name in df_to_load.columns:
                     dtype = df_to_load[col_name].dtype.name
@@ -68,55 +61,47 @@ Wklej ten kod w miejsce starej funkcji insert_data:
                         numpy_dtype_dict[col_name] = 'str' 
                 
                 self.logger.info(f"Konwersja typów (astype)...") 
-                # Tutaj używamy bezpiecznych typów stringowych dla Pandasa
                 df_to_load = df_to_load.astype(numpy_dtype_dict) 
                 
-                # --- AGRESYWNE CZYSZCZENIE (NAPRAWA BŁĘDU ORA-01722) ---
-                
-                # Lista kolumn znanych jako liczbowe (z Twoich logów błędów)
-                # Możesz tu dopisać inne kolumny, które sprawiają problemy
+                # --- AGRESYWNE CZYSZCZENIE (Zapobieganie ORA-01722) ---
                 known_numeric_cols = [
                     'TIMEINIVR', 'CALLDURATION', 'ILE_INT', 'SEGMENTID_START', 
                     'SEGMENTID_END', 'LASTASSIGNEDWORKGROUPID'
                 ]
                 
                 for col in df_to_load.columns:
-                    # Sprawdzamy czy kolumna powinna być liczbowa (po nazwie lub typie)
                     is_numeric = (col in known_numeric_cols) or \
                                  ('int' in str(numpy_dtype_dict.get(col, ''))) or \
                                  ('float' in str(numpy_dtype_dict.get(col, '')))
 
                     if is_numeric:
-                        # 1. Najpierw na string, żeby móc czyścić
                         df_to_load[col] = df_to_load[col].astype(str)
-                        
-                        # 2. Zamiana typowych śmieci na NaN
+                        # Usuwanie śmieci
                         replace_dict = {'<NA>': np.nan, 'nan': np.nan, 'NaN': np.nan, 'None': np.nan, '': np.nan}
                         for k, v in replace_dict.items():
                              df_to_load[col] = df_to_load[col].replace(k, v)
-                        
-                        # 3. Zamiana przecinka na kropkę (kluczowe dla PL danych)
+                        # Zamiana przecinka na kropkę
                         df_to_load[col] = df_to_load[col].str.replace(',', '.', regex=False)
-                        
-                        # 4. Wymuszenie konwersji na liczbę (błędy zamieniane na NaN)
+                        # Konwersja na liczbę
                         df_to_load[col] = pd.to_numeric(df_to_load[col], errors='coerce')
 
-                # Zamiana wszystkich NaN na None (SQL NULL) - to jest bezpieczne dla bazy
+                # Zamiana NaN na None (SQL NULL)
                 df_to_load = df_to_load.where(pd.notnull(df_to_load), None)
-                self.logger.info("Dane wyczyszczone (liczby naprawione, NaN -> NULL).")
                 
                 # 2. Tworzenie tabeli (jeśli trzeba)
-                if not self.create_table_if_not_exists(engine, sqlalchemy_dtype_dict, df_to_load, table_name, schema, target_db):
+                table_created = self.create_table_if_not_exists(engine, sqlalchemy_dtype_dict, df_to_load, table_name, schema, target_db)
+                
+                if not table_created:
                      if if_exists == 'replace':
                          connection.execute(text(f'DROP TABLE "{schema}"."{table_name}"'))
                          self.create_table_if_not_exists(engine, sqlalchemy_dtype_dict, df_to_load, table_name, schema, target_db)
                      elif if_exists == 'truncate':
                          connection.execute(text(f'TRUNCATE TABLE "{schema}"."{table_name}"'))
                 
-                # Sprawdzenie rozmiarów kolumn (ignoruje błędy ORA-01439)
+                # Sprawdzenie rozmiarów kolumn
                 self.check_column_size(engine, df_to_load, table_name, schema, target_db)
                 
-                # 3. Batching i Insert (Plan B - Filtrowanie w RAM)
+                # 3. Batching i Insert (Standardowy)
                 total_rows = len(df_to_load)
                 if total_rows == 0:
                     return
@@ -124,53 +109,124 @@ Wklej ten kod w miejsce starej funkcji insert_data:
                 full_batches = total_rows // batch_size
                 last_batch_size = total_rows % batch_size
                 
-                # Przetwarzanie pełnych partii
                 for batch_num in range(full_batches):
                     start = batch_num * batch_size
                     end = start + batch_size
                     batch = df_to_load.iloc[start:end].copy()
                     
                     if verbose:
-                        self.logger.info(f"Przetwarzanie partii {batch_num+1}/{full_batches+1}...")
-
-                    # Wywołanie funkcji z Planu B (musi być zaimplementowana jak podałem wcześniej)
-                    self._custom_merge_insert(
-                        target_db=target_db,
-                        batch=batch,
-                        table=table_name,
-                        schema=schema,
-                        lookup_keys=lookup_keys, 
-                        conn=connection 
-                    )
+                        self.logger.info(f"Wstawianie partii {batch_num+1}/{full_batches+1}...")
+                    
+                    # STANDARDOWY INSERT (to_sql)
+                    batch.to_sql(table_name, connection, schema=schema, if_exists='append', index=False, chunksize=1000)
+                    
                     del batch
                     gc.collect()
 
-                # Ostatnia partia
                 if last_batch_size > 0:
                     start = full_batches * batch_size
                     last_batch = df_to_load.iloc[start:total_rows].copy()
-                    self.logger.info(f"Przetwarzanie ostatniej partii...")
+                    self.logger.info(f"Wstawianie ostatniej partii...")
                     
-                    self._custom_merge_insert(
-                        target_db=target_db,
-                        batch=last_batch,
-                        table=table_name,
-                        schema=schema,
-                        lookup_keys=lookup_keys, 
-                        conn=connection
-                    )
+                    # STANDARDOWY INSERT (to_sql)
+                    last_batch.to_sql(table_name, connection, schema=schema, if_exists='append', index=False, chunksize=1000)
+                    
                     del last_batch
                     gc.collect()
                 
-                self.logger.info(f"Proces zakończony dla {table_name}.")
+                self.logger.info(f"Pomyślnie załadowano dane do {table_name}.")
 
         except Exception as e:
             self.logger.error(f"Krytyczny błąd w metodzie insert_data: {e}")
             raise
-        finally:
-            if 'engine' in locals():
-                pass 
 
-Co sprawdzić po wklejeniu?
-Upewnij się, że masz wklejoną również funkcję _custom_merge_insert w wersji Plan B (tę z filtrowaniem w RAM, którą podałem w poprzedniej wiadomości).
-Ta kombinacja (lokalna definicja typów + agresywne czyszczenie + filtrowanie w RAM) powinna być ostatecznym rozwiązaniem Twoich problemów.
+2. Funkcja create_table_if_not_exists (Poprawiona sygnatura)
+Musimy użyć tej wersji, ponieważ insert_data przekazuje teraz 7 argumentów (w tym column_types).
+    def create_table_if_not_exists(self, engine, column_types: dict, df: pd.DataFrame, 
+                                   table_name: str, schema: str, target_db: str) -> bool:
+        """
+        Tworzy tabelę docelową. Wersja poprawiona, przyjmuje column_types jako argument.
+        """
+        # Sprawdzenie czy tabela istnieje
+        with engine.connect() as connection:
+            if connection.dialect.has_table(connection, table_name, schema=schema):
+                return True 
+
+        columns_def = []
+        
+        # Generowanie SQL na podstawie column_types (obiektów SQLAlchemy)
+        if target_db.lower() == 'oracle':
+            for col_name, col_type in column_types.items():
+                col_name_sql = f'"{col_name}"'
+                col_type_str = str(col_type).upper()
+                
+                if 'VARCHAR' in col_type_str or 'STRING' in col_type_str:
+                    length = getattr(col_type, 'length', 255)
+                    col_def = f"{col_name_sql} VARCHAR2({length})" if length <= 4000 else f"{col_name_sql} CLOB"
+                    columns_def.append(col_def)
+                elif 'INTEGER' in col_type_str or 'NUMBER' in col_type_str:
+                    columns_def.append(f"{col_name_sql} NUMBER")
+                elif 'DATE' in col_type_str or 'TIMESTAMP' in col_type_str:
+                    columns_def.append(f"{col_name_sql} DATE")
+                else:
+                     columns_def.append(f"{col_name_sql} VARCHAR2(100)")
+                     
+        elif target_db.lower() == 'sqlserver':
+            for col_name, col_type in column_types.items():
+                col_name_sql = f'[{col_name}]'
+                col_type_str = str(col_type).upper()
+                if 'VARCHAR' in col_type_str or 'STRING' in col_type_str:
+                    length = getattr(col_type, 'length', 4000)
+                    col_def = f"{col_name_sql} NVARCHAR({length})" if length and length <= 4000 else f"{col_name_sql} NVARCHAR(MAX)"
+                    columns_def.append(col_def)
+                elif 'INT' in col_type_str:
+                    columns_def.append(f"{col_name_sql} BIGINT")
+                elif 'DATE' in col_type_str:
+                    columns_def.append(f"{col_name_sql} DATETIME2")
+                else:
+                    columns_def.append(f"{col_name_sql} NVARCHAR(100)")
+        
+        else: # Impala/Inne
+             for col_name, col_type in column_types.items():
+                 columns_def.append(f"`{col_name}` STRING") # Fallback
+
+        create_table_sql = f'CREATE TABLE {schema}.{table_name} (\n' + ',\n'.join(columns_def) + '\n)'
+        
+        try:
+            with engine.connect() as connection:
+                connection.execute(create_table_sql)
+                self.logger.info(f"Utworzono tabelę {schema}.{table_name}.")
+                return False 
+        except Exception as e:
+            self.logger.error(f"Błąd tworzenia tabeli: {e}")
+            raise
+
+3. Funkcja check_column_size (Wersja bezpieczna)
+Ta wersja ignoruje błąd ORA-01439, co pozwala procesowi iść dalej, nawet jeśli typy się nie zgadzają, a tabela ma dane.
+    def check_column_size(self, engine, df: pd.DataFrame, table_name: str, schema: str, target_db: str) -> None:
+        if df.empty or target_db.lower() != 'oracle':
+            return
+
+        from sqlalchemy import text
+        try:
+            with engine.connect() as connection:
+                # Sprawdzenie tylko dla Oracle w tym wariancie (najważniejsze)
+                for col in df.columns:
+                    if df[col].dtype == 'object':
+                        max_len = df[col].astype(str).map(len).max()
+                        if pd.isna(max_len): continue
+                        req_len = int(max_len * 1.2)
+                        
+                        try:
+                            # Próba zmiany rozmiaru (prosta wersja)
+                            sql = f'ALTER TABLE "{schema}"."{table_name}" MODIFY ("{col}" VARCHAR2({req_len}))'
+                            connection.execute(text(sql))
+                        except Exception as e:
+                            # IGNORUJEMY WSZYSTKIE BŁĘDY MODYFIKACJI
+                            # Jeśli się nie uda (bo dane są, bo inny typ) - trudno, idziemy dalej.
+                            # Insert albo się uda (konwersja niejawna), albo wywali konkretny błąd wiersza.
+                            pass
+        except Exception:
+            pass
+
+Po wklejeniu tych trzech funkcji Twój kod wróci do działania w trybie "Wyczyść dane i wstaw na koniec tabeli" (Append).
