@@ -1,68 +1,268 @@
-Rozumiem, to jest frustrujące. Skoro błąd nadal występuje, oznacza to jedną z dwóch rzeczy:
- * Formatowanie liczb: Masz liczby z przecinkiem (np. '12,5') zamiast kropki, a Python nie traktuje ich jako liczb, więc pd.to_numeric ich nie rusza (jeśli nie obsłużymy tego ręcznie), a Oracle wywala się na przecinku.
- * Pominięte kolumny: Pętla for col, dtype in numpy_dtype_dict.items() pominęła kolumny, które sprawiają problem (np. TIMEINIVR), ponieważ w numpy_dtype_dict mogą być błędnie oznaczone jako object (tekst).
-Musimy zastosować agresywne czyszczenie, które wymusi konwersję na liczby niezależnie od tego, co "myśli" słownik typów.
-🛠️ Rozwiązanie: Agresywne czyszczenie z obsługą przecinków
-Zastąp fragment czyszczenia w insert_data (ten, który Ci ostatnio dałem) poniższym kodem. Ten kod robi trzy rzeczy:
- * Ignoruje słownik typów i próbuje naprawić każdą kolumnę, która wygląda na liczbową.
- * Zamienia przecinki na kropki (kluczowe dla polskich danych).
- * Zamienia wszystko, co się nie uda, na None.
-Wklej to w insert_data po astype:
-            self.logger.info(f"Wykonanie df_to_load.astype(numpy_dtype_dict)") 
-            df_to_load = df_to_load.astype(numpy_dtype_dict) 
-            self.logger.info(f"df_to_load.astype(numpy_dtype_dict) - done") 
+To rozsądna decyzja. Skoro baza stawia opór (uprawnienia, brak indeksów, blokady typów), filtrowanie w Pythonie (RAM) jest najpewniejszym rozwiązaniem. Będzie to kosztować trochę więcej pamięci RAM (musimy pobrać klucze), ale zadziała zawsze, niezależnie od bazy danych.
+Oto pełne, gotowe do wklejenia kody dwóch funkcji, które musisz podmienić w klasie DatabaseManager (db_m_windows.py).
+Zaimplementowałem tu logikę:
+ * Pobierz istniejące klucze z bazy (ograniczając zakres do minimum/maksimum z obecnej partii, żeby nie pobierać całej tabeli).
+ * Porównaj w Pythonie i usuń duplikaty.
+ * Wyczyść dane (zamiana przecinków, <NA>, wymuszenie liczb) – to, co poprawialiśmy wcześniej.
+ * Wstaw tylko nowe rekordy.
+1. Funkcja _custom_merge_insert (Plan B: Filtrowanie w RAM)
+Ta funkcja zastępuje całkowicie poprzednie wersje SQL-owe.
+    def _custom_merge_insert(self, target_db: str, batch: pd.DataFrame, table: str, schema: str,
+                             lookup_keys: List[str], conn) -> None:
+        """
+        PLAN B: Filtrowanie w RAM.
+        1. Pobiera istniejące klucze z bazy (tylko z zakresu dat/ID obecnego batcha).
+        2. Usuwa duplikaty z DataFrame w Pythonie.
+        3. Wstawia tylko nowe rekordy.
+        """
+        from sqlalchemy import text
+        import gc
+
+        # Jeśli brak kluczy lub batch pusty, wstawiamy wszystko
+        if not lookup_keys or batch.empty:
+            batch.to_sql(table, conn, schema=schema, if_exists='append', index=False)
+            return
+
+        self.logger.info(f"Filtrowanie duplikatów w RAM (Lookup po: {lookup_keys})...")
+
+        # 1. Budowanie zapytania SELECT, aby pobrać TYLKO potrzebne klucze z bazy
+        # Optymalizacja: Dodajemy WHERE, żeby nie pobierać kluczy dla całej tabeli,
+        # tylko dla zakresu danych, który mamy w batchu.
+        
+        where_conditions = []
+        params = {}
+        
+        for key in lookup_keys:
+            # Sprawdzamy, czy kolumna w batchu jest sortowalna (liczba/data)
+            # Jeśli tak, ograniczamy zapytanie do min/max z batcha
+            if pd.api.types.is_numeric_dtype(batch[key]) or pd.api.types.is_datetime64_any_dtype(batch[key]):
+                min_val = batch[key].min()
+                max_val = batch[key].max()
+                
+                # Konwersja Timestamp do stringa dla bezpiecznego SQL
+                if pd.api.types.is_datetime64_any_dtype(batch[key]):
+                    min_val = str(min_val)
+                    max_val = str(max_val)
+                
+                # Dodajemy warunek SQL: key BETWEEN min AND max
+                # Używamy nazw parametrów unikalnych dla klucza
+                p_min = f"min_{key}"
+                p_max = f"max_{key}"
+                
+                if target_db.lower() == 'oracle':
+                    where_conditions.append(f'"{key}" >= :{p_min} AND "{key}" <= :{p_max}')
+                else: # SQL Server / Impala
+                    where_conditions.append(f"[{key}] >= :{p_min} AND [{key}] <= :{p_max}")
+                
+                params[p_min] = min_val
+                params[p_max] = max_val
+
+        # Złożenie zapytania
+        cols_sql = ", ".join([f'"{k}"' if target_db.lower() == 'oracle' else f'[{k}]' for k in lookup_keys])
+        table_sql = f'"{schema}"."{table}"' if target_db.lower() == 'oracle' else f'[{schema}].[{table}]'
+        
+        sql = f"SELECT {cols_sql} FROM {table_sql}"
+        if where_conditions:
+            sql += " WHERE " + " AND ".join(where_conditions)
+
+        try:
+            # 2. Pobranie istniejących kluczy
+            self.logger.info(f"Pobieranie istniejących kluczy z bazy...")
+            existing_data = pd.read_sql(text(sql), conn, params=params)
             
-            # 💥💥💥 AGRESYWNE CZYSZCZENIE (WERSJA 2.0) 💥💥💥
-            import numpy as np
+            if not existing_data.empty:
+                # 3. Filtrowanie w Pythonie
+                # Tworzymy unikalne krotki (tuple) dla kluczy w bazie i w batchu
+                
+                # Standaryzacja typów do stringa, żeby uniknąć problemów (np. int vs float, data vs string)
+                # To trochę wolniejsze, ale bezpieczne
+                existing_keys_set = set(zip(*[existing_data[k].astype(str) for k in lookup_keys]))
+                
+                # Filtrujemy batch
+                # Tworzymy tymczasową listę kluczy batcha w tym samym formacie
+                batch_keys = zip(*[batch[k].astype(str) for k in lookup_keys])
+                
+                # Znajdź indeksy wierszy, które NIE są w zestawie z bazy
+                to_insert_indices = [i for i, key_tuple in enumerate(batch_keys) if key_tuple not in existing_keys_set]
+                
+                if len(to_insert_indices) == 0:
+                    self.logger.info("Wszystkie rekordy z tej partii już istnieją w bazie. Pomijam.")
+                    return
+                
+                if len(to_insert_indices) < len(batch):
+                    self.logger.info(f"Wykryto duplikaty. Wstawianie {len(to_insert_indices)} z {len(batch)} rekordów.")
+                    batch_to_insert = batch.iloc[to_insert_indices].copy()
+                else:
+                    batch_to_insert = batch # Brak duplikatów
+            else:
+                batch_to_insert = batch # Baza nie zwróciła żadnych kluczy w tym zakresie
 
-            # Lista kolumn, które NA PEWNO są liczbowe w bazie Oracle (na podstawie Twoich logów)
-            # Dodaj tu każdą kolumnę, która wywala błąd ORA-01722
-            numeric_cols = [
-                'TIMEINIVR', 'CALLDURATION', 'ILE_INT', 'SEGMENTID_START', 
-                'SEGMENTID_END', 'LASTASSIGNEDWORKGROUPID'
-            ]
+            # 4. Wstawianie przefiltrowanych danych
+            if not batch_to_insert.empty:
+                batch_to_insert.to_sql(table, conn, schema=schema, if_exists='append', index=False)
+                self.logger.info(f"Wstawiono {len(batch_to_insert)} nowych rekordów.")
             
-            # Dodajemy też wszystkie kolumny, które w mapowaniu są int/float
-            for col, dtype in numpy_dtype_dict.items():
-                if ('int' in str(dtype) or 'float' in str(dtype)) and col not in numeric_cols:
-                    numeric_cols.append(col)
+            # Sprzątanie pamięci
+            del existing_data
+            del batch_to_insert
+            gc.collect()
 
-            self.logger.info(f"Wymuszanie typów liczbowych dla kolumn: {numeric_cols}")
+        except Exception as e:
+            self.logger.error(f"Błąd podczas filtrowania w RAM: {e}")
+            raise
 
-            for col in numeric_cols:
-                if col in df_to_load.columns:
-                    # 1. Konwersja na string, żeby móc operować na tekście
-                    # errors='ignore' pozwala zachować None jeśli już tam są
-                    df_to_load[col] = df_to_load[col].astype(str)
+2. Funkcja insert_data (Zawiera agresywne czyszczenie danych)
+Ta funkcja przygotowuje dane, czyści je (zamienia przecinki na kropki, usuwa <NA>) i wywołuje powyższą funkcję.
+    def insert_data(self, df: pd.DataFrame, target_db: str, table_name: str, 
+                    schema: str, if_exists: str = 'append', batch_size: int = 1000000, 
+                    verbose: bool = True, use_fast_executemany: bool = True, 
+                    lookup_keys: Optional[List[str]] = None) -> None:
+        
+        self.logger.info(f"Rozpoczynanie wstawiania do {target_db}.{schema}.{table_name} (Wierszy: {len(df)})")
+        engine = self._get_engine(target_db) 
+        
+        try:
+            with engine.connect() as connection:
+                # Ustawienia dla SQL Server
+                if target_db == 'SQLServer':
+                    connection.execute(text("SET LOCK_TIMEOUT 1200000"))
+                    connection.execute(text("SET TEXTSIZE 66000000"))
+                    connection.execute(text("SET TRANSACTION ISOLATION LEVEL READ COMMITTED"))
+                    connection.execute(text("SET XACT_ABORT ON")) 
 
-                    # 2. Czyszczenie śmieci tekstowych (<NA>, nan, None)
-                    # Zamieniamy je na "zwykłe" NaN, które to_numeric zrozumie
-                    replace_dict = {
-                        '<NA>': np.nan, 'nan': np.nan, 'NaN': np.nan, 'None': np.nan, 
-                        'NaT': np.nan, '': np.nan, ' ': np.nan
-                    }
-                    for k, v in replace_dict.items():
-                         df_to_load[col] = df_to_load[col].replace(k, v)
+                # 1. Transformacje DataFrame
+                df_to_load = df.copy() 
+                df_to_load = self.standardize_column_names(df_to_load) 
+                df_to_load = self.handle_nulls(df_to_load)
+                
+                # Wstępne czyszczenie stringów
+                df_to_load = df_to_load.astype(str).replace({pd.NaT: None, 'nan': None, '<NA>': None}) 
+                
+                # --- ROZDZIELENIE TYPÓW (NAPRAWA BŁĘDU VARCHAR) ---
+                # Typy SQL dla create_table
+                sqlalchemy_dtype_dict = self.map_data_types(df_to_load, target_db) 
+                
+                # Typy Numpy dla astype (z Twojego inita lub local)
+                if hasattr(self, 'type_mappings'):
+                    numpy_type_mappings = self.type_mappings.get(target_db, {})
+                else:
+                    numpy_type_mappings = {} # Fallback
 
-                    # 3. 💥 ZAMIANA PRZECINKA NA KROPKĘ 💥
-                    # Jeśli masz dane '12,5', to Python tego nie zrozumie bez tej zmiany
-                    if df_to_load[col].dtype == 'object':
+                numpy_dtype_dict = {}
+                for col_name in df_to_load.columns:
+                    dtype = df_to_load[col_name].dtype.name
+                    if dtype in numpy_type_mappings:
+                        numpy_dtype_dict[col_name] = numpy_type_mappings[dtype]
+                    elif 'datetime' in dtype:
+                         numpy_dtype_dict[col_name] = 'datetime64[ns]'
+                    else:
+                        numpy_dtype_dict[col_name] = 'str' 
+                
+                self.logger.info(f"Konwersja typów (astype)...") 
+                df_to_load = df_to_load.astype(numpy_dtype_dict) 
+                
+                # --- AGRESYWNE CZYSZCZENIE (NAPRAWA BŁĘDU ORA-01722) ---
+                import numpy as np
+                
+                # Lista kolumn znanych jako liczbowe (z Twoich błędów)
+                known_numeric_cols = [
+                    'TIMEINIVR', 'CALLDURATION', 'ILE_INT', 'SEGMENTID_START', 
+                    'SEGMENTID_END', 'LASTASSIGNEDWORKGROUPID'
+                ]
+                
+                for col in df_to_load.columns:
+                    # Sprawdzamy czy kolumna powinna być liczbowa
+                    is_numeric = (col in known_numeric_cols) or \
+                                 ('int' in str(numpy_dtype_dict.get(col, ''))) or \
+                                 ('float' in str(numpy_dtype_dict.get(col, '')))
+
+                    if is_numeric:
+                        # Zamiana na string, czyszczenie śmieci i przecinków
+                        df_to_load[col] = df_to_load[col].astype(str)
+                        
+                        # Czyścimy typowe śmieci na NaN
+                        replace_dict = {'<NA>': np.nan, 'nan': np.nan, 'NaN': np.nan, 'None': np.nan, '': np.nan}
+                        for k, v in replace_dict.items():
+                             df_to_load[col] = df_to_load[col].replace(k, v)
+                        
+                        # Zamiana przecinka na kropkę
                         df_to_load[col] = df_to_load[col].str.replace(',', '.', regex=False)
+                        
+                        # Konwersja na liczbę (błędy -> NaN)
+                        df_to_load[col] = pd.to_numeric(df_to_load[col], errors='coerce')
 
-                    # 4. Konwersja na liczby (coerce zamieni błędy na NaN)
-                    df_to_load[col] = pd.to_numeric(df_to_load[col], errors='coerce')
+                # Zamiana wszystkich NaN na None (SQL NULL)
+                df_to_load = df_to_load.where(pd.notnull(df_to_load), None)
+                self.logger.info("Dane wyczyszczone (liczby naprawione, NaN -> NULL).")
+                
+                # 2. Tworzenie tabeli
+                if not self.create_table_if_not_exists(engine, sqlalchemy_dtype_dict, df_to_load, table_name, schema, target_db):
+                     if if_exists == 'replace':
+                         connection.execute(text(f'DROP TABLE "{schema}"."{table_name}"'))
+                         self.create_table_if_not_exists(engine, sqlalchemy_dtype_dict, df_to_load, table_name, schema, target_db)
+                     elif if_exists == 'truncate':
+                         connection.execute(text(f'TRUNCATE TABLE "{schema}"."{table_name}"'))
+                
+                # Sprawdzenie rozmiarów kolumn
+                self.check_column_size(engine, df_to_load, table_name, schema, target_db)
+                
+                # 3. Batching i Insert
+                total_rows = len(df_to_load)
+                if total_rows == 0:
+                    return
 
-            # 5. Ostateczna zamiana NaN -> None (dla SQL NULL)
-            df_to_load = df_to_load.where(pd.notnull(df_to_load), None)
-            
-            # DEBUG: Pokaż przykładowy wiersz w logu, żeby zobaczyć czy <NA> zniknęło
-            if not df_to_load.empty:
-                self.logger.info(f"Przykładowe dane po czyszczeniu (pierwszy wiersz):\n{df_to_load.iloc[0].to_dict()}")
+                full_batches = total_rows // batch_size
+                last_batch_size = total_rows % batch_size
+                
+                # Przetwarzanie pełnych partii
+                for batch_num in range(full_batches):
+                    start = batch_num * batch_size
+                    end = start + batch_size
+                    batch = df_to_load.iloc[start:end].copy()
+                    
+                    if verbose:
+                        self.logger.info(f"Przetwarzanie partii {batch_num+1}/{full_batches+1}...")
 
-            # 💥💥💥 KONIEC POPRAWKI 💥💥💥
+                    # Wywołanie nowej funkcji (RAM FILTER)
+                    self._custom_merge_insert(
+                        target_db=target_db,
+                        batch=batch,
+                        table=table_name,
+                        schema=schema,
+                        lookup_keys=lookup_keys, 
+                        conn=connection 
+                    )
+                    del batch
+                    gc.collect()
 
-Dlaczego to powinno zadziałać?
-Powyższy schemat obrazuje problem:
- * Lista numeric_cols: Wymieniłem ręcznie kolumny, które widziałem w Twoich błędach (TIMEINIVR itd.). Dzięki temu, nawet jeśli numpy_dtype_dict się pomylił, my wymusimy na nich czyszczenie.
- * str.replace(',', '.'): To jest najczęstsza przyczyna ORA-01722 w Polsce. Excel/CSV daje 0,5, Python chce 0.5, a Oracle głupieje, dostając tekst z przecinkiem.
- * Logowanie: Dodałem na końcu self.logger.info, który wypisze pierwszy wiersz danych. Jeśli błąd wystąpi znowu, spójrz w logi "powyżej" błędu – zobaczysz dokładnie, co próbujemy wysłać.
+                # Ostatnia partia
+                if last_batch_size > 0:
+                    start = full_batches * batch_size
+                    last_batch = df_to_load.iloc[start:total_rows].copy()
+                    self.logger.info(f"Przetwarzanie ostatniej partii...")
+                    
+                    self._custom_merge_insert(
+                        target_db=target_db,
+                        batch=last_batch,
+                        table=table_name,
+                        schema=schema,
+                        lookup_keys=lookup_keys, 
+                        conn=connection
+                    )
+                    del last_batch
+                    gc.collect()
+                
+                self.logger.info(f"Proces zakończony dla {table_name}.")
+
+        except Exception as e:
+            self.logger.error(f"Krytyczny błąd w metodzie insert_data: {e}")
+            raise
+        finally:
+            if 'engine' in locals():
+                pass # Engine zarządzany przez connection pool
+
+Co to zmieni?
+ * Koniec problemów z uprawnieniami: Nie tworzymy tabel, indeksów ani skomplikowanych kursorów.
+ * Koniec ORA-01722: Kod agresywnie zamienia wszystkie "śmieci" (tekst w kolumnach liczbowych) i przecinki na poprawne liczby lub NULL zanim wyśle je do bazy.
+ * Działający Lookup: Duplikaty są odrzucane w Pythonie.
+Wklej te dwie funkcje i uruchom. To powinno wreszcie zadziałać.
