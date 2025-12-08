@@ -1,255 +1,90 @@
-Ten błąd: ORA-01439: column to be modified must be empty to change datatype oznacza, że Twój skrypt próbuje zmienić typ danych kolumny INITIATEDDATETIME (na NVARCHAR2(22)), ale w tabeli w bazie danych są już dane, a Oracle na to nie pozwala (chyba że tabela jest pusta).
-Dlaczego to się dzieje?
- * W bazie danych kolumna INITIATEDDATETIME ma prawdopodobnie typ DATE lub TIMESTAMP.
- * Twój DataFrame w Pythonie traktuje tę kolumnę jako string (napis) o długości 22 znaków.
- * Funkcja check_column_size wykrywa różnicę i próbuje wykonać ALTER TABLE ... MODIFY ... NVARCHAR2(22).
- * Oracle blokuje tę operację, bo zmiana typu DATE -> NVARCHAR2 na niepustej kolumnie jest zabroniona.
+To świetna wiadomość! Przeszliśmy przez najtrudniejsze błędy związane z typami danych (ORA-01439 jest teraz poprawnie ignorowany jako WARNING).
+Aktualny błąd: Not an executable object: 'DROP TABLE ...' oraz Not an executable object: '\n MERGE INTO ...'
+🔍 Diagnoza
+Ten błąd występuje w nowszych wersjach biblioteki SQLAlchemy (wersja 2.0+).
+Biblioteka ta nie pozwala już na przekazywanie "zwykłego tekstu" (stringa) bezpośrednio do funkcji connection.execute(). Każde zapytanie SQL napisane jako tekst musi być "opakowane" w funkcję text().
 🛠️ Rozwiązanie
-Musimy zmodyfikować funkcję check_column_size w klasie DatabaseManager. Musimy dodać obsługę błędu (try-except), aby zignorować ten błąd w przypadku Oracle. Jeśli nie możemy zmienić typu kolumny, powinniśmy po prostu zostawić ją taką, jaka jest, i spróbować wstawić dane (Oracle często poradzi sobie z niejawną konwersją string->date przy insercie).
-Oto poprawiona funkcja check_column_size. Podmień ją w swoim pliku.
-    def check_column_size(self, engine, df: pd.DataFrame, table_name: str, schema: str, target_db: str):
+Musisz poprawić funkcję _custom_merge_insert (tę, którą dodaliśmy do obsługi lookupu). Trzeba w niej dodać text(...) w dwóch miejscach: przy wykonywaniu MERGE i przy usuwaniu tabeli tymczasowej.
+Oto poprawiony kod. Podmień całą funkcję _custom_merge_insert w swojej klasie DatabaseManager.
+    def _custom_merge_insert(self, target_db: str, batch: pd.DataFrame, table: str, schema: str,
+                             lookup_keys: List[str], conn) -> None:
         """
-        Sprawdza i ewentualnie zwiększa rozmiar kolumn w bazie danych.
-        Ignoruje błędy zmiany typu danych (ORA-01439) dla niepustych tabel.
+        Realizuje wstawienie rekordów, które nie istnieją (lookup)
+        z użyciem tabeli tymczasowej i kwerendy MERGE/NOT EXISTS.
         """
-        if df.empty:
+        # IMPORT KONIECZNY DO POPRAWKI
+        from sqlalchemy import text 
+
+        if not lookup_keys:
+            self.logger.info("Brak kluczy lookup. Użycie standardowego wstawiania (to_sql).")
+            batch.to_sql(table, conn, schema=schema, if_exists='append', index=False)
             return
 
-        # Mapowanie typów dla sprawdzenia długości
-        # Używamy uproszczonego mapowania, bo interesuje nas głównie VARCHAR/NVARCHAR
-        column_types = self.map_data_types(df, target_db)
+        # 1. Przygotowanie: Tabela tymczasowa
+        import uuid
+        temp_table_name = f"TEMP_{uuid.uuid4().hex}"
+        
+        self.logger.info(f"Tworzenie tymczasowej tabeli {temp_table_name} dla partii ({len(batch)} rekordów).")
         
         try:
-            with engine.connect() as connection:
-                # Pobranie informacji o kolumnach z bazy (dla Oracle)
-                if target_db.lower() == 'oracle':
-                    # Pobieramy obecne definicje kolumn z Oracle
-                    # Uwaga: user_tab_columns przechowuje nazwy wielkimi literami
-                    sql_check = f"""
-                        SELECT COLUMN_NAME, DATA_TYPE, DATA_LENGTH, CHAR_LENGTH 
-                        FROM ALL_TAB_COLUMNS 
-                        WHERE TABLE_NAME = '{table_name.upper()}' 
-                          AND OWNER = '{schema.upper()}'
-                    """
-                    existing_cols = connection.execute(text(sql_check)).fetchall()
-                    existing_cols_dict = {row[0]: {'type': row[1], 'len': row[3] if row[3] else row[2]} for row in existing_cols}
-
-                    for col_name in df.columns:
-                        col_upper = col_name.upper()
-                        
-                        # Jeśli kolumny nie ma w bazie, zostanie dodana przy insercie (lub można tu dodać ALTER ADD)
-                        if col_upper not in existing_cols_dict:
-                            continue
-
-                        current_type_info = existing_cols_dict[col_upper]
-                        current_len = current_type_info['len']
-                        
-                        # Sprawdzamy typ w Pythonie
-                        # Jeśli w Pythonie mamy string/object, a w bazie jest VARCHAR/CHAR, sprawdzamy długość
-                        col_type_obj = column_types.get(col_name)
-                        
-                        # Interesuje nas tylko zwiększanie VARCHAR-ów
-                        is_varchar_in_python = 'VARCHAR' in str(col_type_obj).upper() or 'STRING' in str(col_type_obj).upper() or 'CLOB' in str(col_type_obj).upper()
-                        
-                        if is_varchar_in_python:
-                            # Obliczamy wymaganą długość
-                            max_len_in_df = df[col_name].astype(str).map(len).max()
-                            if pd.isna(max_len_in_df): max_len_in_df = 0
-                            required_len = int(max_len_in_df * 1.2) # Margines
-
-                            # Jeśli wymagana długość jest większa niż obecna (i obecna to nie CLOB)
-                            if required_len > current_len and current_type_info['type'] not in ['CLOB', 'NCLOB', 'LONG']:
-                                
-                                try:
-                                    alter_sql = ""
-                                    if required_len > 4000:
-                                        self.logger.info(f"Zmiana typu kolumny {col_name} na CLOB")
-                                        alter_sql = f'ALTER TABLE "{schema}"."{table_name}" MODIFY ("{col_name}" CLOB)'
-                                    else:
-                                        self.logger.info(f"Zwiększanie kolumny {col_name} z {current_len} na {required_len}")
-                                        alter_sql = f'ALTER TABLE "{schema}"."{table_name}" MODIFY ("{col_name}" VARCHAR2({required_len}))'
-                                    
-                                    connection.execute(text(alter_sql))
-                                    
-                                except Exception as e:
-                                    # 💥 TUTAJ JEST NAPRAWA TWOJEGO BŁĘDU 💥
-                                    error_str = str(e)
-                                    if "ORA-01439" in error_str:
-                                        self.logger.warning(f"Nie można zmienić typu kolumny '{col_name}' (ORA-01439). "
-                                                            f"Kolumna nie jest pusta, a typy są niekompatybilne. "
-                                                            f"Ignoruję zmianę i próbuję wstawić dane.")
-                                    else:
-                                        self.logger.error(f"Błąd podczas zmiany rozmiaru kolumny {col_name}: {e}")
-                                        # Nie podnosimy raise, próbujemy wstawiać dalej
-
-                elif target_db.lower() == 'sqlserver':
-                    # (Tutaj Twoja istniejąca logika dla SQL Server lub uproszczona wersja)
-                    pass
-
-        except Exception as e:
-            self.logger.error(f"Błąd w check_column_size: {e}")
-            # Nie przerywamy procesu, bo insert może się udać mimo to
-
-Co zmienić w kodzie?
-Musisz dodać import text z sqlalchemy na górze pliku, jeśli go nie masz:
-from sqlalchemy import text
-Kluczowa zmiana to blok except, który wyłapuje ORA-01439. Dzięki temu skrypt:
- * Spróbuje zmienić kolumnę.
- * Oracle rzuci błąd "nie mogę, bo są dane".
- * Python złapie błąd, wypisze ostrzeżenie (warning) zamiast błędu (error).
- * Proces pójdzie dalej do insert_data i spróbuje wstawić dane. Jeśli INITIATEDDATETIME to data w formacie stringowym pasującym do formatu Oracle, wstawienie się uda.
-
-Oto pełny, naprawiony kod funkcji check_column_size.
-Został on wzbogacony o blok try-except, który specyficznie wyłapuje błąd ORA-01439. Dzięki temu, gdy skrypt spróbuje zmienić typ kolumny (np. z DATE na VARCHAR), a Oracle odmówi, skrypt tylko zaloguje ostrzeżenie i pójdzie dalej, zamiast przerywać całe zadanie.
-📄 Pełny kod check_column_size
-Upewnij się, że na górze pliku masz import: from sqlalchemy import text.
-    def check_column_size(self, engine, df: pd.DataFrame, table_name: str, schema: str, target_db: str) -> None:
-        """
-        Sprawdza i dostosowuje rozmiar kolumn w tabeli (Oracle i SQL Server).
-        Obsługuje błąd ORA-01439 (blokada zmiany typu dla niepustych kolumn).
-        """
-        if df.empty:
-            return
-
-        # Używamy text() do surowych zapytań SQL
-        from sqlalchemy import text
-
-        # Pobieramy mapowanie typów, aby wiedzieć, które kolumny są tekstowe w Pythonie
-        # Używamy tutaj Twojej funkcji mapującej
-        column_types = self.map_data_types(df, target_db)
-
-        try:
-            with engine.connect() as connection:
+            # Wstawienie danych do tabeli tymczasowej
+            batch.to_sql(temp_table_name, conn, schema=schema, if_exists='replace', index=False)
+            
+            # Przygotowanie kolumn
+            all_cols_quoted = [f'"{col}"' for col in batch.columns]
+            all_cols_str = ", ".join(all_cols_quoted)
+            
+            # Warunki złączenia
+            join_conditions = " AND ".join([f"T.\"{key}\" = S.\"{key}\"" for key in lookup_keys])
+            
+            sql_query = ""
+            
+            if target_db.lower() == 'oracle':
+                # --- Oracle: MERGE ---
+                values_cols = ', '.join([f"S.{col}" for col in all_cols_quoted])
                 
-                # --- LOGIKA DLA ORACLE ---
-                if target_db.lower() == 'oracle':
-                    # 1. Pobieramy informacje o obecnych kolumnach w bazie
-                    # ALL_TAB_COLUMNS zawiera nazwy, typy i długości
-                    sql_check = f"""
-                        SELECT COLUMN_NAME, DATA_TYPE, DATA_LENGTH, CHAR_LENGTH 
-                        FROM ALL_TAB_COLUMNS 
-                        WHERE TABLE_NAME = '{table_name.upper()}' 
-                          AND OWNER = '{schema.upper()}'
-                    """
-                    existing_cols = connection.execute(text(sql_check)).fetchall()
-                    
-                    # Tworzymy słownik: { 'NAZWA_KOLUMNY': {'type': 'VARCHAR2', 'len': 100} }
-                    # CHAR_LENGTH jest lepsze dla VARCHAR2, DATA_LENGTH dla innych
-                    existing_cols_dict = {
-                        row[0].upper(): {'type': row[1], 'len': row[3] if row[3] else row[2]} 
-                        for row in existing_cols
-                    }
+                sql_query = f"""
+                MERGE INTO "{schema}"."{table}" T
+                USING "{schema}"."{temp_table_name}" S
+                ON ({join_conditions})
+                WHEN NOT MATCHED THEN
+                    INSERT ({all_cols_str})
+                    VALUES ({values_cols})
+                """
+                
+            elif target_db in ['SQLServer', 'Impala']:
+                # --- SQL Server / Impala: NOT EXISTS ---
+                where_not_exists = " AND ".join([f"T.\"{key}\" = S.\"{key}\"" for key in lookup_keys])
+                select_cols = ', '.join([f"S.{col}" for col in all_cols_quoted])
+                
+                sql_query = f"""
+                INSERT INTO "{schema}"."{table}" ({all_cols_str})
+                SELECT {select_cols}
+                FROM "{schema}"."{temp_table_name}" S
+                WHERE NOT EXISTS (
+                    SELECT 1
+                    FROM "{schema}"."{table}" T
+                    WHERE {where_not_exists}
+                )
+                """
+            
+            self.logger.info("Wykonanie operacji MERGE/NOT EXISTS INSERT.")
+            
+            # 💥 POPRAWKA 1: Opakowanie zapytania w text()
+            conn.execute(text(sql_query))
+            
+        finally:
+            # 3. Czyszczenie: Usunięcie tabeli tymczasowej
+            self.logger.info(f"Usuwanie tymczasowej tabeli {temp_table_name}.")
+            try:
+                # 💥 POPRAWKA 2: Opakowanie zapytania DROP w text()
+                drop_sql = f'DROP TABLE "{schema}"."{temp_table_name}"'
+                conn.execute(text(drop_sql))
+            except Exception as e:
+                self.logger.error(f"Nie udało się usunąć tabeli tymczasowej {temp_table_name}: {e}")
 
-                    for col_name in df.columns:
-                        col_upper = col_name.upper()
-                        
-                        # Jeśli kolumny nie ma w bazie, pomijamy (zostanie dodana lub wyrzuci błąd przy insercie)
-                        if col_upper not in existing_cols_dict:
-                            continue
-
-                        current_info = existing_cols_dict[col_upper]
-                        current_len = current_info['len']
-                        current_type = current_info['type']
-                        
-                        # Sprawdzamy typ w Pythonie (z mapowania)
-                        col_type_obj = column_types.get(col_name)
-                        col_type_str = str(col_type_obj).upper()
-
-                        # Interesuje nas tylko weryfikacja kolumn tekstowych (VARCHAR, STRING, CLOB)
-                        # Ignorujemy liczby i daty, bo ich "długość" działa inaczej
-                        is_text_col = 'VARCHAR' in col_type_str or 'STRING' in col_type_str or 'CLOB' in col_type_str
-                        
-                        if is_text_col:
-                            # Obliczamy faktyczną długość danych w DataFrame + margines 20%
-                            max_len_in_df = df[col_name].astype(str).map(len).max()
-                            if pd.isna(max_len_in_df): 
-                                max_len_in_df = 0
-                            
-                            required_len = int(max_len_in_df * 1.2)
-                            
-                            # Jeśli wymagana długość jest większa niż obecna w bazie
-                            # I obecna kolumna to nie jest już CLOB (który jest ogromny)
-                            if required_len > current_len and current_type not in ['CLOB', 'NCLOB', 'LONG', 'BLOB']:
-                                
-                                alter_sql = ""
-                                try:
-                                    if required_len > 4000:
-                                        self.logger.info(f"Wykryto potrzebę zmiany kolumny {col_name} na CLOB (wymagane: {required_len})")
-                                        alter_sql = f'ALTER TABLE "{schema}"."{table_name}" MODIFY ("{col_name}" CLOB)'
-                                    else:
-                                        self.logger.info(f"Zwiększanie kolumny {col_name} z {current_len} na {required_len}")
-                                        alter_sql = f'ALTER TABLE "{schema}"."{table_name}" MODIFY ("{col_name}" VARCHAR2({required_len}))'
-                                    
-                                    # Wykonanie zmiany
-                                    connection.execute(text(alter_sql))
-                                    self.logger.info(f"Pomyślnie zmieniono rozmiar kolumny {col_name}.")
-                                    
-                                except Exception as e:
-                                    # 💥 KLUCZOWA POPRAWKA DLA ORA-01439 💥
-                                    error_str = str(e)
-                                    if "ORA-01439" in error_str:
-                                        self.logger.warning(
-                                            f"Ignoruję zmianę typu/rozmiaru dla '{col_name}' (Błąd ORA-01439). "
-                                            f"Baza zawiera dane, a typy są niekompatybilne (np. DATE vs VARCHAR). "
-                                            f"Próba wstawienia danych nastąpi bez zmian w strukturze."
-                                        )
-                                    elif "ORA-01441" in error_str:
-                                        self.logger.warning(f"Nie można zmniejszyć długości kolumny {col_name}, ponieważ zawiera ona dane.")
-                                    else:
-                                        # Inne błędy logujemy jako Warning, żeby nie przerywać procesu
-                                        self.logger.warning(f"Nie udało się zmienić rozmiaru kolumny {col_name}: {e}")
-
-                # --- LOGIKA DLA SQL SERVER ---
-                elif target_db.lower() == 'sqlserver':
-                    
-                    sql_check = f"""
-                        SELECT COLUMN_NAME, CHARACTER_MAXIMUM_LENGTH 
-                        FROM INFORMATION_SCHEMA.COLUMNS 
-                        WHERE TABLE_SCHEMA = '{schema}' 
-                          AND TABLE_NAME = '{table_name}'
-                    """
-                    existing_cols = connection.execute(text(sql_check)).fetchall()
-                    existing_cols_dict = {row[0]: row[1] for row in existing_cols}
-
-                    for col_name in df.columns:
-                        if col_name not in existing_cols_dict:
-                            continue
-                            
-                        current_len = existing_cols_dict[col_name]
-                        # W SQL Server -1 oznacza MAX
-                        if current_len == -1: 
-                            continue
-
-                        # Sprawdzamy czy to kolumna tekstowa w Pythonie
-                        col_type_obj = column_types.get(col_name)
-                        if 'VARCHAR' in str(col_type_obj).upper() or 'NVARCHAR' in str(col_type_obj).upper():
-                            
-                            max_len_in_df = df[col_name].astype(str).map(len).max()
-                            if pd.isna(max_len_in_df): max_len_in_df = 0
-                            required_len = int(max_len_in_df * 1.2)
-
-                            # Jeśli obecna długość to nie None (czyli nie MAX) i wymagana jest większa
-                            if current_len is not None and required_len > current_len:
-                                try:
-                                    alter_sql = ""
-                                    if required_len > 4000:
-                                        alter_sql = f'ALTER TABLE [{schema}].[{table_name}] ALTER COLUMN [{col_name}] NVARCHAR(MAX)'
-                                    else:
-                                        alter_sql = f'ALTER TABLE [{schema}].[{table_name}] ALTER COLUMN [{col_name}] NVARCHAR({required_len})'
-                                    
-                                    self.logger.info(f"SQL Server: Zwiększanie kolumny {col_name} na {required_len}")
-                                    connection.execute(text(alter_sql))
-                                except Exception as e:
-                                    self.logger.warning(f"Błąd zmiany kolumny SQL Server {col_name}: {e}")
-
-        except Exception as e:
-            # Globalny catch dla funkcji - nie chcemy, żeby sprawdzanie rozmiaru wywaliło cały import
-            self.logger.error(f"Ogólny błąd podczas sprawdzania rozmiaru kolumn: {e}")
-
-Co robi ten kod?
- * Iteruje po kolumnach: Sprawdza każdą kolumnę z DataFrame.
- * Porównuje: Sprawdza, czy w DataFrame jest tekst dłuższy niż limit ustawiony w bazie danych.
- * Próbuje zmienić: Jeśli w DataFrame jest dłuższy tekst, próbuje wykonać ALTER TABLE.
- * Chwyta ORA-01439: Jeśli Oracle rzuci błąd "nie mogę zmienić typu, bo są dane", Python to wyłapie, wypisze żółte ostrzeżenie w logach i pozwoli programowi działać dalej.
-Po wklejeniu tej funkcji Twój proces insert_data powinien przejść ten etap bez błędu krytycznego.
-
+Co dokładnie się zmieniło?
+ * Dodałem from sqlalchemy import text na początku funkcji.
+ * Zmieniłem conn.execute(sql_query) na conn.execute(text(sql_query)).
+ * Zmieniłem conn.execute(f'DROP TABLE ...') na conn.execute(text(f'DROP TABLE ...')).
+Po tej zmianie operacja MERGE powinna się wykonać poprawnie!
