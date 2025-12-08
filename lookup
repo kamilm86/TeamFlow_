@@ -1,112 +1,98 @@
-Tak, to zmienia postać rzeczy. Jeśli nie masz uprawnień do tworzenia tabel (nawet tymczasowych), to poprzednia metoda z MERGE i tabelą TEMP_... nie zadziała (zwróci błąd ORA-01031: insufficient privileges).
-Musimy zmienić podejście na takie, które operuje wyłącznie na docelowej tabeli. Mamy dwie główne opcje:
- * Opcja SQL (Zalecana): Zmodyfikowanie zapytania INSERT tak, aby dla każdego wiersza sprawdzało, czy rekord już istnieje (używając konstrukcji INSERT ... SELECT ... FROM DUAL WHERE NOT EXISTS). To działa w ramach executemany i nie wymaga tworzenia nowych obiektów.
- * Opcja Python (Alternatywna): Pobranie istniejących kluczy do Pythona, przefiltrowanie DataFrame i wstawienie tylko "czystych" danych.
-Zdecydowanie polecam Opcję SQL, ponieważ jest bezpieczniejsza dla spójności danych i łatwiejsza do wdrożenia w Twoim kodzie.
-🛠️ Rozwiązanie: INSERT z warunkiem NOT EXISTS (bez tabeli tymczasowej)
-Podmień funkcję _custom_merge_insert na poniższą wersję. Została ona przepisana tak, aby nie tworzyć tabeli tymczasowej. Zamiast tego konstruuje sprytne zapytanie INSERT, które samo pilnuje unikalności.
-Zaktualizowany kod _custom_merge_insert
-    def _custom_merge_insert(self, target_db: str, batch: pd.DataFrame, table: str, schema: str,
-                             lookup_keys: List[str], conn) -> None:
+To jest kluczowy moment. Jeśli proces trwa bardzo długo, to brak indeksu jest głównym winowajcą.
+🚀 O ile przyspieszy indeks?
+Drastycznie. To różnica rzędu rzędu wielkości (np. z 2 godzin do 2 minut).
+ * Bez indeksu: Baza danych dla każdego wstawianego wiersza musi przeszukać całą tabelę docelową linijka po linijce, aby sprawdzić, czy klucz istnieje (tzw. Full Table Scan). Przy milionach rekordów to miliardy operacji.
+ * Z indeksem: Baza używa drzewa binarnego. Sprawdzenie istnienia to ułamek sekundy.
+⚠️ Problem uprawnień
+Skoro nie mogłeś utworzyć tabeli tymczasowej (CREATE TABLE), istnieje bardzo duże ryzyko, że nie będziesz miał też uprawnień do CREATE INDEX.
+Mimo to, przygotowałem dla Ciebie funkcję, która:
+ * Sprawdza, czy indeks na danych kolumnach już istnieje.
+ * Jeśli nie – próbuje go utworzyć.
+ * Jeśli nie ma uprawnień – łapie błąd i loguje ostrzeżenie (wtedy musimy użyć "Planu B" - filtrowania w Pythonie).
+Rozwiązanie 1: Funkcja sprawdzająca i tworząca indeksy (Dodaj do DatabaseManager)
+Wklej tę metodę do klasy DatabaseManager.
+    def ensure_index_exists(self, target_db: str, table: str, schema: str, lookup_keys: List[str]) -> None:
         """
-        Wstawia dane pomijając duplikaty (Lookup) BEZ tworzenia tabel tymczasowych.
-        Używa konstrukcji SQL 'INSERT ... WHERE NOT EXISTS'.
+        Sprawdza czy istnieje indeks na kolumnach lookup_keys.
+        Jeśli nie - próbuje go utworzyć.
         """
-        from sqlalchemy import text
-
         if not lookup_keys:
-            # Standardowy insert jeśli brak kluczy lookup
-            batch.to_sql(table, conn, schema=schema, if_exists='append', index=False)
             return
 
-        self.logger.info(f"Wstawianie z pominięciem duplikatów (metoda bez tabel tymczasowych).")
-
-        # 1. Przygotowanie danych do wstawienia (lista słowników)
-        # Zamieniamy NaN na None, aby baza przyjęła to jako NULL
-        data_to_insert = batch.where(pd.notnull(batch), None).to_dict(orient='records')
+        from sqlalchemy import text
         
-        if not data_to_insert:
-            return
-
-        # 2. Budowanie zapytania SQL w zależności od bazy
-        sql_query = ""
-
-        # Pobranie nazw kolumn z DataFrame
-        columns = list(batch.columns)
-        quoted_cols = [f'"{col}"' for col in columns] # Nazwy kolumn w cudzysłowach
+        # Nazwa indeksu (musi być unikalna i krótka, Oracle ma limit 30 znaków w starszych wersjach)
+        # Tworzymy nazwę np. IDX_TABELA_COL1_COL2
+        short_table = table[:10]
+        cols_suffix = "_".join([k[:3] for k in lookup_keys])[:10]
+        index_name = f"IDX_{short_table}_{cols_suffix}".upper()
         
-        # Przygotowanie placeholderów (bind variables)
-        # W SQLAlchemy używamy :nazwa_kolumny
-        bind_vars = [f":{col}" for col in columns]
-
-        if target_db.lower() == 'oracle':
-            # --- ORACLE: INSERT SELECT FROM DUAL WHERE NOT EXISTS ---
-            
-            # Budujemy warunek WHERE (np. T."ID" = :ID AND T."DATA" = :DATA)
-            where_clause_parts = []
-            for key in lookup_keys:
-                where_clause_parts.append(f'T."{key}" = :{key}')
-            where_clause = " AND ".join(where_clause_parts)
-
-            cols_str = ", ".join(quoted_cols)
-            binds_str = ", ".join(bind_vars)
-
-            # Magiczna konstrukcja dla Oracle:
-            # Wstawiamy wartości (:val1, :val2) pobierając je z wirtualnej tabeli DUAL,
-            # ale TYLKO JEŚLI w tabeli docelowej NIE MA takiego klucza.
-            sql_query = f"""
-            INSERT INTO "{schema}"."{table}" T ({cols_str})
-            SELECT {binds_str} FROM DUAL
-            WHERE NOT EXISTS (
-                SELECT 1 FROM "{schema}"."{table}" T
-                WHERE {where_clause}
-            )
-            """
-
-        elif target_db.lower() == 'sqlserver':
-            # --- SQL SERVER: IF NOT EXISTS ... INSERT ---
-            
-            # Budujemy warunek (np. [ID] = @ID AND [DATA] = @DATA)
-            # Uwaga: SQL Server używa @ w T-SQL, ale SQLAlchemy mapuje :nazwa na parametry
-            where_clause_parts = []
-            for key in lookup_keys:
-                where_clause_parts.append(f'TARGET.[{key}] = :{key}')
-            where_clause = " AND ".join(where_clause_parts)
-            
-            cols_str = ", ".join([f"[{col}]" for col in columns])
-            binds_str = ", ".join(bind_vars)
-
-            sql_query = f"""
-            IF NOT EXISTS (SELECT 1 FROM [{schema}].[{table}] AS TARGET WHERE {where_clause})
-            BEGIN
-                INSERT INTO [{schema}].[{table}] ({cols_str})
-                VALUES ({binds_str})
-            END
-            """
-            
-        elif target_db.lower() == 'impala':
-             # Impala nie obsługuje łatwo parametrów w VALUES przy NOT EXISTS w ten sposób.
-             # Dla Impali bezpieczniej jest wrócić do standardowego append i liczyć na unikalność,
-             # lub użyć metody filtrowania w Pythonie (którą mogę opisać, jeśli używasz Impali).
-             self.logger.warning("Metoda lookup bez tabel tymczasowych dla Impali może być wolna. Używam standardowego insert.")
-             batch.to_sql(table, conn, schema=schema, if_exists='append', index=False)
-             return
-
-        # 3. Wykonanie masowe (Batch execution)
+        cols_str = ", ".join([f'"{col}"' for col in lookup_keys])
+        
+        engine = self._get_engine(target_db)
+        
         try:
-            # executemany w SQLAlchemy 2.0 robi się przekazując listę słowników jako drugi argument
-            conn.execute(text(sql_query), data_to_insert)
-            self.logger.info(f"Przetworzono partię {len(data_to_insert)} rekordów.")
-            
-        except Exception as e:
-            self.logger.error(f"Błąd podczas wstawiania warunkowego: {e}")
-            raise
+            with engine.connect() as connection:
+                # 1. Sprawdzenie czy indeks istnieje (Oracle)
+                if target_db.lower() == 'oracle':
+                    # Sprawdzamy czy istnieje JAKIKOLWIEK indeks zawierający te kolumny jako wiodące
+                    # To uproszczone sprawdzenie - sprawdzamy po prostu czy nazwa indeksu, którą chcemy nadać, już jest
+                    check_sql = f"""
+                        SELECT COUNT(*) FROM ALL_INDEXES 
+                        WHERE INDEX_NAME = '{index_name}' AND OWNER = '{schema.upper()}'
+                    """
+                    count = connection.execute(text(check_sql)).scalar()
+                    
+                    if count > 0:
+                        self.logger.info(f"Indeks {index_name} już istnieje.")
+                        return
 
-💡 Dlaczego to zadziała?
- * Brak CREATE TABLE: Cała operacja odbywa się w jednym zapytaniu INSERT, do którego masz uprawnienia (skoro możesz wstawiać dane).
- * Atomowość: Baza danych dla każdego wiersza "w locie" sprawdza WHERE NOT EXISTS.
- * Wydajność: Chociaż jest to nieco wolniejsze niż MERGE na całej tabeli, przy executemany (które SQLAlchemy optymalizuje pod spodem używając tablic parametrów Oracle), jest to bardzo wydajne rozwiązanie.
-⚠️ Ważna uwaga wydajnościowa
-Aby to rozwiązanie działało szybko, kolumny zdefiniowane w lookup_keys (np. INITIATEDDATETIME) POWINNY mieć założony INDEKS na bazie docelowej Oracle. Bez indeksu baza będzie musiała skanować całą tabelę dla każdego wstawianego wiersza, co przy milionach rekordów będzie bardzo wolne.
-Jeśli masz uprawnienia tylko do INSERT/SELECT, ale nie możesz tworzyć indeksów, a tabela jest duża, ten proces może zwolnić. Wtedy jedynym ratunkiem jest "Opcja Python" (filtrowanie danych przed wysłaniem do bazy).
-Daj znać, czy to rozwiązanie ruszyło!
+                    # 2. Próba utworzenia indeksu
+                    self.logger.info(f"Próba utworzenia indeksu {index_name} na kolumnach: {lookup_keys}...")
+                    create_sql = f'CREATE INDEX "{schema}"."{index_name}" ON "{schema}"."{table}" ({cols_str})'
+                    connection.execute(text(create_sql))
+                    self.logger.info(f"Pomyślnie utworzono indeks {index_name}.")
+                    
+                elif target_db.lower() == 'sqlserver':
+                    # Logika dla SQL Server (IF NOT EXISTS...)
+                    create_sql = f"""
+                    IF NOT EXISTS (SELECT * FROM sys.indexes WHERE name = '{index_name}' AND object_id = OBJECT_ID('{schema}.{table}'))
+                    BEGIN
+                        CREATE INDEX [{index_name}] ON [{schema}].[{table}] ({", ".join([f"[{k}]" for k in lookup_keys])})
+                    END
+                    """
+                    connection.execute(text(create_sql))
+                    self.logger.info(f"Zweryfikowano/Utworzono indeks {index_name} w SQL Server.")
+
+        except Exception as e:
+            # 💥 Jeśli nie masz uprawnień, tutaj wpadniemy
+            error_msg = str(e)
+            if "ORA-01031" in error_msg: # Insufficient privileges
+                self.logger.warning(f"BRAK UPRAWNIEŃ do tworzenia indeksów na tabeli {table}. "
+                                    f"Proces insertu będzie BARDZO WOLNY.")
+            else:
+                self.logger.warning(f"Nie udało się utworzyć indeksu: {e}")
+
+Gdzie to wywołać?
+Dodaj wywołanie tej funkcji w insert_data przed pętlą przetwarzającą batche, np. zaraz po check_column_size:
+# Wewnątrz insert_data, okolice linii 1165 (po check_column_size)
+
+# ...
+self.check_column_size(engine, df_to_load, table_name, schema, target_db)
+
+# 💥 NOWE: Próba utworzenia indeksu przed insertem
+if lookup_keys:
+    self.ensure_index_exists(target_db, table_name, schema, lookup_keys)
+
+# 4. Ładowanie partii (Batching)
+# ...
+
+🚨 Plan B: Co jeśli NIE MASZ uprawnień do indeksów? (Opcja Python)
+Jeśli dostaniesz ORA-01031 (brak uprawnień) przy tworzeniu indeksu, a tabela jest duża, metoda SQL NOT EXISTS nigdy nie skończy się w rozsądnym czasie.
+Wtedy musisz zmienić strategię na filtrowanie w Pythonie. Jest to jedyne szybkie wyjście przy braku uprawnień DB.
+Logika:
+ * Pobierz tylko klucze z bazy do Pythona (jest to szybkie, nawet przy milionach wierszy, jeśli to tylko 1-2 kolumny).
+ * Usuń z DataFrame wiersze, które już są w tym zbiorze kluczy.
+ * Wykonaj szybki, zwykły INSERT (bez WHERE NOT EXISTS).
+Zmieniona funkcja _custom_merge_insert dla Planu B (Filtrowanie w RAM):
+Jeśli okaże się, że indeksy nie wchodzą w grę, napisz, a podam kod, który pobiera klucze (SELECT ID FROM TABLE) do set() w Pythonie i filtruje DataFrame przed wysłaniem. To zużyje trochę więcej RAMu (ok. 50-100MB na 2mln rekordów), ale będzie nieporównywalnie szybsze niż insert bez indeksu.
