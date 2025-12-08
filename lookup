@@ -1,134 +1,32 @@
-To rozsądna decyzja. Skoro baza stawia opór (uprawnienia, brak indeksów, blokady typów), filtrowanie w Pythonie (RAM) jest najpewniejszym rozwiązaniem. Będzie to kosztować trochę więcej pamięci RAM (musimy pobrać klucze), ale zadziała zawsze, niezależnie od bazy danych.
-Oto pełne, gotowe do wklejenia kody dwóch funkcji, które musisz podmienić w klasie DatabaseManager (db_m_windows.py).
-Zaimplementowałem tu logikę:
- * Pobierz istniejące klucze z bazy (ograniczając zakres do minimum/maksimum z obecnej partii, żeby nie pobierać całej tabeli).
- * Porównaj w Pythonie i usuń duplikaty.
- * Wyczyść dane (zamiana przecinków, <NA>, wymuszenie liczb) – to, co poprawialiśmy wcześniej.
- * Wstaw tylko nowe rekordy.
-1. Funkcja _custom_merge_insert (Plan B: Filtrowanie w RAM)
-Ta funkcja zastępuje całkowicie poprzednie wersje SQL-owe.
-    def _custom_merge_insert(self, target_db: str, batch: pd.DataFrame, table: str, schema: str,
-                             lookup_keys: List[str], conn) -> None:
-        """
-        PLAN B: Filtrowanie w RAM.
-        1. Pobiera istniejące klucze z bazy (tylko z zakresu dat/ID obecnego batcha).
-        2. Usuwa duplikaty z DataFrame w Pythonie.
-        3. Wstawia tylko nowe rekordy.
-        """
-        from sqlalchemy import text
-        import gc
-
-        # Jeśli brak kluczy lub batch pusty, wstawiamy wszystko
-        if not lookup_keys or batch.empty:
-            batch.to_sql(table, conn, schema=schema, if_exists='append', index=False)
-            return
-
-        self.logger.info(f"Filtrowanie duplikatów w RAM (Lookup po: {lookup_keys})...")
-
-        # 1. Budowanie zapytania SELECT, aby pobrać TYLKO potrzebne klucze z bazy
-        # Optymalizacja: Dodajemy WHERE, żeby nie pobierać kluczy dla całej tabeli,
-        # tylko dla zakresu danych, który mamy w batchu.
-        
-        where_conditions = []
-        params = {}
-        
-        for key in lookup_keys:
-            # Sprawdzamy, czy kolumna w batchu jest sortowalna (liczba/data)
-            # Jeśli tak, ograniczamy zapytanie do min/max z batcha
-            if pd.api.types.is_numeric_dtype(batch[key]) or pd.api.types.is_datetime64_any_dtype(batch[key]):
-                min_val = batch[key].min()
-                max_val = batch[key].max()
-                
-                # Konwersja Timestamp do stringa dla bezpiecznego SQL
-                if pd.api.types.is_datetime64_any_dtype(batch[key]):
-                    min_val = str(min_val)
-                    max_val = str(max_val)
-                
-                # Dodajemy warunek SQL: key BETWEEN min AND max
-                # Używamy nazw parametrów unikalnych dla klucza
-                p_min = f"min_{key}"
-                p_max = f"max_{key}"
-                
-                if target_db.lower() == 'oracle':
-                    where_conditions.append(f'"{key}" >= :{p_min} AND "{key}" <= :{p_max}')
-                else: # SQL Server / Impala
-                    where_conditions.append(f"[{key}] >= :{p_min} AND [{key}] <= :{p_max}")
-                
-                params[p_min] = min_val
-                params[p_max] = max_val
-
-        # Złożenie zapytania
-        cols_sql = ", ".join([f'"{k}"' if target_db.lower() == 'oracle' else f'[{k}]' for k in lookup_keys])
-        table_sql = f'"{schema}"."{table}"' if target_db.lower() == 'oracle' else f'[{schema}].[{table}]'
-        
-        sql = f"SELECT {cols_sql} FROM {table_sql}"
-        if where_conditions:
-            sql += " WHERE " + " AND ".join(where_conditions)
-
-        try:
-            # 2. Pobranie istniejących kluczy
-            self.logger.info(f"Pobieranie istniejących kluczy z bazy...")
-            existing_data = pd.read_sql(text(sql), conn, params=params)
-            
-            if not existing_data.empty:
-                # 3. Filtrowanie w Pythonie
-                # Tworzymy unikalne krotki (tuple) dla kluczy w bazie i w batchu
-                
-                # Standaryzacja typów do stringa, żeby uniknąć problemów (np. int vs float, data vs string)
-                # To trochę wolniejsze, ale bezpieczne
-                existing_keys_set = set(zip(*[existing_data[k].astype(str) for k in lookup_keys]))
-                
-                # Filtrujemy batch
-                # Tworzymy tymczasową listę kluczy batcha w tym samym formacie
-                batch_keys = zip(*[batch[k].astype(str) for k in lookup_keys])
-                
-                # Znajdź indeksy wierszy, które NIE są w zestawie z bazy
-                to_insert_indices = [i for i, key_tuple in enumerate(batch_keys) if key_tuple not in existing_keys_set]
-                
-                if len(to_insert_indices) == 0:
-                    self.logger.info("Wszystkie rekordy z tej partii już istnieją w bazie. Pomijam.")
-                    return
-                
-                if len(to_insert_indices) < len(batch):
-                    self.logger.info(f"Wykryto duplikaty. Wstawianie {len(to_insert_indices)} z {len(batch)} rekordów.")
-                    batch_to_insert = batch.iloc[to_insert_indices].copy()
-                else:
-                    batch_to_insert = batch # Brak duplikatów
-            else:
-                batch_to_insert = batch # Baza nie zwróciła żadnych kluczy w tym zakresie
-
-            # 4. Wstawianie przefiltrowanych danych
-            if not batch_to_insert.empty:
-                batch_to_insert.to_sql(table, conn, schema=schema, if_exists='append', index=False)
-                self.logger.info(f"Wstawiono {len(batch_to_insert)} nowych rekordów.")
-            
-            # Sprzątanie pamięci
-            del existing_data
-            del batch_to_insert
-            gc.collect()
-
-        except Exception as e:
-            self.logger.error(f"Błąd podczas filtrowania w RAM: {e}")
-            raise
-
-2. Funkcja insert_data (Zawiera agresywne czyszczenie danych)
-Ta funkcja przygotowuje dane, czyści je (zamienia przecinki na kropki, usuwa <NA>) i wywołuje powyższą funkcję.
+To błąd programistyczny (nie bazy danych). Kod w funkcji insert_data próbuje odwołać się do słownika self.type_mappings, którego nie zdefiniowaliśmy w __init__ Twojej klasy.
+Aby to naprawić szybko i bezboleśnie (bez szukania metody __init__), zdefiniujemy ten słownik lokalnie wewnątrz funkcji insert_data. Dzięki temu funkcja będzie samowystarczalna.
+Oto ostateczna, pełna wersja funkcji insert_data.
+Zawiera ona:
+ * Naprawę błędu type_mappings (definicja lokalna).
+ * Agresywne czyszczenie danych (zamiana przecinków na kropki, usuwanie <NA>, wymuszanie liczb) – żeby uniknąć ORA-01722.
+ * Plan B (Filtrowanie w RAM) – wywołanie funkcji filtrującej zamiast SQL-owego lookupu.
+Wklej ten kod w miejsce starej funkcji insert_data:
     def insert_data(self, df: pd.DataFrame, target_db: str, table_name: str, 
                     schema: str, if_exists: str = 'append', batch_size: int = 1000000, 
                     verbose: bool = True, use_fast_executemany: bool = True, 
                     lookup_keys: Optional[List[str]] = None) -> None:
         
+        from sqlalchemy import text
+        import numpy as np
+        import gc
+
         self.logger.info(f"Rozpoczynanie wstawiania do {target_db}.{schema}.{table_name} (Wierszy: {len(df)})")
         engine = self._get_engine(target_db) 
         
         try:
             with engine.connect() as connection:
-                # Ustawienia dla SQL Server
+                # Ustawienia dla SQL Server (opcjonalne, bezpieczne)
                 if target_db == 'SQLServer':
-                    connection.execute(text("SET LOCK_TIMEOUT 1200000"))
-                    connection.execute(text("SET TEXTSIZE 66000000"))
-                    connection.execute(text("SET TRANSACTION ISOLATION LEVEL READ COMMITTED"))
-                    connection.execute(text("SET XACT_ABORT ON")) 
+                    try:
+                        connection.execute(text("SET LOCK_TIMEOUT 1200000"))
+                        connection.execute(text("SET TRANSACTION ISOLATION LEVEL READ COMMITTED"))
+                    except Exception:
+                        pass # Ignorujemy jeśli sterownik nie obsługuje
 
                 # 1. Transformacje DataFrame
                 df_to_load = df.copy() 
@@ -139,15 +37,26 @@ Ta funkcja przygotowuje dane, czyści je (zamienia przecinki na kropki, usuwa <N
                 df_to_load = df_to_load.astype(str).replace({pd.NaT: None, 'nan': None, '<NA>': None}) 
                 
                 # --- ROZDZIELENIE TYPÓW (NAPRAWA BŁĘDU VARCHAR) ---
-                # Typy SQL dla create_table
+                # Typy SQL dla create_table (zwraca obiekty SQLAlchemy)
                 sqlalchemy_dtype_dict = self.map_data_types(df_to_load, target_db) 
                 
-                # Typy Numpy dla astype (z Twojego inita lub local)
-                if hasattr(self, 'type_mappings'):
-                    numpy_type_mappings = self.type_mappings.get(target_db, {})
-                else:
-                    numpy_type_mappings = {} # Fallback
+                # 💥💥💥 NAPRAWA BŁĘDU type_mappings 💥💥💥
+                # Definiujemy mapowanie LOKALNIE, żeby nie musieć zmieniać __init__
+                local_type_mappings = {
+                    'Oracle': {
+                        'int64': 'int64',
+                        'float64': 'float64',
+                        'datetime64[ns]': 'datetime64[ns]',
+                        'object': 'str',
+                        'bool': 'int64', # Oracle nie ma boola
+                        'date': 'datetime64[ns]'
+                    },
+                    'SQLServer': {'int64': 'int64', 'bool': 'bool', 'object': 'str'},
+                    'Impala': {'int64': 'int64', 'bool': 'bool', 'object': 'str'}
+                }
+                numpy_type_mappings = local_type_mappings.get(target_db, {})
 
+                # Budujemy słownik typów dla Pandas astype
                 numpy_dtype_dict = {}
                 for col_name in df_to_load.columns:
                     dtype = df_to_load[col_name].dtype.name
@@ -159,43 +68,44 @@ Ta funkcja przygotowuje dane, czyści je (zamienia przecinki na kropki, usuwa <N
                         numpy_dtype_dict[col_name] = 'str' 
                 
                 self.logger.info(f"Konwersja typów (astype)...") 
+                # Tutaj używamy bezpiecznych typów stringowych dla Pandasa
                 df_to_load = df_to_load.astype(numpy_dtype_dict) 
                 
                 # --- AGRESYWNE CZYSZCZENIE (NAPRAWA BŁĘDU ORA-01722) ---
-                import numpy as np
                 
-                # Lista kolumn znanych jako liczbowe (z Twoich błędów)
+                # Lista kolumn znanych jako liczbowe (z Twoich logów błędów)
+                # Możesz tu dopisać inne kolumny, które sprawiają problemy
                 known_numeric_cols = [
                     'TIMEINIVR', 'CALLDURATION', 'ILE_INT', 'SEGMENTID_START', 
                     'SEGMENTID_END', 'LASTASSIGNEDWORKGROUPID'
                 ]
                 
                 for col in df_to_load.columns:
-                    # Sprawdzamy czy kolumna powinna być liczbowa
+                    # Sprawdzamy czy kolumna powinna być liczbowa (po nazwie lub typie)
                     is_numeric = (col in known_numeric_cols) or \
                                  ('int' in str(numpy_dtype_dict.get(col, ''))) or \
                                  ('float' in str(numpy_dtype_dict.get(col, '')))
 
                     if is_numeric:
-                        # Zamiana na string, czyszczenie śmieci i przecinków
+                        # 1. Najpierw na string, żeby móc czyścić
                         df_to_load[col] = df_to_load[col].astype(str)
                         
-                        # Czyścimy typowe śmieci na NaN
+                        # 2. Zamiana typowych śmieci na NaN
                         replace_dict = {'<NA>': np.nan, 'nan': np.nan, 'NaN': np.nan, 'None': np.nan, '': np.nan}
                         for k, v in replace_dict.items():
                              df_to_load[col] = df_to_load[col].replace(k, v)
                         
-                        # Zamiana przecinka na kropkę
+                        # 3. Zamiana przecinka na kropkę (kluczowe dla PL danych)
                         df_to_load[col] = df_to_load[col].str.replace(',', '.', regex=False)
                         
-                        # Konwersja na liczbę (błędy -> NaN)
+                        # 4. Wymuszenie konwersji na liczbę (błędy zamieniane na NaN)
                         df_to_load[col] = pd.to_numeric(df_to_load[col], errors='coerce')
 
-                # Zamiana wszystkich NaN na None (SQL NULL)
+                # Zamiana wszystkich NaN na None (SQL NULL) - to jest bezpieczne dla bazy
                 df_to_load = df_to_load.where(pd.notnull(df_to_load), None)
                 self.logger.info("Dane wyczyszczone (liczby naprawione, NaN -> NULL).")
                 
-                # 2. Tworzenie tabeli
+                # 2. Tworzenie tabeli (jeśli trzeba)
                 if not self.create_table_if_not_exists(engine, sqlalchemy_dtype_dict, df_to_load, table_name, schema, target_db):
                      if if_exists == 'replace':
                          connection.execute(text(f'DROP TABLE "{schema}"."{table_name}"'))
@@ -203,10 +113,10 @@ Ta funkcja przygotowuje dane, czyści je (zamienia przecinki na kropki, usuwa <N
                      elif if_exists == 'truncate':
                          connection.execute(text(f'TRUNCATE TABLE "{schema}"."{table_name}"'))
                 
-                # Sprawdzenie rozmiarów kolumn
+                # Sprawdzenie rozmiarów kolumn (ignoruje błędy ORA-01439)
                 self.check_column_size(engine, df_to_load, table_name, schema, target_db)
                 
-                # 3. Batching i Insert
+                # 3. Batching i Insert (Plan B - Filtrowanie w RAM)
                 total_rows = len(df_to_load)
                 if total_rows == 0:
                     return
@@ -223,7 +133,7 @@ Ta funkcja przygotowuje dane, czyści je (zamienia przecinki na kropki, usuwa <N
                     if verbose:
                         self.logger.info(f"Przetwarzanie partii {batch_num+1}/{full_batches+1}...")
 
-                    # Wywołanie nowej funkcji (RAM FILTER)
+                    # Wywołanie funkcji z Planu B (musi być zaimplementowana jak podałem wcześniej)
                     self._custom_merge_insert(
                         target_db=target_db,
                         batch=batch,
@@ -259,10 +169,8 @@ Ta funkcja przygotowuje dane, czyści je (zamienia przecinki na kropki, usuwa <N
             raise
         finally:
             if 'engine' in locals():
-                pass # Engine zarządzany przez connection pool
+                pass 
 
-Co to zmieni?
- * Koniec problemów z uprawnieniami: Nie tworzymy tabel, indeksów ani skomplikowanych kursorów.
- * Koniec ORA-01722: Kod agresywnie zamienia wszystkie "śmieci" (tekst w kolumnach liczbowych) i przecinki na poprawne liczby lub NULL zanim wyśle je do bazy.
- * Działający Lookup: Duplikaty są odrzucane w Pythonie.
-Wklej te dwie funkcje i uruchom. To powinno wreszcie zadziałać.
+Co sprawdzić po wklejeniu?
+Upewnij się, że masz wklejoną również funkcję _custom_merge_insert w wersji Plan B (tę z filtrowaniem w RAM, którą podałem w poprzedniej wiadomości).
+Ta kombinacja (lokalna definicja typów + agresywne czyszczenie + filtrowanie w RAM) powinna być ostatecznym rozwiązaniem Twoich problemów.
