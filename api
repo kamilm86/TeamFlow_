@@ -1,0 +1,101 @@
+To bardzo mądre podejście. W świecie integracji nazywamy to "Smoke Test" (test dymny) lub "Ping".
+Zanim cokolwiek wyślemy (POST), sprawdźmy, czy drzwi są otwarte (GET).
+Oto bezpieczny skrypt w Pythonie, który nie zmienia żadnych danych. Robi tylko dwie rzeczy:
+ * Próbuje się zalogować (sprawdza Client ID/Secret).
+ * Próbuje pobrać listę pierwszego z brzegu pracownika (sprawdza uprawnienia/Scope).
+Skrypt Testowy (Connection Tester)
+Zapisz to jako test_connection.py.
+import requests
+import json
+import sys
+
+# --- TWOJE DANE KONFIGURACYJNE ---
+CLIENT_ID = "twoj_client_id"
+CLIENT_SECRET = "twoj_client_secret"
+# Pamiętaj: Pilot (test) czy Produkcja?
+PORTAL_URL = "https://twoja-firma-pilot.csod.com" 
+# Scope 'employee:read' jest najbezpieczniejszy do testów
+SCOPE = "employee:read" 
+
+def test_connection():
+    print("🔌 Rozpoczynam test połączenia z Cornerstone...")
+    
+    # 1. TEST AUTORYZACJI (Pobranie tokena)
+    token_url = f"{PORTAL_URL}/services/api/oauth2/token"
+    payload = {
+        "grant_type": "client_credentials",
+        "client_id": CLIENT_ID,
+        "client_secret": CLIENT_SECRET,
+        "scope": SCOPE
+    }
+    
+    try:
+        auth_response = requests.post(token_url, data=payload)
+        
+        if auth_response.status_code == 200:
+            print("✅ KROK 1: Autoryzacja udana! (Token pobrany)")
+            token = auth_response.json()["access_token"]
+        elif auth_response.status_code == 401:
+            print("❌ BŁĄD: Nieprawidłowe Client ID lub Secret.")
+            return
+        else:
+            print(f"❌ BŁĄD AUTORYZACJI: Kod {auth_response.status_code}")
+            print(auth_response.text)
+            return
+
+    except Exception as e:
+        print(f"❌ BŁĄD KRYTYCZNY: Nie można połączyć się z serwerem. Sprawdź URL. {e}")
+        return
+
+    # 2. TEST ODCZYTU DANYCH (Ping)
+    # Pobieramy tylko 1 rekord (limit=1), żeby było szybko
+    # Używamy endpointu pracowników, bo tam zawsze są jakieś dane
+    test_endpoint = f"{PORTAL_URL}/services/api/x/users/v1/employees?limit=1"
+    
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json"
+    }
+    
+    try:
+        read_response = requests.get(test_endpoint, headers=headers)
+        
+        if read_response.status_code == 200:
+            print("✅ KROK 2: Odczyt danych udany! (Połączenie stabilne)")
+            data = read_response.json()
+            print("\n--- Przykładowe dane z serwera ---")
+            # Wyświetlamy tylko kawałek odpowiedzi dla potwierdzenia
+            print(json.dumps(data, indent=4, ensure_ascii=False))
+            print("----------------------------------")
+            print("🚀 Jesteś gotowy do wysyłania danych (POST).")
+            
+        elif read_response.status_code == 403:
+            print("⚠️ OSTRZEŻENIE: Token poprawny, ale brak uprawnień (Scope).")
+            print("Sprawdź w CSOD API Management, czy zaznaczyłeś 'employee:read'.")
+            
+        else:
+            print(f"❌ BŁĄD ODCZYTU: Kod {read_response.status_code}")
+            print(read_response.text)
+
+    except Exception as e:
+        print(f"❌ Błąd podczas odpytywania API: {e}")
+
+if __name__ == "__main__":
+    test_connection()
+
+Jak czytać wyniki?
+Uruchom skrypt. Oto co oznaczają komunikaty:
+ * Kod 200 (OK): Wszystko działa. Masz zielone światło, by użyć skryptu do stawiania celów.
+ * Kod 401 (Unauthorized):
+   * Masz literówkę w CLIENT_ID lub CLIENT_SECRET.
+   * Twój klucz (Secret) wygasł (one mają datę ważności!).
+ * Kod 403 (Forbidden) - Najczęstszy problem:
+   * Zalogowałeś się poprawnie, ale Twoja aplikacja nie ma prawa czytać danych.
+   * Rozwiązanie: Wejdź w panel admina CSOD -> API Management -> Edytuj swoją aplikację -> Zakładka "Scopes" -> Zaznacz ptaszkiem employee:read (lub performance:goals:create dla celów).
+ * Kod 404 (Not Found):
+   * Prawdopodobnie masz zły adres URL (PORTAL_URL).
+   * Sprawdź, czy nie pomyliłeś corp.csod.com z pilot.csod.com.
+ * Błąd połączenia (Connection Error):
+   * Może Twoja firma ma firewall, który blokuje wyjścia na świat?
+   * Błędny adres URL (np. https:// wpisane dwa razy).
+Uruchom ten skrypt i daj znać, jaki kod błędu (lub sukcesu) otrzymałeś!
