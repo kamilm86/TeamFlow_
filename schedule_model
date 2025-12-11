@@ -302,7 +302,7 @@ class ScheduleTableModel(QAbstractTableModel):
                         etat = float(row_data.get('sched_etat', 0) or 0)
                         total = float(row_data.get('total_hours', 0) or 0)
                         wd = self._working_days if hasattr(self, '_working_days') and self._working_days > 0 else 0
-                        balance = (etat * wd) - total
+                        balance = total - (etat * wd)
 
                         # Logika kolorowania bilansu:
                         if balance > 0:
@@ -370,7 +370,11 @@ class ScheduleTableModel(QAbstractTableModel):
         return f"{int(val)}%"
 
     def _calculate_ho_percentage_value(self, row_data):
-        """Oblicza wartość liczbową udziału HO (0-100)."""
+        """
+        Oblicza wartość liczbową udziału HO (0-100) w trybie ŚCISŁYM.
+        Zalicza dzień jako HO tylko wtedy, gdy symbol jawnie zawiera lokalizację 'h'.
+        Ignoruje domyślną lokalizację pracownika.
+        """
         ho_shifts = 0
         total_working_shifts = 0
 
@@ -380,23 +384,23 @@ class ScheduleTableModel(QAbstractTableModel):
             if not symbol: continue
 
             parsed = parse_symbol(symbol)
-            # Jeśli to absencja (nie będąca 'pracująca' jak np. DYS), pomijamy w mianowniku
+            # Jeśli to absencja (nie będąca 'pracująca' jak np. DYS), pomijamy
             if parsed.get('special_symbol') and parsed.get(
                     'special_symbol').upper() not in app_settings.WORK_LIKE_SYMBOLS:
                 continue
 
             start_hour = parsed.get('start_hour')
-            # Traktujemy jako dzień pracujący jeśli ma godzinę rozpoczęcia
+
+            # Jeśli dzień jest dniem pracującym (ma godzinę startu)
             if start_hour is not None:
                 total_working_shifts += 1
-                # Sprawdzamy lokalizację 'h' (Home Office)
-                location = parsed.get('location')
-                # Jeśli lokalizacja w symbolu to 'h', LUB brak w symbolu ale domyślna to 'h'
-                default_loc = row_data.get('lokalizacja_domyslna', '')
 
+                # --- ZMIANA: Tryb ścisły (Strict Mode) ---
+                location = parsed.get('location')
+
+                # Zliczamy tylko jawne 'h'.
+                # Zwykłe '8;8' (nawet przy domyślnym HO) nie będzie liczone jako HO.
                 if location == 'h':
-                    ho_shifts += 1
-                elif not location and default_loc == 'h':
                     ho_shifts += 1
 
         if total_working_shifts == 0: return 0.0
@@ -766,7 +770,7 @@ class ScheduleTableModel(QAbstractTableModel):
                 etat = float(row_data.get('sched_etat', 0) or 0)
                 total = float(row_data.get('total_hours', 0) or 0)
                 wd = self._working_days if hasattr(self, '_working_days') and self._working_days > 0 else 0
-                row_data['_cache_balance'] = int(round((etat * wd) - total))
+                row_data['_cache_balance'] = int(round(total - (etat * wd)))
             except:
                 row_data['_cache_balance'] = 0
 
@@ -788,7 +792,7 @@ class ScheduleTableModel(QAbstractTableModel):
             etat = float(row_data.get('sched_etat', 0) or 0)
             total = float(row_data.get('total_hours', 0) or 0)
             wd = self._working_days if hasattr(self, '_working_days') and self._working_days > 0 else 0
-            row_data['_cache_balance'] = int(round((etat * wd) - total))
+            row_data['_cache_balance'] = int(round(total - (etat * wd)))
         except:
             row_data['_cache_balance'] = 0
 
