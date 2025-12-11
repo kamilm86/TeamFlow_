@@ -170,7 +170,7 @@ class ScheduleChangeDelegate(QStyledItemDelegate):
 
         value = row_data.get('current_start_hour') if col == model.COL_START_HOUR else row_data.get(
             'current_work_hours')
-        text = str(value) if value is not None and is_enabled else ""
+        text = str(value) if value is not None else ""
         painter.drawText(option.rect, Qt.AlignCenter, text)
         painter.restore()
 
