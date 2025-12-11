@@ -299,9 +299,9 @@ class ScheduleTableModel(QAbstractTableModel):
                     # 2. Bilans RBH (zawsze na indeksie 32)
                 elif schedule_col == 32:
                     try:
-                        etat = float(row_data.get('etat', 0) or 0)
+                        etat = float(row_data.get('sched_etat', 0) or 0)
                         total = float(row_data.get('total_hours', 0) or 0)
-                        wd = self._working_days if hasattr(self, '_working_days') and self._working_days > 0 else 21
+                        wd = self._working_days if hasattr(self, '_working_days') and self._working_days > 0 else 0
                         balance = (etat * wd) - total
 
                         # Logika kolorowania bilansu:
@@ -316,6 +316,35 @@ class ScheduleTableModel(QAbstractTableModel):
                             return None
                     except:
                         return None
+
+                # --- KOLOROWANIA HO ---
+                # Musimy ustalić indeks kolumny HO dynamicznie, tak jak w DisplayRole
+                current_check_idx = 33
+
+                # Procent rano
+                if self._show_percent_morning_column:
+                    current_check_idx += 1  # Pomiń, to nie HO
+
+                # Procent HO
+                if self._show_percent_ho_column:
+                    if schedule_col == current_check_idx:
+                        # Pobierz wartość liczbową (float) z cache'a sortowania
+                        ho_val = row_data.get('_cache_sort_percent_ho', 0.0)
+
+                        # Definicja kolorów
+                        green_bg = QColor("#225522") if self._is_dark_theme else QColor("#ccffcc")
+                        orange_bg = QColor("#8a5a00") if self._is_dark_theme else QColor(
+                            "#ffe0b2")  # Pomarańczowy
+                        red_bg = QColor("#662222") if self._is_dark_theme else QColor("#ffcccc")
+
+                        if ho_val >= 60.0:
+                            return QBrush(red_bg)
+                        elif 40.0 <= ho_val < 60.0:
+                            return QBrush(orange_bg)
+                        else:  # < 40%
+                            return QBrush(green_bg)
+
+                    current_check_idx += 1
 
         if role == Qt.ToolTipRole: return get_symbol_description(day_data.get('symbol', '')) if day_data.get(
             'symbol') else None
@@ -453,9 +482,9 @@ class ScheduleTableModel(QAbstractTableModel):
 
         if col_id == 'balance_hours':
             try:
-                etat = float(row_data.get('etat', 0) or 0)
+                etat = float(row_data.get('sched_etat', 0) or 0)
                 total_hours = float(row_data.get('total_hours', 0) or 0)
-                working_days = self._working_days if hasattr(self, '_working_days') and self._working_days > 0 else 21
+                working_days = self._working_days if hasattr(self, '_working_days') and self._working_days > 0 else 0
                 balance = (etat * working_days) - total_hours
                 return balance
             except (ValueError, TypeError):
@@ -734,9 +763,9 @@ class ScheduleTableModel(QAbstractTableModel):
 
             # 3. Prekalkulacja Bilansu (opcjonalnie, jeśli też spowalnia)
             try:
-                etat = float(row_data.get('etat', 0) or 0)
+                etat = float(row_data.get('sched_etat', 0) or 0)
                 total = float(row_data.get('total_hours', 0) or 0)
-                wd = self._working_days if hasattr(self, '_working_days') and self._working_days > 0 else 21
+                wd = self._working_days if hasattr(self, '_working_days') and self._working_days > 0 else 0
                 row_data['_cache_balance'] = int(round((etat * wd) - total))
             except:
                 row_data['_cache_balance'] = 0
@@ -756,9 +785,9 @@ class ScheduleTableModel(QAbstractTableModel):
 
         # 3. Bilans
         try:
-            etat = float(row_data.get('etat', 0) or 0)
+            etat = float(row_data.get('sched_etat', 0) or 0)
             total = float(row_data.get('total_hours', 0) or 0)
-            wd = self._working_days if hasattr(self, '_working_days') and self._working_days > 0 else 21
+            wd = self._working_days if hasattr(self, '_working_days') and self._working_days > 0 else 0
             row_data['_cache_balance'] = int(round((etat * wd) - total))
         except:
             row_data['_cache_balance'] = 0
