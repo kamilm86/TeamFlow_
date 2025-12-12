@@ -1,26 +1,38 @@
-1. Ocena pracochłonności (Skala: Średnia)
-To nie jest zmiana "jednej linijki". Wymaga ingerencji w architekturę danych modelu i widoku ustawień.
+# ROLA
+Działaj jako Senior Customer Experience Analyst specjalizujący się w bankowości cyfrowej i UX. Twoim zadaniem jest jakościowa i ilościowa analiza ankiet satysfakcji klientów po wykonaniu przelewu.
 
-Co trzeba zmienić:
+# DANE WEJŚCIOWE
+Otrzymasz zestaw danych z ankiet, które składają się z:
+1. Pytanie Q1: "Na ile pola w formatce przelewu były zrozumiałe i czytelne" (Skala 1-5).
+2. Pytanie Q2: "Jak oceniasz wysłanie przelewu" (Skala 1-5).
+3. Komentarz słowny (Open text).
 
-column_definitions.py: Trzeba dodać nową definicję kolumny (np. sched_percent_ho_left), aby system wiedział, jak ją nazywać, jaki ma typ danych i domyślną szerokość.
+# INSTRUKCJA ANALIZY
+Zinterpretuj skalę ocen w następujący sposób:
+- Oceny 1-3: Negatywne (Detraktorzy/Krytycy)
+- Ocena 4: Neutralne/Umiarkowane
+- Ocena 5: Pozytywne (Promotorzy)
 
-schedule_model.py:
+Wykonaj analizę krok po kroku:
 
-Metoda data(): Obecnie logika pobierania procentu HO jest "zaszyta" w sekcji dla prawej strony (kolumny > 31). Trzeba dodać logikę obsługi tej danej dla sekcji lewej (is_employee_column).
+KROK 1: ANALIZA SENTYMENTU I KATEGORYZACJA
+Przeanalizuj każdą opinię, łącząc oceny liczbowe z komentarzem. Jeśli ocena jest wysoka, a komentarz krytyczny (lub odwrotnie), traktuj komentarz jako nadrzędny. Podziel uwagi na tematy (np. UI/Design, Szybkość, Błędy techniczne, Zrozumiałość).
 
-Metoda _update_column_structure(): Trzeba usunąć "twarde" dodawanie tej kolumny na końcu, jeśli użytkownik wybrał wersję lewostronną.
+KROK 2: IDENTYFIKACJA MOCNYCH I SŁABYCH STRON
+- **Pozytywy:** Co klienci chwalą najczęściej? (np. szybkość, autouzupełnianie, prostota).
+- **Negatywy:** Co frustruje klientów? (np. zbyt mała czcionka, błędy sesji, niejasne nazwy pól). Zwróć szczególną uwagę na korelację między niską oceną w Q1 (formatka) a treścią komentarza.
 
-column_select_dialog.py: Trzeba usunąć checkbox "Pokaż kolumnę Procent HO" i zamiast tego dodać tę kolumnę do listy available_columns, aby można ją było przesuwać i włączać jak "Wydział" czy "Nazwisko".
+KROK 3: REKOMENDACJE
+Na podstawie negatywów zaproponuj konkretne usprawnienia UX lub procesowe.
 
-2. Konsekwencje i ryzyka
-Zaleta (Wielka): "Zamrożenie" kolumny. Lewa tabela (employees_view) jest statyczna (nie przewija się w poziomie). Jeśli dodasz Procent HO do lewej tabeli, Lider widzi ten wskaźnik zawsze, nawet gdy przewinie grafik na 30. dzień miesiąca. To kluczowe przy pilnowaniu limitów.
+# FORMAT WYNIKU
+Przedstaw wynik w czytelnej formie używając nagłówków i punktorów:
 
-Wada (Przestrzeń): Lewa tabela zabiera miejsce. Dodanie kolejnej kolumny (ok. 60-80px) zmniejszy obszar widoczny dla samego kalendarza (kratek). Na małych monitorach może to być uciążliwe.
+1. **Podsumowanie Wykonawcze** (Krótka synteza ogólnego nastroju klientów).
+2. **Kluczowe Pozytywy** (Lista 3-5 największych zalet z cytatami, jeśli są dostępne).
+3. **Kluczowe Negatywy i Pain Points** (Lista problemów z podziałem na "Formatka/UI" oraz "Proces wysyłki").
+4. **Tabela Anomalii** (Jeśli występują): Wymień przypadki, gdzie ocena liczbowa drastycznie różni się od wydźwięku komentarza.
+5. **Rekomendacje UX** (Co zmienić, aby podnieść oceny).
 
-Wydajność: Pomijalna różnica. Dane i tak są przeliczane (_precalculate_statistics). Wyświetlenie ich w innej kolumnie nic nie kosztuje.
-
-3. Moja rekomendacja (Co sądzę?)
-Zdecydowanie odradzam robienie "przełącznika" (lewo/prawo) jako osobnej, skomplikowanej logiki. To wprowadzi chaos w kodzie.
-
-Zamiast tego proponuję rozwiązanie systemowe: Potraktujmy "Procent HO" (i ewentualnie "Procent Rano") jako zwykłe kolumny danych, tak jak "Etat" czy "Stanowisko".
+# DANE DO ANALIZY:
+[TUTAJ WKLEJ SWOJE DANE, NP. W FORMACIE CSV LUB JAKO LISTĘ]
