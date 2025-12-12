@@ -1,38 +1,45 @@
 # ROLA
-Działaj jako Senior Customer Experience Analyst specjalizujący się w bankowości cyfrowej i UX. Twoim zadaniem jest jakościowa i ilościowa analiza ankiet satysfakcji klientów po wykonaniu przelewu.
+Działaj jako Lead Data Scientist specjalizujący się w analizie szeregów czasowych i wykrywaniu anomalii biznesowych. Twoim celem jest przeprowadzenie Root Cause Analysis (RCA) dotyczącej zmiany wolumenu ankiet.
 
-# DANE WEJŚCIOWE
-Otrzymasz zestaw danych z ankiet, które składają się z:
-1. Pytanie Q1: "Na ile pola w formatce przelewu były zrozumiałe i czytelne" (Skala 1-5).
-2. Pytanie Q2: "Jak oceniasz wysłanie przelewu" (Skala 1-5).
-3. Komentarz słowny (Open text).
+# KONTEKST DANYCH
+Analizujemy okres od 2023-01-01 do 2025-12-11.
+Zauważono istotną zmianę (wzrost lub spadek) w liczbie ankiet w ostatnich miesiącach.
+Dostępne zmienne (kolumny):
+- Data ankiety (Timestamp)
+- Kanał rozmowy (np. czat, telefon, email, aplikacja)
+- Typ ankiety (np. transakcyjna, relacyjna)
+- ID klienta (unikalny identyfikator)
+- Data rejestracji (staż klienta)
+- Data urodzenia / Wiek (demografia)
+- Typ klienta (segment, np. VIP, Standard, Student)
 
-# INSTRUKCJA ANALIZY
-Zinterpretuj skalę ocen w następujący sposób:
-- Oceny 1-3: Negatywne (Detraktorzy/Krytycy)
-- Ocena 4: Neutralne/Umiarkowane
-- Ocena 5: Pozytywne (Promotorzy)
+# ZADANIE ANALITYCZNE
+Twoim zadaniem jest znalezienie matematycznego uzasadnienia zmiany wolumenu. Nie zgaduj – udowodnij to na danych. Wykonaj analizę w następujących krokach:
 
-Wykonaj analizę krok po kroku:
+KROK 1: USTALENIE MOMENTU ZMIANY I TRENDU
+1. Stwórz linię czasu (agregacja miesięczna/tygodniowa) i zidentyfikuj dokładny moment (punkt zwrotny), w którym nastąpił skok lub spadek liczby ankiet.
+2. Określ, czy zmiana jest nagła (skokowa) czy stopniowa (trend).
 
-KROK 1: ANALIZA SENTYMENTU I KATEGORYZACJA
-Przeanalizuj każdą opinię, łącząc oceny liczbowe z komentarzem. Jeśli ocena jest wysoka, a komentarz krytyczny (lub odwrotnie), traktuj komentarz jako nadrzędny. Podziel uwagi na tematy (np. UI/Design, Szybkość, Błędy techniczne, Zrozumiałość).
+KROK 2: ANALIZA DIMENSIONALNA (PRZYCZYNY TECHNICZNE/PROCESOWE)
+Porównaj okres "PRZED zmianą" z okresem "PO zmianie" pod kątem dystrybucji zmiennych:
+- **Kanał rozmowy:** Czy jeden kanał nagle zyskał/stracił wolumen? (np. awaria wysyłki SMS?).
+- **Typ ankiety:** Czy wprowadzono nowy typ ankiety, który zdominował wyniki? A może wyłączono stary?
+- **ID klienta:** Sprawdź unikalność. Czy wzrost liczby ankiet wynika z większej liczby klientów, czy może ci sami klienci wypełniają ankietę wielokrotnie (duplikaty/spam)?
 
-KROK 2: IDENTYFIKACJA MOCNYCH I SŁABYCH STRON
-- **Pozytywy:** Co klienci chwalą najczęściej? (np. szybkość, autouzupełnianie, prostota).
-- **Negatywy:** Co frustruje klientów? (np. zbyt mała czcionka, błędy sesji, niejasne nazwy pól). Zwróć szczególną uwagę na korelację między niską oceną w Q1 (formatka) a treścią komentarza.
+KROK 3: ANALIZA DEMOGRAFICZNA I KOHORTOWA (PRZYCZYNY BIZNESOWE)
+- **Data rejestracji (Staż):** Czy zmiana pochodzi od "nowych" klientów (efekt kampanii marketingowej, onboardingu)? Czy może uaktywnili się starzy klienci?
+- **Wiek / Typ klienta:** Czy zmiana dotyczy specyficznej grupy? (np. nagły wzrost ankiet od grupy wiekowej 18-24 lata może sugerować kampanię studencką).
 
-KROK 3: REKOMENDACJE
-Na podstawie negatywów zaproponuj konkretne usprawnienia UX lub procesowe.
+# FORMAT RAPORTU
+Przedstaw wyniki w formie diagnozy:
 
-# FORMAT WYNIKU
-Przedstaw wynik w czytelnej formie używając nagłówków i punktorów:
+1. **Werdykt Główny:** "Główną przyczyną zmiany wolumenu jest [ZMIENNA X]."
+2. **Dowód w Liczbach:** Pokaż tabelę porównawczą "Okres Bazowy vs Okres Zmiany" dla kluczowej zmiennej (np. Kanał X: wzrost o 400%).
+3. **Analiza Poboczna:** Czy wystąpiły efekty wtórne? (np. wzrost wolumenu w Kanale App spowodował spadek średniego wieku respondenta).
+4. **Weryfikacja Hipotez:**
+   - Czy to błąd techniczny (duplikaty ID)? [TAK/NIE]
+   - Czy to nowa kohorta klientów (Data rejestracji)? [TAK/NIE]
+   - Czy to zmiana kanału kontaktu? [TAK/NIE]
 
-1. **Podsumowanie Wykonawcze** (Krótka synteza ogólnego nastroju klientów).
-2. **Kluczowe Pozytywy** (Lista 3-5 największych zalet z cytatami, jeśli są dostępne).
-3. **Kluczowe Negatywy i Pain Points** (Lista problemów z podziałem na "Formatka/UI" oraz "Proces wysyłki").
-4. **Tabela Anomalii** (Jeśli występują): Wymień przypadki, gdzie ocena liczbowa drastycznie różni się od wydźwięku komentarza.
-5. **Rekomendacje UX** (Co zmienić, aby podnieść oceny).
-
-# DANE DO ANALIZY:
-[TUTAJ WKLEJ SWOJE DANE, NP. W FORMACIE CSV LUB JAKO LISTĘ]
+# DANE:
+[TUTAJ ZAŁĄCZ PLIK LUB WKLEJ DANE]
