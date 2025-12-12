@@ -5,16 +5,17 @@ from PySide6.QtCore import QThread, Signal, Qt
 from PySide6.QtWidgets import QProgressDialog, QMessageBox
 from enum import Enum, auto
 import pyodbc
+import re
 
 from db_connector import DatabaseConnector, SQL_OBJECTS, get_modifier_id
 from debug_utils import log_error, debug_print
 from symbol_parser import parse_symbol, build_symbol
 from app_settings import app_settings
+from ui_utils import show_error_dialog
 
 
 # Definicja typów operacji (bez zmian)
 class ChangeType(Enum):
-    """Definiuje typy operacji, jakie może przetwarzać ScheduleChangeProcessor."""
     QUICK_EDIT_START_HOUR = auto()
     MODIFY_WORK_HOURS = auto()
     APPLY_SPECIAL_SYMBOL = auto()
@@ -25,9 +26,6 @@ class ChangeType(Enum):
 
 
 class ScheduleChangeThread(QThread):
-    """
-    Wątek roboczy do wykonywania zmian w grafiku w tle.
-    """
     progress_updated = Signal(int)
     finished = Signal(list)
     error_occurred = Signal(str)
@@ -40,15 +38,11 @@ class ScheduleChangeThread(QThread):
         self.year = year
         self.month = month
         self._is_cancelled = False
-
         self.is_new_logic_path = isinstance(self.reason_cache, dict)
-        debug_print(f"[Wątek] Inicjalizacja dla {self.year}-{self.month}. Tryb 'Nowa Logika': {self.is_new_logic_path}")
 
     def _prepare_change_request_for_row(self, row_data: dict, visual_row: int) -> tuple | None:
-        """Sprawdza, czy nastąpiła zmiana i przygotowuje krotkę z żądaniem (Nowa Logika)."""
         try:
             if not isinstance(row_data, dict):
-                log_error(f"[Wątek] Błąd krytyczny: row_data nie jest słownikiem! {type(row_data)}")
                 return (None, 'failure', 'Błąd wewnętrzny: Nieprawidłowy typ danych')
 
             is_dirty = row_data.get('is_dirty', False)
@@ -106,19 +100,13 @@ class ScheduleChangeThread(QThread):
             return (None, 'failure', str(e))
 
     def _handle_location_logic_for_request(self, change_request_tuple: tuple) -> tuple | None:
-        """
-        Transformuje żądanie (APPLY_BUILT_SYMBOL) na (APPLY_LOCATION_CHANGE) dla Nowej Logiki.
-        Mapuje kod lokalizacji (char) na ID (int) przed wysłaniem do bazy.
-        """
         if not change_request_tuple or change_request_tuple[0] is None:
             return None
 
         change_type, cell_data, new_symbol = change_request_tuple
-
         parsed_new = parse_symbol(new_symbol)
         parsed_old = parse_symbol(cell_data.get('symbol', ''))
 
-        # Kody lokalizacji jako stringi ('h', 's', 'p')
         new_loc_code = parsed_new.get('location')
         old_loc_code = parsed_old.get('location') or cell_data.get('lokalizacja_domyslna')
 
@@ -141,23 +129,13 @@ class ScheduleChangeThread(QThread):
         new_hours = parsed_new.get('work_hours')
         old_start = parsed_old.get('start_hour')
         old_hours = parsed_old.get('work_hours')
-
-        # Wykrywanie czy zmieniono również godziny
         czy_zmiana_grafiku = 1 if (new_start != old_start or new_hours != old_hours) else 0
-
-        # --- MAPOWANIE LOKALIZACJI NA INT ---
-        # Mapa zgodna z Twoją bazą danych: h=1, p=2, s=3
-        # Wartości pobrane z analizy location_exception_dialog.py
         location_map = {'h': 1, 'p': 2, 's': 3}
-
-        # Pobieramy ID. Jeśli kod jest nieznany, domyślnie 1 (Home Office) lub None (co wywoła błąd SQL, co jest pożądane przy błędnych danych)
         mapped_location_id = location_map.get(new_loc_code, 1)
-
-        debug_print(f"[Processor] Mapowanie lokalizacji: '{new_loc_code}' -> ID {mapped_location_id}")
 
         payload = {
             'reason': reason,
-            'new_location': mapped_location_id,  # <-- Przesyłamy INT
+            'new_location': mapped_location_id,
             'czy_zmiana_grafiku': czy_zmiana_grafiku,
             'godzina_nowa': new_start,
             'liczba_godzin_nowe': new_hours,
@@ -167,7 +145,7 @@ class ScheduleChangeThread(QThread):
         return (ChangeType.APPLY_LOCATION_CHANGE, cell_data, payload)
 
     def run(self):
-        """Wykonuje zmiany w grafiku w tle."""
+        from debug_utils import debug_print, log_error
         conn = None
         all_results = []
 
@@ -269,14 +247,14 @@ class ScheduleChangeThread(QThread):
                 conn.close()
 
     def _prepare_new_symbol_legacy(self, change_type, cell_data, value, cursor):
-        """Obsługuje starsze typy ChangeType."""
+        """Obsługuje starsze typy ChangeType (np. klawiatura)."""
         current_symbol = cell_data.get('symbol', '')
         parsed = parse_symbol(current_symbol)
 
         if change_type == ChangeType.QUICK_EDIT_START_HOUR:
             start_hour = value
             try:
-                work_hours = int(float(cell_data.get('etat', 8.0)))
+                work_hours = int(cell_data.get('etat'))
             except (ValueError, TypeError):
                 work_hours = 8
             location = parsed.get('location') or self.main_window.determine_correct_location(cell_data, cursor=cursor)
@@ -313,8 +291,6 @@ class ScheduleChangeThread(QThread):
 
             new_symbol = build_symbol(location=final_location, start_hour=final_start_hour, work_hours=final_work_hours,
                                       special_symbol=special_symbol)
-
-            if not new_symbol.strip() and special_symbol and special_symbol.strip(): return special_symbol.strip()
             return new_symbol.strip() if new_symbol else ""
 
         elif change_type == ChangeType.CLEAR_CELL:
@@ -323,13 +299,8 @@ class ScheduleChangeThread(QThread):
         return str(value)
 
     def _execute_and_parse_change(self, cursor, sql_query, params, req_data, value_payload):
-        """
-        Wykonuje pojedynczą operację (SQL) i interpretuje jej wynik.
-        POPRAWKA DLA "SILENT SUCCESS": Pusty wynik = SUKCES.
-        """
         try:
             cursor.execute(sql_query, params)
-
             all_results = []
             while True:
                 try:
@@ -339,13 +310,10 @@ class ScheduleChangeThread(QThread):
                 except pyodbc.ProgrammingError:
                     break
 
-            # --- ZMIANA: Domyślnie zakładamy SUKCES ---
-            # Jeśli baza nie zwróci nic, to znaczy że operacja się powiodła.
             success = True
             message = "OK"
             returned_symbol = None
 
-            # Jeśli dostaliśmy jakieś wyniki, sprawdzamy czy to nie błąd
             if all_results:
                 for row in all_results:
                     if row and len(row) > 0 and row[0] is not None:
@@ -354,14 +322,11 @@ class ScheduleChangeThread(QThread):
                         value_str = str(raw_value).strip()
                         if not value_str or value_str == "0": continue
 
-                        # Heurystyka: Jeśli tekst jest długi lub ma spacje -> to komunikat błędu
                         if ' ' in value_str or len(value_str) > 50:
                             success = False
                             message = value_str
-                            debug_print(f"[Wątek] DB Error wykryty w wyniku: {message}")
                             break
                         else:
-                            # Krótki tekst bez spacji (np. "8", "U") to zwrócony symbol (Sukces)
                             returned_symbol = value_str
 
             req_result = req_data.copy()
@@ -371,8 +336,6 @@ class ScheduleChangeThread(QThread):
                 'returned_symbol': returned_symbol
             })
 
-            # Fallback: Jeśli sukces, ale baza nic nie zwróciła (Silent Success),
-            # przyjmujemy, że wstawiono to, co chcieliśmy.
             if success and returned_symbol is None:
                 if isinstance(value_payload, dict):
                     req_result['returned_symbol'] = value_payload.get('nowy_symbol_wygenerowany', '')
@@ -395,8 +358,6 @@ class ScheduleChangeThread(QThread):
 
 
 class ScheduleChangeProcessor:
-    """Klasa zarządzająca procesem asynchronicznych zmian w grafiku."""
-
     def __init__(self, parent_window):
         self.parent = parent_window
         self.thread = None
@@ -426,12 +387,10 @@ class ScheduleChangeProcessor:
 
         self.progress_dialog.setWindowModality(Qt.WindowModal)
         self.progress_dialog.setWindowTitle("Przetwarzanie zmian")
-
         self.thread.progress_updated.connect(self._on_progress_updated)
         self.thread.finished.connect(self._on_finished)
         self.thread.error_occurred.connect(self._on_error)
         self.progress_dialog.canceled.connect(self.thread.cancel)
-
         self.thread.start()
         self.progress_dialog.open()
 
@@ -474,17 +433,52 @@ class ScheduleChangeProcessor:
             except Exception as e:
                 log_error(f"Błąd callbacka: {e}", exception=e)
 
+        # --- ZMIANA: Formatowanie listy błędów z podwójnym enterem ---
         if failed_updates:
-            error_messages = [
-                f"- {res.get('user_name', '')} ({res.get('data', '')}): {res.get('message', 'Błąd')}"
-                for res in failed_updates
-            ]
-            QMessageBox.warning(self.parent, "Błędy", "Wystąpiły błędy:<br>" + "<br>".join(error_messages[:15]))
+            from ui_utils import show_error_dialog
+
+            # Lokalna funkcja czyszcząca
+            def clean_db_error(raw_msg):
+                txt = str(raw_msg)
+                # 1. Wyciągnij treść z krotki pythona, jeśli istnieje
+                # Szukamy: ('KOD', 'TREŚĆ')
+                m = re.search(r"\('\w+',\s*'(.*?)'\)", txt, re.DOTALL)
+                if m:
+                    txt = m.group(1)
+
+                # 2. Usuń [Microsoft]...
+                txt = re.sub(r'(\[[^\]]+\])+', '', txt)
+                # 3. Usuń kody na końcu
+                txt = re.sub(r'\(\d+\)\s*\(SQLExec\w*\)', '', txt)
+                return txt.strip().strip("'")
+
+            formatted_errors = []
+            for i, res in enumerate(failed_updates, 1):
+                user_name = res.get('user_name', 'Nieznany')
+                date_str = res.get('data', 'Brak daty')
+
+                # Używamy lokalnej funkcji, aby mieć pewność co do logiki
+                clean_msg = clean_db_error(res.get('message', 'Nieznany błąd'))
+
+                # Formatowanie pojedynczego wpisu
+                entry = f"{i}. {user_name} ({date_str}):\n   -> {clean_msg}"
+                formatted_errors.append(entry)
+
+            # Limit usuwamy całkowicie, aby pokazać wszystko
+
+            intro = f"Wystąpiły błędy dla {len(failed_updates)} rekordów:\n" + ("-" * 50) + "\n\n"
+
+            # KLUCZOWE: Używamy \n\n do oddzielenia błędów od siebie (pusty wiersz między nimi)
+            content = "\n\n".join(formatted_errors)
+
+            full_message = intro + content
+
+            show_error_dialog(self.parent, "Raport Błędów", full_message)
 
         self.thread = None
         self.on_results_processed_callback = None
 
     def _on_error(self, error_message):
         self.progress_dialog.close()
-        QMessageBox.critical(self.parent, "Błąd krytyczny", f"Wystąpił błąd podczas aktualizacji:\n{error_message}")
+        show_error_dialog(self.parent, "Błąd Operacji", f"Wystąpił błąd podczas zapisu:\n{error_message}")
         self.thread = None
