@@ -9612,8 +9612,11 @@ if __name__ == "__main__":
         current_windows_user = getpass.getuser().lower()
     except Exception:
         current_windows_user = "unknown_user"
-    log_to_file = False
+    log_to_file = current_windows_user in app_settings.LOGGING_USERS_FILE
+
     log_to_console = True
+    if app_settings.LOGGING_USERS_CONSOLE:
+        log_to_console = current_windows_user in app_settings.LOGGING_USERS_CONSOLE
     setup_logging(log_to_file=log_to_file, log_to_console=log_to_console)
 
     # Krok 4: Utwórz główne okno (wczyta ustawienia użytkownika w __init__)
