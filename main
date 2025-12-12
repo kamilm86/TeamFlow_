@@ -1202,7 +1202,7 @@ class WorkScheduleWindow(QMainWindow):
                 self._apply_quick_changes(schedule_cells, start_hour)
         except Exception as e:
             log_error(f"Błąd podczas szybkiej edycji: {e}", exception=e)
-            QMessageBox.critical(self, "Błąd", f"Wystąpił błąd podczas edycji: {str(e)}", QMessageBox.Ok)
+            show_error_dialog(self, "Błąd Edycji", f"Wystąpił błąd podczas szybkiej edycji:\n{e}")
 
     def _apply_quick_changes(self, schedule_cells, start_hour):
         """
@@ -3848,30 +3848,53 @@ class WorkScheduleWindow(QMainWindow):
             return {"success": False, "message": str(e)}
 
     def _call_import_changes_procedure(self, nr_kadrowy, rok, miesiac, data, symbol):
-        """Wywołuje procedurę i bardziej niezawodnie interpretuje jej wyniki."""
+        """
+        Wywołuje procedurę ImportZmianNaSerwer z pełnym logowaniem parametrów.
+        """
+        # --- [DIAGNOSTYKA] Logowanie parametrów wejściowych ---
+        from debug_utils import debug_print, log_error
+        debug_print(f"")
+        debug_print(f"=== [SQL DEBUG] Wywołanie: p_ImportZmianNaSerwer ===")
+        debug_print(f"   @Nr_Kadrowy = {nr_kadrowy!r}")
+        debug_print(f"   @Rok        = {rok}")
+        debug_print(f"   @Miesiac    = {miesiac}")
+        debug_print(f"   @Data       = {data!r}")
+        debug_print(f"   @Symbol     = {symbol!r}")
+        # ------------------------------------------------------
+
         try:
             conn = DatabaseConnector.get_connection()
             cursor = conn.cursor()
-            cursor.execute(
-                f"EXEC {SQL_OBJECTS['p_importzmianynaserwer']} @Nr_Kadrowy = ?, @Rok = ?, @Miesiac = ?, @Data = ?, @Symbol = ?, @CzyPobieranieSugestii = ?",
-                (nr_kadrowy, rok, miesiac, data, symbol, None))
+
+            # Zabezpieczenie przed NULL w symbolu
+            safe_symbol = symbol if symbol is not None else ""
+
+            sql = f"EXEC {SQL_OBJECTS['p_importzmianynaserwer']} @Nr_Kadrowy = ?, @Rok = ?, @Miesiac = ?, @Data = ?, @Symbol = ?, @CzyPobieranieSugestii = ?"
+            params = (nr_kadrowy, rok, miesiac, data, safe_symbol, None)
+
+            # Logowanie faktycznego wykonania
+            debug_print(f"   -> EXECUTE params: {params}")
+
+            cursor.execute(sql, params)
 
             all_results = []
             while True:
                 try:
                     rows = cursor.fetchall()
-                    if rows: all_results.extend(rows)
+                    if rows:
+                        all_results.extend(rows)
+                        # Logowanie tego co zwróciła baza (często komunikaty błędów są tutaj)
+                        debug_print(f"   <- [SQL RESULT]: {rows}")
                     if not cursor.nextset(): break
                 except Exception:
                     break
+
             conn.commit()
-            # --- POCZĄTEK KLUCZOWEJ POPRAWKI ---
-            # Zatwierdź transakcję, aby trigger i wysłanie wiadomości Service Broker
-            # zostały trwale zapisane w bazie danych.
-            # --- KONIEC KLUCZOWEJ POPRAWKI ---
             conn.close()
 
-            returned_symbol, success, message = symbol, True, "Operacja zakończona pomyślnie"
+            returned_symbol, success, message = safe_symbol, True, "Operacja zakończona pomyślnie"
+
+            # Analiza wyników
             for row in all_results:
                 if row and len(row) > 0 and row[0] is not None:
                     raw_value = row[0]
@@ -3882,15 +3905,23 @@ class WorkScheduleWindow(QMainWindow):
                     is_likely_a_symbol = ' ' not in value_str and len(value_str) <= 50
                     if is_likely_a_symbol:
                         returned_symbol = value_str
+                        debug_print(f"   [OK] Baza zaakceptowała zmianę. Nowy symbol: {returned_symbol}")
                     else:
                         success, message = False, value_str
+                        debug_print(f"   [ERROR] Baza odrzuciła zmianę. Komunikat: {message}")
                         break
+
             if success:
                 self._update_modification_date()
+                debug_print(f"=== [SQL DEBUG] KONIEC SUKCES ===")
+            else:
+                debug_print(f"=== [SQL DEBUG] KONIEC BŁĄD ===")
+
             return {"success": success, "message": message, "returned_symbol": returned_symbol}
+
         except Exception as e:
-            log_error(f"Błąd procedury ImportZmianNaSerwer: {e}")
-            return {"success": False, "message": f"Błąd bazy danych: {str(e)}", "returned_symbol": symbol}
+            log_error(f"[SQL CRITICAL] Wyjątek w procedurze importu: {e}", exception=e)
+            return {"success": False, "message": f"Błąd aplikacji: {str(e)}", "returned_symbol": symbol}
 
     def _process_and_apply_changes(self, data_object, dialog_instance=None):
         """
