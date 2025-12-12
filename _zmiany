@@ -1,11 +1,26 @@
-Filtr "Obecni w pracy":
+1. Ocena pracochłonności (Skala: Średnia)
+To nie jest zmiana "jednej linijki". Wymaga ingerencji w architekturę danych modelu i widoku ustawień.
 
-Poprawiono logikę w main.py (filter_processed_data), aby poprawnie uwzględniała wybrane godziny i lokalizacje.
+Co trzeba zmienić:
 
-Filtry "Użytkownik" i "Przełożony":
+column_definitions.py: Trzeba dodać nową definicję kolumny (np. sched_percent_ho_left), aby system wiedział, jak ją nazywać, jaki ma typ danych i domyślną szerokość.
 
-Wprowadzono wyszukiwanie po przecinku (np. login1,login2).
+schedule_model.py:
 
-Naprawiono błąd resetowania się wyszukiwania po kliknięciu na element listy.
+Metoda data(): Obecnie logika pobierania procentu HO jest "zaszyta" w sekcji dla prawej strony (kolumny > 31). Trzeba dodać logikę obsługi tej danej dla sekcji lewej (is_employee_column).
 
-1. Poprawka wyświetlania kolumn w tabeli pracowników (main.py, split_table_view.py)•Problem: Po dodaniu lub usunięciu kolumn w oknie "Dostosuj widok", w lewej tabeli (przeznaczonej na dane pracowników) pojawiały się niechciane kolumny z grafiku (np. dni miesiąca, bilans RBH).•Rozwiązanie:◦Zmodyfikowano metodę refresh_column_configuration w main.py. Zamiast resetować cały model tabeli (co powodowało błąd), metoda ta teraz emituje sygnał layoutChanged i wywołuje dedykowaną metodę setup_columns w SplitTableView.◦Dodano metodę setup_columns w split_table_view.py, która w inteligentny sposób zarządza widocznością kolumn, precyzyjnie przypisując kolumny pracownicze do lewej tabeli, a kolumny grafiku do prawej, bez resetowania całego widoku.2. Dynamiczne tworzenie filtrów dla kolumn niestandardowych (main.py)•Problem: Po utworzeniu przez użytkownika nowej, niestandardowej kolumny, w panelu filtrów nie pojawiał się dla niej odpowiedni widget filtrujący.•Rozwiązanie:◦Wprowadzono nową metodę rebuild_filter_panel, która centralizuje logikę odświeżania panelu filtrów.◦Rozszerzono metodę _create_all_filter_widgets, aby dynamicznie tworzyła widgety CustomMultiComboBox dla każdej kolumny zdefiniowanej w self.custom_columns.◦Po zamknięciu okna "Dostosuj widok" (show_column_select_dialog), wywoływana jest teraz metoda rebuild_filter_panel, co zapewnia natychmiastowe pojawienie się nowych filtrów na liście.3. Poprawka UI panelu filtrów (main.py)•Problem: Wstępna implementacja dynamicznego tworzenia filtrów powodowała znikanie statycznych przycisków na dole panelu ("Wyczyść filtry", "Ustawienia filtrów").•Rozwiązanie: Logika budowania panelu filtrów została rozdzielona. Metoda rebuild_filter_panel zarządza teraz wyłącznie dynamiczną listą widgetów filtrów, nie naruszając statycznego layoutu z dolnymi przyciskami, które są dodawane tylko raz podczas inicjalizacji UI.Dzięki tym zmianom aplikacja poprawnie zarządza konfiguracją widoku, zapewniając, że użytkownik widzi tylko te kolumny i filtry, które wybrał, a interfejs pozostaje spójny i stabilny.
+Metoda _update_column_structure(): Trzeba usunąć "twarde" dodawanie tej kolumny na końcu, jeśli użytkownik wybrał wersję lewostronną.
+
+column_select_dialog.py: Trzeba usunąć checkbox "Pokaż kolumnę Procent HO" i zamiast tego dodać tę kolumnę do listy available_columns, aby można ją było przesuwać i włączać jak "Wydział" czy "Nazwisko".
+
+2. Konsekwencje i ryzyka
+Zaleta (Wielka): "Zamrożenie" kolumny. Lewa tabela (employees_view) jest statyczna (nie przewija się w poziomie). Jeśli dodasz Procent HO do lewej tabeli, Lider widzi ten wskaźnik zawsze, nawet gdy przewinie grafik na 30. dzień miesiąca. To kluczowe przy pilnowaniu limitów.
+
+Wada (Przestrzeń): Lewa tabela zabiera miejsce. Dodanie kolejnej kolumny (ok. 60-80px) zmniejszy obszar widoczny dla samego kalendarza (kratek). Na małych monitorach może to być uciążliwe.
+
+Wydajność: Pomijalna różnica. Dane i tak są przeliczane (_precalculate_statistics). Wyświetlenie ich w innej kolumnie nic nie kosztuje.
+
+3. Moja rekomendacja (Co sądzę?)
+Zdecydowanie odradzam robienie "przełącznika" (lewo/prawo) jako osobnej, skomplikowanej logiki. To wprowadzi chaos w kodzie.
+
+Zamiast tego proponuję rozwiązanie systemowe: Potraktujmy "Procent HO" (i ewentualnie "Procent Rano") jako zwykłe kolumny danych, tak jak "Etat" czy "Stanowisko".
