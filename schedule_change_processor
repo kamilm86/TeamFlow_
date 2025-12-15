@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 
 from PySide6.QtCore import QThread, Signal, Qt
-from PySide6.QtWidgets import QProgressDialog, QMessageBox
+from PySide6.QtWidgets import QProgressDialog, QMessageBox, QPushButton
 from enum import Enum, auto
 import pyodbc
 import re
@@ -387,6 +387,18 @@ class ScheduleChangeProcessor:
 
         self.progress_dialog.setWindowModality(Qt.WindowModal)
         self.progress_dialog.setWindowTitle("Przetwarzanie zmian")
+
+        # Znajdujemy przycisk wewnątrz dialogu
+        cancel_button = self.progress_dialog.findChild(QPushButton)
+        if cancel_button:
+            # Wyłącza reagowanie na ENTER (jako domyślny przycisk)
+            cancel_button.setAutoDefault(False)
+            cancel_button.setDefault(False)
+
+            # Wyłącza możliwość "najechania" na przycisk Tabem lub klawiaturą.
+            # Dzięki temu przycisk zadziała TYLKO po kliknięciu myszką.
+            cancel_button.setFocusPolicy(Qt.NoFocus)
+            
         self.thread.progress_updated.connect(self._on_progress_updated)
         self.thread.finished.connect(self._on_finished)
         self.thread.error_occurred.connect(self._on_error)
