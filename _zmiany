@@ -1,55 +1,65 @@
-To bardzo cenna obserwacja! Fakt, że skrypt nadal próbuje pobrać plik, mimo że fizycznie już tam jest (i to w dobrej wersji, skoro użytkownik go skopiował), zmienia diagnozę. Wskazuje to na dwa niezależne problemy występujące jednocześnie.
-Oto co się dzieje "pod maską":
-Problem 1: Pętla aktualizacji (Dlaczego skrypt chce wciąż pobierać?)
-Skrypt porównuje dwie wartości:
- * Zmienną w skrypcie: REQUIRED_VER="1.0.17"
- * Wewnętrzną wersję pliku .exe (tzw. Assembly Version / File Version).
-Diagnoza: Najprawdopodobniej programista kompilując nową wersję aplikacji, zapomniał podbić numeru wersji w ustawieniach projektu (np. w Visual Studio).
-W efekcie:
- * Ty wiesz, że to jest wersja 1.0.17.
- * Skrypt widzi w kodzie 1.0.17.
- * Ale plik .exe w środku "przedstawia się" nadal jako 1.0.16 (lub starsza).
-Skrypt myśli: "Lokalnie mam 1.0.16, a wymagana jest 1.0.17. Muszę pobrać plik ponownie!". I robi to w kółko przy każdym uruchomieniu.
-Jak to sprawdzić?
-Kliknij prawym przyciskiem myszy na plik .exe (ten, który ręcznie skopiowałeś), wybierz Właściwości -> zakładka Szczegóły. Spójrz na pole Wersja pliku. Jeśli jest tam numer niższy niż 1.0.17, to masz winowajcę.
-Problem 2: Błąd krytyczny (Dlaczego "Odmowa dostępu"?)
-Skoro skrypt (błędnie) decyduje się na pobieranie, próbuje nadpisać plik TeamFlowApp.exe.
-Błąd Odmowa dostępu pojawia się dlatego, że:
- * Użytkownik skopiował plik ręcznie.
- * Prawdopodobnie go uruchomił (lub proces zawisł w tle).
- * Skrypt próbuje usunąć/podmienić plik, który jest używany przez system.
-KOMPLETNE ROZWIĄZANIE
-Musisz wykonać dwie akcje, aby to trwale naprawić:
-KROK 1: Napraw wersjonowanie (Dla programisty/Ciebie)
-Masz dwa wyjścia, wybierz jedno:
- * Opcja A (Poprawna): Skompiluj aplikację jeszcze raz, upewniając się, że w Assembly Information wersja pliku jest ustawiona na 1.0.17.
- * Opcja B (Szybka łatka w skrypcie): Jeśli nie możesz teraz kompilować, sprawdź jaką wersję ma plik (np. 1.0.16) i zmień w skrypcie .bat linijkę 8 na:
-   set "REQUIRED_VER=1.0.16" (lub taką, jaką faktycznie ma plik exe).
-   To sprawi, że skrypt przestanie próbować go nadpisywać.
-KROK 2: Dodaj bezpiecznik do skryptu (Dla błędu "Odmowa dostępu")
-Niezależnie od wersji, musisz dodać zamykanie procesu, aby uniknąć błędów w przyszłości.
-Zaktualizuj swój plik .bat w ten sposób (zmiany oznaczyłem komentarzem NOWE):
-@echo off
-setlocal
-:: ... Twoja konfiguracja ...
-:: UPEWNIJ SIĘ, ŻE TA WERSJA ZGADZA SIĘ Z TYM CO JEST WE WŁAŚCIWOŚCIACH PLIKU .EXE
-set "REQUIRED_VER=1.0.17"
+To, że aplikacja się nie uruchamia po pobraniu, a potem blokuje dostęp, wskazuje na mechanizm zabezpieczeń systemu Windows, który blokuje pliki wykonywalne pobrane z sieci (tzw. "Mark of the Web"). Dodatkowo, jeśli proces "ubijania" (taskkill) następuje zbyt szybko po uruchomieniu skryptu, system może nie zdążyć zwolnić blokady pliku.
+Oto przyczyny i kompletne rozwiązanie, które musisz wdrożyć w swoim skrypcie:
+Dlaczego to się dzieje?
+ * Blokada "Mark of the Web" (Dlaczego nie startuje): Windows oznacza pliki skopiowane z sieci jako "niezaufane". Taki plik po kliknięciu często nie robi nic lub system go po cichu ubija.
+ * BITS vs Copy-Item (Dlaczego Odmowa Dostępu): Używasz Start-BitsTransfer. Ta usługa jest świetna do pobierania z Internetu, ale w sieci lokalnej (LAN) często powoduje problemy z uprawnieniami i blokowaniem plików. Zwykłe kopiowanie jest pewniejsze.
+ * Zombie Proces: Jeśli aplikacja nie wystartowała poprawnie (punkt 1), jej proces może wisieć w tle "zawieszony", trzymając plik. Taskkill działa, ale system potrzebuje sekundy lub dwóch na faktyczne zwolnienie pliku na dysku.
+Rozwiązanie (Gotowy kod)
+Zastąp całą sekcję odpowiedzialną za sprawdzanie i pobieranie (od :: Sprawdzenie wersji... w dół) poniższym kodem.
+Wprowadziłem tu 3 kluczowe zmiany:
+ * Dodałem Unblock-File – to odblokuje plik .exe po pobraniu, dzięki czemu aplikacja się uruchomi.
+ * Zamieniłem BITS na Copy-Item – to rozwiąże problem "Odmowy dostępu" przy kopiowaniu.
+ * Dodałem opóźnienie (Start-Sleep) – daje systemowi czas na zwolnienie pliku.
+<!-- end list -->
+:: --- SEKCJA DO WKLEJENIA/PODMIANY W TWOIM PLIKU .BAT ---
 
-set "APP_NAME=TeamFlowApp.exe"
-set "APP_FOLDER=TeamFlowApp"
-:: ... Reszta zmiennych ...
-
-:: --- [NOWE] ZAMYKANIE PROCESU PRZED ZMIANAMI ---
-:: To naprawi błąd "Odmowa dostępu" jeśli aplikacja wisi w tle
+:: 1. Najpierw zabij proces i POCZEKAJ chwilę, aż system zwolni plik
 taskkill /F /IM "%APP_NAME%" >nul 2>&1
-:: -----------------------------------------------
+timeout /t 2 /nobreak >nul
 
-:: --- [NOWE] MAPOWANIE DYSKU (Opcjonalne, ale zalecane) ---
-:: Naprawia błąd "UNC paths are not supported" widoczny na czarnym tle
-pushd "%~dp0"
-:: ---------------------------------------------------------
+:: 2. Uruchomienie PowerShell z naprawioną logiką
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "$ErrorActionPreference = 'Stop';" ^
+    "$localExe = '%LOCAL_EXE%';" ^
+    "$netPath = '%NET_PATH%';" ^
+    "$requiredVerString = '%REQUIRED_VER%';" ^
+    "$needsDownload = $false;" ^
+    "try {" ^
+        "if (Test-Path $localExe -PathType Leaf) {" ^
+            "$localVersionString = (Get-Item $localExe).VersionInfo.FileVersion;" ^
+            "if ([version]$localVersionString -ne [version]$requiredVerString) {" ^
+                "Write-Host ('Wersja lokalna (' + $localVersionString + ') rozni sie od wymaganej (' + $requiredVerString + '). Aktualizacja...');" ^
+                "$needsDownload = $true;" ^
+            "} else {" ^
+                "Write-Host 'Wersja zgodna. Uruchamianie...';" ^
+            "}" ^
+        "} else {" ^
+            "Write-Host 'Brak aplikacji. Pobieranie...';" ^
+            "$needsDownload = $true;" ^
+        "}" ^
+        "if ($needsDownload) {" ^
+            "Write-Host ('Kopiowanie z: ' + $netPath);" ^
+            ":: Uzywamy Copy-Item z flaga Force zamiast BITS" ^
+            "Copy-Item -LiteralPath $netPath -Destination $localExe -Force;" ^
+            ":: KLUCZOWE: Odblokowanie pliku pobranego z sieci (naprawia brak startu aplikacji)" ^
+            "Unblock-File -Path $localExe;" ^
+            "Write-Host 'Kopiowanie zakonczone.';" ^
+        "}" ^
+    "} catch {" ^
+        "Write-Host ('[BLAD] Problem z aktualizacja: ' + $_.Exception.Message) -ForegroundColor Red;" ^
+        "Write-Host 'Sprobuje uruchomic mimo to...' -ForegroundColor Yellow;" ^
+    "}"
 
-:: Sprawdzenie wersji i pobranie (Reszta Twojego kodu PowerShell...)
-:: ...
+:: 3. Uruchomienie aplikacji
+echo.
+echo [INFO] Uruchamianie %APP_NAME%...
+start "" "%LOCAL_EXE%"
 
-Podsumowując: Skrypt próbuje pobrać plik, bo numer wersji wewnątrz pliku .exe jest stary. A wywala się przy pobieraniu, bo aplikacja jest uruchomiona. Zastosowanie obu powyższych poprawek rozwiąże problem u wszystkich użytkowników.
+endlocal
+
+Co zrobić, jeśli to nadal nie zadziała?
+Jeśli po wklejeniu tego kodu aplikacja nadal się nie uruchamia (pojawia się i znika), oznacza to, że Twoja aplikacja .exe potrzebuje innych plików do działania (np. plików .dll, .json z konfiguracją), które leżą na dysku sieciowym w tym samym folderze.
+Obecny skrypt kopiuje tylko jeden plik .exe.
+Jeśli tak jest, musisz zmienić linijkę w kodzie PowerShell z:
+Copy-Item -LiteralPath $netPath -Destination $localExe -Force;
+na kopiowanie całego folderu (zakładając, że zdefiniujesz ścieżki do folderów, a nie plików). Najprościej jednak, jeśli aplikacja jest prosta, upewnić się, że jest skompilowana jako "Single File" (pojedynczy plik) w Visual Studio, co zawrze wszystkie biblioteki DLL wewnątrz jednego pliku .exe.
