@@ -61,3 +61,92 @@ Aby to naprawić i uniknąć potencjalnych problemów z odnajdywaniem ścieżek,
 pushd "%~dp0"
 
 To sprawi, że skrypt tymczasowo "zamapuje" folder sieciowy jako dysk, co Windows lubi znacznie bardziej niż ścieżki \\mbank.pl\....
+
+
+Oczywiście. Poniżej znajduje się kompletny, gotowy do wklejenia kod, który zawiera odtworzone parametry początkowe z Twoich zrzutów ekranu oraz wszystkie niezbędne poprawki (zabijanie procesu, odblokowanie pliku, naprawa błędu składni PowerShell).
+Skopiuj całość i zastąp nim zawartość swojego pliku .bat.
+@echo off
+setlocal
+
+:: --- 1. NAPRAWA BLEDU "UNC PATHS" ---
+:: To sprawia, że skrypt działa poprawnie nawet uruchamiany z sieci
+pushd "%~dp0"
+
+:: --- 2. KONFIGURACJA (Odtworzona z Twoich zrzutów) ---
+:: Tutaj zmieniasz wersję przy każdej aktualizacji
+set "REQUIRED_VER=1.0.17"
+
+set "APP_NAME=TeamFlowApp.exe"
+set "APP_FOLDER=TeamFlowApp"
+
+:: Budowanie pełnej ścieżki sieciowej
+set "NET_PATH=\\mbank.pl\zasoby\Z-DBZ_APP\Aplikacje\USER_APP\TeamFlowApp\wersja_%REQUIRED_VER%\%APP_FOLDER%\%APP_NAME%"
+
+:: Konfiguracja ścieżek lokalnych
+set "LOCAL_DIR=%TEMP%\%APP_FOLDER%"
+set "LOCAL_EXE=%LOCAL_DIR%\%APP_NAME%"
+
+:: --- 3. PRZYGOTOWANIE SRODOWISKA ---
+echo [INFO] Wymagana wersja aplikacji: %REQUIRED_VER%
+
+:: Tworzenie folderu lokalnego, jeśli nie istnieje
+if not exist "%LOCAL_DIR%" mkdir "%LOCAL_DIR%" >nul
+
+:: BEZPIECZNIK: Zamknięcie aplikacji jeśli jest uruchomiona (naprawia "Odmowa dostępu")
+taskkill /F /IM "%APP_NAME%" >nul 2>&1
+:: Czekamy 2 sekundy, aż system zwolni plik
+timeout /t 2 /nobreak >nul
+
+:: --- 4. LOGIKA AKTUALIZACJI (POWERSHELL) ---
+:: Usunąłem błędne komentarze "::" ze środka komendy, dodałem Unblock-File i Copy-Item
+powershell -NoProfile -ExecutionPolicy Bypass -Command ^
+    "$ErrorActionPreference = 'Stop';" ^
+    "$localExe = '%LOCAL_EXE%';" ^
+    "$netPath = '%NET_PATH%';" ^
+    "$requiredVerString = '%REQUIRED_VER%';" ^
+    "$needsDownload = $false;" ^
+    "try {" ^
+        "if (Test-Path $localExe -PathType Leaf) {" ^
+            "$localVersionString = (Get-Item $localExe).VersionInfo.FileVersion;" ^
+            "if ([version]$localVersionString -ne [version]$requiredVerString) {" ^
+                "Write-Host ('Lokalna wersja (' + $localVersionString + ') jest inna niz wymagana. Aktualizacja...');" ^
+                "$needsDownload = $true;" ^
+            "} else {" ^
+                "Write-Host 'Wersja lokalna jest aktualna.';" ^
+            "}" ^
+        "} else {" ^
+            "Write-Host 'Aplikacja nie istnieje lokalnie. Pobieranie...';" ^
+            "$needsDownload = $true;" ^
+        "}" ^
+        "if ($needsDownload) {" ^
+            "Write-Host ('Pobieranie pliku z: ' + $netPath);" ^
+            "Copy-Item -LiteralPath $netPath -Destination $localExe -Force;" ^
+            "Unblock-File -Path $localExe;" ^
+            "Write-Host 'Pobieranie zakonczone pomyslnie.';" ^
+        "}" ^
+    "} catch {" ^
+        "Write-Host ('[BLAD] Wystapil problem: ' + $_.Exception.Message) -ForegroundColor Red;" ^
+        "Write-Host 'Sprobuje uruchomic obecna wersje...' -ForegroundColor Yellow;" ^
+    "}"
+
+:: --- 5. URUCHOMIENIE APLIKACJI ---
+echo.
+if exist "%LOCAL_EXE%" (
+    echo [INFO] Uruchamianie %APP_NAME%...
+    start "" "%LOCAL_EXE%"
+) else (
+    echo [BLAD KRYTYCZNY] Plik aplikacji nie zostal odnaleziony.
+    echo Sprawdz czy sciezka sieciowa jest poprawna:
+    echo %NET_PATH%
+    pause
+)
+
+:: Przywrócenie ścieżki i czyszczenie
+popd
+endlocal
+
+Najważniejsze zmiany w tym kodzie:
+ * pushd "%~dp0": Naprawia błąd "UNC paths are not supported" widoczny na Twoim pierwszym zrzucie.
+ * taskkill + timeout: Automatycznie zamyka starą wersję programu i czeka chwilę, aby uniknąć błędu "Odmowa dostępu".
+ * Unblock-File: Kluczowa komenda w PowerShellu – mówi systemowi Windows "Ten plik z sieci jest bezpieczny, pozwól mu działać". Bez tego aplikacja mogła się nie uruchamiać.
+ * Czysty PowerShell: Usunąłem wszystkie znaki :: ze środka bloku PowerShell, które powodowały błąd składni.
