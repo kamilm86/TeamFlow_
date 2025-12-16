@@ -1,23 +1,17 @@
-To, że aplikacja się nie uruchamia po pobraniu, a potem blokuje dostęp, wskazuje na mechanizm zabezpieczeń systemu Windows, który blokuje pliki wykonywalne pobrane z sieci (tzw. "Mark of the Web"). Dodatkowo, jeśli proces "ubijania" (taskkill) następuje zbyt szybko po uruchomieniu skryptu, system może nie zdążyć zwolnić blokady pliku.
-Oto przyczyny i kompletne rozwiązanie, które musisz wdrożyć w swoim skrypcie:
-Dlaczego to się dzieje?
- * Blokada "Mark of the Web" (Dlaczego nie startuje): Windows oznacza pliki skopiowane z sieci jako "niezaufane". Taki plik po kliknięciu często nie robi nic lub system go po cichu ubija.
- * BITS vs Copy-Item (Dlaczego Odmowa Dostępu): Używasz Start-BitsTransfer. Ta usługa jest świetna do pobierania z Internetu, ale w sieci lokalnej (LAN) często powoduje problemy z uprawnieniami i blokowaniem plików. Zwykłe kopiowanie jest pewniejsze.
- * Zombie Proces: Jeśli aplikacja nie wystartowała poprawnie (punkt 1), jej proces może wisieć w tle "zawieszony", trzymając plik. Taskkill działa, ale system potrzebuje sekundy lub dwóch na faktyczne zwolnienie pliku na dysku.
-Rozwiązanie (Gotowy kod)
-Zastąp całą sekcję odpowiedzialną za sprawdzanie i pobieranie (od :: Sprawdzenie wersji... w dół) poniższym kodem.
-Wprowadziłem tu 3 kluczowe zmiany:
- * Dodałem Unblock-File – to odblokuje plik .exe po pobraniu, dzięki czemu aplikacja się uruchomi.
- * Zamieniłem BITS na Copy-Item – to rozwiąże problem "Odmowy dostępu" przy kopiowaniu.
- * Dodałem opóźnienie (Start-Sleep) – daje systemowi czas na zwolnienie pliku.
-<!-- end list -->
-:: --- SEKCJA DO WKLEJENIA/PODMIANY W TWOIM PLIKU .BAT ---
+Dziękuję za zrzut ekranu – teraz wszystko jest jasne. Przepraszam, to mój błąd w składni.
+Co się stało?
+ * Błąd The term '::' is not recognized...: W poprzednim kodzie użyłem :: do zrobienia komentarzy wewnątrz bloku kodu PowerShell. Znak :: służy do komentarzy w plikach .bat, ale PowerShell go nie rozumie (traktuje go jak polecenie), dlatego skrypt się "wyłożył" w momencie próby kopiowania.
+ * Błąd System Windows nie może odnaleźć pliku: Ponieważ skrypt wysypał się na błędzie powyżej, plik nie został skopiowany. Kiedy skrypt doszedł do linijki start ..., próbował uruchomić plik, którego fizycznie nie ma na dysku.
+Jak to naprawić?
+Musimy usunąć komentarze :: ze środka komendy PowerShell.
+Oto poprawiony, czysty kod. Skopiuj go i podmień w swoim pliku .bat (zastąp całą sekcję od :: Sprawdzenie wersji... w dół).
+:: --- POPRAWIONY KOD (BEZ KOMENTARZY WEWNĄTRZ POWERSHELL) ---
 
-:: 1. Najpierw zabij proces i POCZEKAJ chwilę, aż system zwolni plik
+:: 1. Najpierw zabij proces i POCZEKAJ chwilę
 taskkill /F /IM "%APP_NAME%" >nul 2>&1
 timeout /t 2 /nobreak >nul
 
-:: 2. Uruchomienie PowerShell z naprawioną logiką
+:: 2. Uruchomienie PowerShell (usunięto błędne komentarze)
 powershell -NoProfile -ExecutionPolicy Bypass -Command ^
     "$ErrorActionPreference = 'Stop';" ^
     "$localExe = '%LOCAL_EXE%';" ^
@@ -39,9 +33,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
         "}" ^
         "if ($needsDownload) {" ^
             "Write-Host ('Kopiowanie z: ' + $netPath);" ^
-            ":: Uzywamy Copy-Item z flaga Force zamiast BITS" ^
             "Copy-Item -LiteralPath $netPath -Destination $localExe -Force;" ^
-            ":: KLUCZOWE: Odblokowanie pliku pobranego z sieci (naprawia brak startu aplikacji)" ^
             "Unblock-File -Path $localExe;" ^
             "Write-Host 'Kopiowanie zakonczone.';" ^
         "}" ^
@@ -53,13 +45,19 @@ powershell -NoProfile -ExecutionPolicy Bypass -Command ^
 :: 3. Uruchomienie aplikacji
 echo.
 echo [INFO] Uruchamianie %APP_NAME%...
-start "" "%LOCAL_EXE%"
+if exist "%LOCAL_EXE%" (
+    start "" "%LOCAL_EXE%"
+) else (
+    echo [BLAD KRYTYCZNY] Plik aplikacji nie zostal pobrany. Sprawdz sciezke sieciowa.
+    pause
+)
 
 endlocal
 
-Co zrobić, jeśli to nadal nie zadziała?
-Jeśli po wklejeniu tego kodu aplikacja nadal się nie uruchamia (pojawia się i znika), oznacza to, że Twoja aplikacja .exe potrzebuje innych plików do działania (np. plików .dll, .json z konfiguracją), które leżą na dysku sieciowym w tym samym folderze.
-Obecny skrypt kopiuje tylko jeden plik .exe.
-Jeśli tak jest, musisz zmienić linijkę w kodzie PowerShell z:
-Copy-Item -LiteralPath $netPath -Destination $localExe -Force;
-na kopiowanie całego folderu (zakładając, że zdefiniujesz ścieżki do folderów, a nie plików). Najprościej jednak, jeśli aplikacja jest prosta, upewnić się, że jest skompilowana jako "Single File" (pojedynczy plik) w Visual Studio, co zawrze wszystkie biblioteki DLL wewnątrz jednego pliku .exe.
+Dodatkowa uwaga do zrzutu ekranu
+Na samej górze czarnego okna widzę komunikat:
+CMD.EXE was started with the above path... UNC paths are not supported.
+Aby to naprawić i uniknąć potencjalnych problemów z odnajdywaniem ścieżek, na samej górze swojego pliku .bat (zaraz po @echo off) dodaj tę linijkę:
+pushd "%~dp0"
+
+To sprawi, że skrypt tymczasowo "zamapuje" folder sieciowy jako dysk, co Windows lubi znacznie bardziej niż ścieżki \\mbank.pl\....
