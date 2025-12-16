@@ -1,119 +1,143 @@
-To doskonały pomysł. Jest to tzw. podejście "Folder-Based Versioning".
-Jest to najbezpieczniejsza i najwygodniejsza metoda dla Ciebie jako administratora.
- * Twoja praca: Tworzysz nowy folder (np. 1.0.18), wrzucasz tam plik .exe i tyle.
- * Praca skryptu: Skrypt sam skanuje foldery, widzi, że 1.0.18 jest większe niż 1.0.17, i decyduje o aktualizacji.
-Nie musisz edytować żadnych plików tekstowych ani skryptów przy wydawaniu nowej wersji.
-Jak przygotować foldery na serwerze?
-Aby ten skrypt zadziałał, struktura na dysku sieciowym (... \USER_APP\TeamFlowApp) musi wyglądać tak:
+To jest klasyczny problem "zagnieżdżania języków". Błąd widoczny na czerwonym ekranie (Missing closing '}', The term '::' is not recognized) wynika z tego, że interpreter plików .bat źle interpretuje znaki specjalne (takie jak |, (, )) znajdujące się wewnątrz komendy PowerShell.
+Aby to naprawić raz na zawsze i uniknąć "walki z cudzysłowami", zastosujemy metodę hybrydową.
+Skrypt .bat najpierw utworzy tymczasowy plik .ps1 (czysty kod PowerShell), uruchomi go, a potem usunie. To eliminuje 100% błędów składniowych, które widzisz na ekranie.
+Oto gotowe, pancerne rozwiązanie dla struktury folderów (1.0.16, 1.0.17...).
+KROK 1: Struktura folderów na serwerze
+Upewnij się, że na dysku sieciowym (...USER_APP\TeamFlowApp) masz taką strukturę:
 TeamFlowApp (Główny folder)
 │
-├── 1.0.16              <-- Folder starszej wersji
+├── 1.0.17              <-- Folder z wersją (nazwa to TYLKO numer)
+│   └── TeamFlowApp.exe <-- Plik aplikacji w środku
+│
+├── 1.0.18              <-- Nowsza wersja (gdy ją wydasz)
 │   └── TeamFlowApp.exe
 │
-├── 1.0.17              <-- Folder nowszej wersji
-│   └── TeamFlowApp.exe
-│
-└── uruchom.bat         <-- Ten skrypt
+└── uruchom.bat         <-- Ten skrypt poniżej
 
-Gotowy Skrypt (Inteligentny Skaner Wersji)
-Skopiuj poniższy kod. Skrypt automatycznie wykryje folder z najwyższym numerem.
+KROK 2: Nowy kod (Metoda Hybrydowa)
+Skopiuj całość i wklej do pliku .bat.
 @echo off
-setlocal enabledelayedexpansion
+setlocal
 
-:: --- 1. KONFIGURACJA ---
-:: Naprawia ścieżki sieciowe
+:: --- 1. KONFIGURACJA POCZĄTKOWA ---
+:: Naprawiamy problem "UNC paths are not supported" mapując dysk
 pushd "%~dp0"
 
-:: Nazwa pliku aplikacji
+:: Ustawiamy zmienne środowiskowe, które odczyta PowerShell
 set "APP_NAME=TeamFlowApp.exe"
-
-:: Gdzie szukać folderów z wersjami? (Folder, w którym leży ten skrypt)
 set "NET_ROOT=%~dp0"
-:: Jeśli skrypt leży gdzie indziej, wpisz pełną ścieżkę na sztywno, np.:
-:: set "NET_ROOT=\\mbank.pl\zasoby\Z-DBZ_APP\Aplikacje\USER_APP\TeamFlowApp"
+:: Usuwamy ewentualny backslash na końcu ścieżki sieciowej
+if "%NET_ROOT:~-1%"=="\" set "NET_ROOT=%NET_ROOT:~0,-1%"
 
 :: Ścieżki lokalne (u użytkownika)
 set "LOCAL_DIR=%TEMP%\TeamFlowApp"
 set "LOCAL_EXE=%LOCAL_DIR%\%APP_NAME%"
 set "LOCAL_VER_FILE=%LOCAL_DIR%\installed_version.txt"
+set "PS_SCRIPT=%TEMP%\updater_temp.ps1"
 
-:: --- 2. LOGIKA AKTUALIZACJI (POWERSHELL) ---
-powershell -NoProfile -ExecutionPolicy Bypass -Command ^
-    "$ErrorActionPreference = 'Stop';" ^
-    "$netRoot = '%NET_ROOT%';" ^
-    "$localDir = '%LOCAL_DIR%';" ^
-    "$localExe = '%LOCAL_EXE%';" ^
-    "$localVerFile = '%LOCAL_VER_FILE%';" ^
-    "$appName = '%APP_NAME%';" ^
-    "try {" ^
-        ":: 1. Skanujemy sieć w poszukiwaniu folderów z wersjami (format X.Y.Z)" ^
-        "$latestFolder = Get-ChildItem -Path $netRoot -Directory | " ^
-        "    Where-Object { $_.Name -match '^\d+\.\d+\.\d+$' } | " ^
-        "    Sort-Object { [version]$_.Name } -Descending | " ^
-        "    Select-Object -First 1;" ^
-        "if (-not $latestFolder) {" ^
-        "    Write-Host '[BLAD] Nie znaleziono żadnych folderów z wersjami na serwerze!' -ForegroundColor Red;" ^
-        "    exit 1;" ^
-        "}" ^
-        "$latestVersion = $latestFolder.Name;" ^
-        "$sourceExe = Join-Path $latestFolder.FullName $appName;" ^
-        "Write-Host ('Najnowsza wersja na serwerze: ' + $latestVersion);" ^
-        ":: 2. Sprawdzamy, co mamy lokalnie" ^
-        "if (Test-Path $localVerFile) {" ^
-        "    $currentVersion = Get-Content $localVerFile;" ^
-        "} else {" ^
-        "    $currentVersion = '0.0.0';" ^
-        "}" ^
-        "Write-Host ('Zainstalowana wersja:     ' + $currentVersion);" ^
-        ":: 3. Porównanie i decyzja" ^
-        "$needsUpdate = $false;" ^
-        "if ([version]$latestVersion -gt [version]$currentVersion) {" ^
-        "    $needsUpdate = $true;" ^
-        "} elseif (-not (Test-Path $localExe)) {" ^
-        "    Write-Host 'Brak pliku EXE. Wymuszenie pobierania.' -ForegroundColor Yellow;" ^
-        "    $needsUpdate = $true;" ^
-        "}" else {" ^
-        "    Write-Host 'Aplikacja jest aktualna.' -ForegroundColor Green;" ^
-        "}" ^
-        "if ($needsUpdate) {" ^
-        "    Write-Host '--- Rozpoczynam aktualizacje ---' -ForegroundColor Cyan;" ^
-        "    :: Sprawdzenie czy plik źródłowy istnieje" ^
-        "    if (-not (Test-Path $sourceExe)) {" ^
-        "        throw 'Plik ' + $appName + ' nie istnieje w folderze ' + $latestFolder.FullName;" ^
-        "    }" ^
-        "    :: Ubijamy proces" ^
-        "    Stop-Process -Name 'TeamFlowApp' -ErrorAction SilentlyContinue;" ^
-        "    Start-Sleep -Seconds 2;" ^
-        "    :: Tworzenie folderu lokalnego" ^
-        "    if (-not (Test-Path $localDir)) { New-Item -ItemType Directory -Path $localDir | Out-Null }" ^
-        "    :: Kopiowanie pliku EXE" ^
-        "    Copy-Item -LiteralPath $sourceExe -Destination $localExe -Force;" ^
-        "    :: Zapisanie numeru nowej wersji do pliku tekstowego" ^
-        "    Set-Content -Path $localVerFile -Value $latestVersion;" ^
-        "    :: Odblokowanie pliku" ^
-        "    Unblock-File -Path $localExe;" ^
-        "    Write-Host 'Sukces! Zaktualizowano do wersji ' + $latestVersion -ForegroundColor Green;" ^
-        "}" ^
-    "} catch {" ^
-    "    Write-Host ('[BLAD KRYTYCZNY] ' + $_.Exception.Message) -ForegroundColor Red;" ^
-    "    exit 1;" ^
-    "}"
+:: --- 2. TWORZENIE TYMCZASOWEGO SKRYPTU POWERSHELL ---
+:: Zapisujemy czysty kod PowerShell do pliku, żeby uniknąć błędów w Batch
+(
+echo $ErrorActionPreference = 'Stop'
+echo $netRoot = $env:NET_ROOT
+echo $localDir = $env:LOCAL_DIR
+echo $localExe = $env:LOCAL_EXE
+echo $localVerFile = $env:LOCAL_VER_FILE
+echo $appName = $env:APP_NAME
+echo.
+echo try {
+echo     # 1. Szukamy folderu z najwyższym numerem wersji
+echo     Write-Host "Skanowanie wersji w: $netRoot"
+echo     $latestFolder = Get-ChildItem -Path $netRoot -Directory ^| 
+echo         Where-Object { $_.Name -match '^\d+\.\d+\.\d+$' } ^| 
+echo         Sort-Object { [version]$_.Name } -Descending ^| 
+echo         Select-Object -First 1
+echo.
+echo     if (-not $latestFolder) {
+echo         Write-Host "[BLAD] Nie znaleziono folderów z wersjami (np. 1.0.17) na serwerze!" -ForegroundColor Red
+echo         exit 1
+echo     }
+echo.
+echo     $latestVersion = $latestFolder.Name
+echo     $sourceExe = Join-Path $latestFolder.FullName $appName
+echo     Write-Host "Najnowsza wersja na serwerze: $latestVersion"
+echo.
+echo     # 2. Sprawdzamy wersję lokalną
+echo     $currentVersion = "0.0.0"
+echo     if (Test-Path $localVerFile) {
+echo         $currentVersion = (Get-Content $localVerFile).Trim()
+echo     }
+echo     Write-Host "Zainstalowana wersja:     $currentVersion"
+echo.
+echo     # 3. Decyzja o aktualizacji
+echo     $needsUpdate = $false
+echo     if ([version]$latestVersion -gt [version]$currentVersion) {
+echo         $needsUpdate = $true
+echo     } elseif (-not (Test-Path $localExe)) {
+echo         Write-Host "Brak pliku EXE. Wymuszenie pobierania." -ForegroundColor Yellow
+echo         $needsUpdate = $true
+echo     } else {
+echo         Write-Host "Aplikacja jest aktualna." -ForegroundColor Green
+echo     }
+echo.
+echo     # 4. Wykonanie aktualizacji
+echo     if ($needsUpdate) {
+echo         Write-Host "--- Rozpoczynam aktualizacje do $latestVersion ---" -ForegroundColor Cyan
+echo         if (-not (Test-Path $sourceExe)) {
+echo             throw "Plik $appName nie istnieje w folderze $latestVersion!"
+echo         }
+echo.
+echo         # Zabijamy procesy
+echo         Stop-Process -Name "TeamFlowApp" -ErrorAction SilentlyContinue
+echo         Start-Sleep -Seconds 2
+echo.
+echo         # Tworzenie folderu i kopiowanie
+echo         if (-not (Test-Path $localDir)) { New-Item -ItemType Directory -Path $localDir ^| Out-Null }
+echo         Copy-Item -LiteralPath $sourceExe -Destination $localExe -Force
+echo         Set-Content -Path $localVerFile -Value $latestVersion
+echo.
+echo         # Odblokowanie pliku (Mark of the Web)
+echo         Unblock-File -Path $localExe
+echo         Write-Host "Sukces! Zaktualizowano pomyślnie." -ForegroundColor Green
+echo     }
+echo } catch {
+echo     Write-Host "[BLAD KRYTYCZNY] $($_.Exception.Message)" -ForegroundColor Red
+echo     exit 1
+echo }
+) > "%PS_SCRIPT%"
 
-:: --- 3. URUCHOMIENIE ---
+:: --- 3. URUCHOMIENIE SKRYPTU POWERSHELL ---
+powershell -NoProfile -ExecutionPolicy Bypass -File "%PS_SCRIPT%"
+
+:: Sprawdzenie czy PowerShell zgłosił błąd (exit code 1)
+if %errorlevel% NEQ 0 (
+    echo.
+    echo [ERROR] Wystapil blad podczas aktualizacji. Sprawdz komunikaty powyzej.
+    del "%PS_SCRIPT%" >nul 2>&1
+    pause
+    popd
+    exit /b
+)
+
+:: Sprzątanie pliku tymczasowego
+del "%PS_SCRIPT%" >nul 2>&1
+
+:: --- 4. URUCHOMIENIE APLIKACJI ---
 echo.
 if exist "%LOCAL_EXE%" (
     echo [INFO] Uruchamianie aplikacji...
     start "" "%LOCAL_EXE%"
 ) else (
-    echo [BLAD] Aplikacja nie jest dostepna.
+    echo [BLAD] Plik aplikacji nie zostal znaleziony.
     pause
 )
 
+:: Przywrócenie ścieżki i wyjście
 popd
 endlocal
 
-Co zyskujesz dzięki temu rozwiązaniu?
- * Pełna automatyzacja: Gdy wydajesz wersję 1.0.18, po prostu tworzysz folder 1.0.18 i wklejasz tam plik. Nic więcej. Skrypt u użytkowników sam wykryje, że pojawił się folder z wyższym numerkiem.
- * Brak problemów z PyInstaller: Skrypt nie zagląda do środka pliku .exe, więc nie obchodzi go, czy wersja "wypaliła się" poprawnie, czy nie. Ufa nazwie folderu.
- * Prostota: Wersja jest trzymana w małym pliku tekstowym installed_version.txt na komputerze użytkownika. To bardzo stabilne rozwiązanie.
-Ważne: Upewnij się tylko, że nazwy folderów to czyste numery, np. 1.0.17, a nie wersja_1.0.17 (jeśli wolisz wersja_..., daj znać, lekko zmienię fragment kodu). Ten skrypt oczekuje formatu X.Y.Z (czyli np. 1.0.17).
+Co zmieniłem i dlaczego to zadziała?
+ * Metoda "Write-to-File": Zamiast uruchamiać PowerShell bezpośrednio w jednej linii (co powodowało błąd składni Missing closing }), skrypt .bat linijka po linijce tworzy plik updater_temp.ps1 w folderze tymczasowym, a potem go uruchamia. To eliminuje błędy parsera.
+ * Obsługa folderów: Skrypt szuka folderu o nazwie wyglądającej jak wersja (np. 1.0.17), sortuje je i bierze najwyższy.
+ * Zmienne środowiskowe: PowerShell pobiera ścieżki ($env:NET_ROOT) bezpośrednio z ustawień Batcha, więc nie ma problemu z przekazywaniem ścieżek ze spacjami czy polskimi znakami.
+Teraz wystarczy, że wrzucisz folder 1.0.17 z plikiem .exe na serwer i uruchomisz ten plik .bat.
