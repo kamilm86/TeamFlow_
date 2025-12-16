@@ -1,45 +1,55 @@
-# ROLA
-Działaj jako Lead Data Scientist specjalizujący się w analizie szeregów czasowych i wykrywaniu anomalii biznesowych. Twoim celem jest przeprowadzenie Root Cause Analysis (RCA) dotyczącej zmiany wolumenu ankiet.
+To bardzo cenna obserwacja! Fakt, że skrypt nadal próbuje pobrać plik, mimo że fizycznie już tam jest (i to w dobrej wersji, skoro użytkownik go skopiował), zmienia diagnozę. Wskazuje to na dwa niezależne problemy występujące jednocześnie.
+Oto co się dzieje "pod maską":
+Problem 1: Pętla aktualizacji (Dlaczego skrypt chce wciąż pobierać?)
+Skrypt porównuje dwie wartości:
+ * Zmienną w skrypcie: REQUIRED_VER="1.0.17"
+ * Wewnętrzną wersję pliku .exe (tzw. Assembly Version / File Version).
+Diagnoza: Najprawdopodobniej programista kompilując nową wersję aplikacji, zapomniał podbić numeru wersji w ustawieniach projektu (np. w Visual Studio).
+W efekcie:
+ * Ty wiesz, że to jest wersja 1.0.17.
+ * Skrypt widzi w kodzie 1.0.17.
+ * Ale plik .exe w środku "przedstawia się" nadal jako 1.0.16 (lub starsza).
+Skrypt myśli: "Lokalnie mam 1.0.16, a wymagana jest 1.0.17. Muszę pobrać plik ponownie!". I robi to w kółko przy każdym uruchomieniu.
+Jak to sprawdzić?
+Kliknij prawym przyciskiem myszy na plik .exe (ten, który ręcznie skopiowałeś), wybierz Właściwości -> zakładka Szczegóły. Spójrz na pole Wersja pliku. Jeśli jest tam numer niższy niż 1.0.17, to masz winowajcę.
+Problem 2: Błąd krytyczny (Dlaczego "Odmowa dostępu"?)
+Skoro skrypt (błędnie) decyduje się na pobieranie, próbuje nadpisać plik TeamFlowApp.exe.
+Błąd Odmowa dostępu pojawia się dlatego, że:
+ * Użytkownik skopiował plik ręcznie.
+ * Prawdopodobnie go uruchomił (lub proces zawisł w tle).
+ * Skrypt próbuje usunąć/podmienić plik, który jest używany przez system.
+KOMPLETNE ROZWIĄZANIE
+Musisz wykonać dwie akcje, aby to trwale naprawić:
+KROK 1: Napraw wersjonowanie (Dla programisty/Ciebie)
+Masz dwa wyjścia, wybierz jedno:
+ * Opcja A (Poprawna): Skompiluj aplikację jeszcze raz, upewniając się, że w Assembly Information wersja pliku jest ustawiona na 1.0.17.
+ * Opcja B (Szybka łatka w skrypcie): Jeśli nie możesz teraz kompilować, sprawdź jaką wersję ma plik (np. 1.0.16) i zmień w skrypcie .bat linijkę 8 na:
+   set "REQUIRED_VER=1.0.16" (lub taką, jaką faktycznie ma plik exe).
+   To sprawi, że skrypt przestanie próbować go nadpisywać.
+KROK 2: Dodaj bezpiecznik do skryptu (Dla błędu "Odmowa dostępu")
+Niezależnie od wersji, musisz dodać zamykanie procesu, aby uniknąć błędów w przyszłości.
+Zaktualizuj swój plik .bat w ten sposób (zmiany oznaczyłem komentarzem NOWE):
+@echo off
+setlocal
+:: ... Twoja konfiguracja ...
+:: UPEWNIJ SIĘ, ŻE TA WERSJA ZGADZA SIĘ Z TYM CO JEST WE WŁAŚCIWOŚCIACH PLIKU .EXE
+set "REQUIRED_VER=1.0.17"
 
-# KONTEKST DANYCH
-Analizujemy okres od 2023-01-01 do 2025-12-11.
-Zauważono istotną zmianę (wzrost lub spadek) w liczbie ankiet w ostatnich miesiącach.
-Dostępne zmienne (kolumny):
-- Data ankiety (Timestamp)
-- Kanał rozmowy (np. czat, telefon, email, aplikacja)
-- Typ ankiety (np. transakcyjna, relacyjna)
-- ID klienta (unikalny identyfikator)
-- Data rejestracji (staż klienta)
-- Data urodzenia / Wiek (demografia)
-- Typ klienta (segment, np. VIP, Standard, Student)
+set "APP_NAME=TeamFlowApp.exe"
+set "APP_FOLDER=TeamFlowApp"
+:: ... Reszta zmiennych ...
 
-# ZADANIE ANALITYCZNE
-Twoim zadaniem jest znalezienie matematycznego uzasadnienia zmiany wolumenu. Nie zgaduj – udowodnij to na danych. Wykonaj analizę w następujących krokach:
+:: --- [NOWE] ZAMYKANIE PROCESU PRZED ZMIANAMI ---
+:: To naprawi błąd "Odmowa dostępu" jeśli aplikacja wisi w tle
+taskkill /F /IM "%APP_NAME%" >nul 2>&1
+:: -----------------------------------------------
 
-KROK 1: USTALENIE MOMENTU ZMIANY I TRENDU
-1. Stwórz linię czasu (agregacja miesięczna/tygodniowa) i zidentyfikuj dokładny moment (punkt zwrotny), w którym nastąpił skok lub spadek liczby ankiet.
-2. Określ, czy zmiana jest nagła (skokowa) czy stopniowa (trend).
+:: --- [NOWE] MAPOWANIE DYSKU (Opcjonalne, ale zalecane) ---
+:: Naprawia błąd "UNC paths are not supported" widoczny na czarnym tle
+pushd "%~dp0"
+:: ---------------------------------------------------------
 
-KROK 2: ANALIZA DIMENSIONALNA (PRZYCZYNY TECHNICZNE/PROCESOWE)
-Porównaj okres "PRZED zmianą" z okresem "PO zmianie" pod kątem dystrybucji zmiennych:
-- **Kanał rozmowy:** Czy jeden kanał nagle zyskał/stracił wolumen? (np. awaria wysyłki SMS?).
-- **Typ ankiety:** Czy wprowadzono nowy typ ankiety, który zdominował wyniki? A może wyłączono stary?
-- **ID klienta:** Sprawdź unikalność. Czy wzrost liczby ankiet wynika z większej liczby klientów, czy może ci sami klienci wypełniają ankietę wielokrotnie (duplikaty/spam)?
+:: Sprawdzenie wersji i pobranie (Reszta Twojego kodu PowerShell...)
+:: ...
 
-KROK 3: ANALIZA DEMOGRAFICZNA I KOHORTOWA (PRZYCZYNY BIZNESOWE)
-- **Data rejestracji (Staż):** Czy zmiana pochodzi od "nowych" klientów (efekt kampanii marketingowej, onboardingu)? Czy może uaktywnili się starzy klienci?
-- **Wiek / Typ klienta:** Czy zmiana dotyczy specyficznej grupy? (np. nagły wzrost ankiet od grupy wiekowej 18-24 lata może sugerować kampanię studencką).
-
-# FORMAT RAPORTU
-Przedstaw wyniki w formie diagnozy:
-
-1. **Werdykt Główny:** "Główną przyczyną zmiany wolumenu jest [ZMIENNA X]."
-2. **Dowód w Liczbach:** Pokaż tabelę porównawczą "Okres Bazowy vs Okres Zmiany" dla kluczowej zmiennej (np. Kanał X: wzrost o 400%).
-3. **Analiza Poboczna:** Czy wystąpiły efekty wtórne? (np. wzrost wolumenu w Kanale App spowodował spadek średniego wieku respondenta).
-4. **Weryfikacja Hipotez:**
-   - Czy to błąd techniczny (duplikaty ID)? [TAK/NIE]
-   - Czy to nowa kohorta klientów (Data rejestracji)? [TAK/NIE]
-   - Czy to zmiana kanału kontaktu? [TAK/NIE]
-
-# DANE:
-[TUTAJ ZAŁĄCZ PLIK LUB WKLEJ DANE]
+Podsumowując: Skrypt próbuje pobrać plik, bo numer wersji wewnątrz pliku .exe jest stary. A wywala się przy pobieraniu, bo aplikacja jest uruchomiona. Zastosowanie obu powyższych poprawek rozwiąże problem u wszystkich użytkowników.
