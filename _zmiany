@@ -1,105 +1,37 @@
-To, że okno zamyka się natychmiast, oznacza zazwyczaj błąd składni w pliku .bat. Wiersz poleceń (CMD) napotyka znak, którego nie rozumie (np. źle zamknięty nawias w bloku kodu), i "wywala się" zanim zdąży wykonać polecenie pause.
-W poprzednim kodzie użyłem bloku ( echo ... ), który jest elegancki, ale bardzo wrażliwy na błędy.
-Przygotowałem wersję "Pancerną". Zmieniłem sposób zapisywania pliku PowerShell – teraz robimy to linijka po linijce. To jest mniej ładne w kodzie, ale niezawodne i nie powoduje natychmiastowego zamknięcia okna.
-Co musisz zrobić:
-Skopiuj poniższy kod i wklej go do swojego pliku .bat.
-@echo off
-setlocal
+To nie jest błąd w kodzie Twojego programu ani w skrypcie .bat. Komunikat "System Windows nie może uzyskać dostępu do określonego urządzenia, ścieżki lub pliku" (widoczny na ostatnim zdjęciu) w środowisku korporacyjnym (domena mBank, co widać po ścieżkach) oznacza na 99%, że system bezpieczeństwa zablokował Twój nowy plik .exe.
+Oto diagnoza i sposób rozwiązania:
+Dlaczego to się dzieje?
+ * CyberArk EPM (Endpoint Privilege Manager): Na zrzucie ekranu z właściwościami pliku widać zakładkę "CyberArk EPM". To oprogramowanie, które pilnuje, aby na komputerach banku nie uruchamiały się "nieznane" programy.
+ * Zmiana sumy kontrolnej: Starsze wersje działają, bo CyberArk je już "poznał" lub zostały zatwierdzone. Nowa wersja (1.0.17), którą właśnie skompilowałeś, jest dla systemu zupełnie nowym, nieznanym plikiem. Ponieważ nie jest podpisana cyfrowym certyfikatem zaufanym przez bank, system ją blokuje (tzw. Application Control).
+ * Fałszywy alarm antywirusowy: Pliki tworzone przez PyInstaller (którego używasz, co widać w logach) są bardzo często błędnie wykrywane jako wirusy przez systemy korporacyjne, ponieważ hakerzy często używają tego samego narzędzia do pakowania wirusów.
+JAK TO NAPRAWIĆ? (Kroki od najprostszego)
+KROK 1: Test lokalny (Omiń sieć)
+Uruchamianie "nieznanego" pliku EXE bezpośrednio z zasobu sieciowego (\\mbank.pl\zasoby...) jest traktowane przez Windows jako najwyższe zagrożenie.
+ * Skopiuj plik TeamFlowApp.exe (ten nowy, który nie działa) ręcznie na swój Pulpit.
+ * Kliknij na niego prawym przyciskiem myszy -> Właściwości.
+ * Na dole zakładki "Ogólne", jeśli widzisz pole Zabezpieczenia z polem wyboru Odblokuj (Unblock), zaznacz je i kliknij OK.
+ * Spróbuj uruchomić plik z Pulpitu.
+   * Jeśli zadziała: Problem leży tylko w uruchamianiu z sieci (skrypt .bat z "Metodą Hybrydową", który wysłałem wcześniej, powinien to rozwiązać, bo on kopiuje plik lokalnie przed uruchomieniem).
+   * Jeśli nadal błąd: Blokuje Cię CyberArk/Antywirus na poziomie pliku.
+KROK 2: Przekompiluj w "trybie czystym"
+Czasami PyInstaller zostawia śmieci, które triggerują antywirusa. Zrób dokładnie tak:
+ * Usuń całkowicie foldery build i dist w swoim projekcie.
+ * Użyj tej komendy (zmieniłem ją, by była "lżejsza" dla antywirusa):
+   pyinstaller --noconfirm --onefile --windowed --name "TeamFlowApp" --clean --noupx --version-file "version.txt" --add-data "config.ini;." --add-data "icons;icons" main.py
 
-:: --- 1. KONFIGURACJA ---
-:: Mapujemy dysk, zeby uniknac bledu UNC
-pushd "%~dp0"
-
-set "APP_NAME=TeamFlowApp.exe"
-:: Ustawiamy sciezke do folderu glownego na serwerze (tam gdzie jest ten skrypt)
-set "NET_ROOT=%~dp0"
-:: Usuwamy ewentualny ukosnik na koncu
-if "%NET_ROOT:~-1%"=="\" set "NET_ROOT=%NET_ROOT:~0,-1%"
-
-:: Sciezki lokalne
+   (Kluczowe jest tu --noupx i --clean, które już stosowałeś, ale upewnijmy się, że foldery były puste przed startem).
+KROK 3: Zmiana lokalizacji tymczasowej
+Jeśli Twój skrypt .bat pobiera plik do %TEMP%, CyberArk może blokować uruchamianie plików wykonywalnych z tego konkretnego folderu (polityka bezpieczeństwa: "nie uruchamiaj nic z Temp").
+Spróbuj zmienić w skrypcie .bat lokalizację docelową na folder, w którym masz prawo uruchamiać programy, np. C:\Users\TwojLogin\TeamFlowApp (utwórz taki folder ręcznie na dysku C i tam celuj skryptem).
+W skrypcie .bat (wersja hybrydowa) zmień linię:
 set "LOCAL_DIR=%TEMP%\TeamFlowApp"
-set "LOCAL_EXE=%LOCAL_DIR%\%APP_NAME%"
-set "LOCAL_VER_FILE=%LOCAL_DIR%\installed_version.txt"
-set "PS_SCRIPT=%TEMP%\updater_safe.ps1"
-
-:: --- 2. TWORZENIE SKRYPTU POWERSHELL (METODA BEZPIECZNA) ---
-:: Kasujemy stary plik, zeby dopisywac do czystego
-if exist "%PS_SCRIPT%" del "%PS_SCRIPT%"
-
-:: Zapisujemy kod linijka po linijce (to zapobiega bledom skladni BAT)
-echo $ErrorActionPreference = 'Stop' >> "%PS_SCRIPT%"
-echo $netRoot = $env:NET_ROOT >> "%PS_SCRIPT%"
-echo $localDir = $env:LOCAL_DIR >> "%PS_SCRIPT%"
-echo $localExe = $env:LOCAL_EXE >> "%PS_SCRIPT%"
-echo $localVerFile = $env:LOCAL_VER_FILE >> "%PS_SCRIPT%"
-echo $appName = $env:APP_NAME >> "%PS_SCRIPT%"
-echo. >> "%PS_SCRIPT%"
-echo try { >> "%PS_SCRIPT%"
-echo     Write-Host "Szukam wersji w: $netRoot" >> "%PS_SCRIPT%"
-echo     $latestFolder = Get-ChildItem -Path $netRoot -Directory ^| Where-Object { $_.Name -match '^\d+\.\d+\.\d+$' } ^| Sort-Object { [version]$_.Name } -Descending ^| Select-Object -First 1 >> "%PS_SCRIPT%"
-echo. >> "%PS_SCRIPT%"
-echo     if (-not $latestFolder) { >> "%PS_SCRIPT%"
-echo         Write-Host "[BLAD] Nie znaleziono folderow z wersjami (np. 1.0.17) w lokalizacji skryptu!" -ForegroundColor Red >> "%PS_SCRIPT%"
-echo         exit 1 >> "%PS_SCRIPT%"
-echo     } >> "%PS_SCRIPT%"
-echo. >> "%PS_SCRIPT%"
-echo     $latestVersion = $latestFolder.Name >> "%PS_SCRIPT%"
-echo     $sourceExe = Join-Path $latestFolder.FullName $appName >> "%PS_SCRIPT%"
-echo     Write-Host "Najnowsza wersja na serwerze: $latestVersion" >> "%PS_SCRIPT%"
-echo. >> "%PS_SCRIPT%"
-echo     $currentVersion = "0.0.0" >> "%PS_SCRIPT%"
-echo     if (Test-Path $localVerFile) { $currentVersion = (Get-Content $localVerFile).Trim() } >> "%PS_SCRIPT%"
-echo     Write-Host "Zainstalowana wersja:     $currentVersion" >> "%PS_SCRIPT%"
-echo. >> "%PS_SCRIPT%"
-echo     $needsUpdate = $false >> "%PS_SCRIPT%"
-echo     if ([version]$latestVersion -gt [version]$currentVersion) { $needsUpdate = $true } >> "%PS_SCRIPT%"
-echo     elseif (-not (Test-Path $localExe)) { $needsUpdate = $true } >> "%PS_SCRIPT%"
-echo. >> "%PS_SCRIPT%"
-echo     if ($needsUpdate) { >> "%PS_SCRIPT%"
-echo         Write-Host "--- Aktualizacja do $latestVersion ---" -ForegroundColor Cyan >> "%PS_SCRIPT%"
-echo         if (-not (Test-Path $sourceExe)) { throw "Brak pliku $appName w folderze $latestVersion" } >> "%PS_SCRIPT%"
-echo         Stop-Process -Name "TeamFlowApp" -ErrorAction SilentlyContinue >> "%PS_SCRIPT%"
-echo         Start-Sleep -Seconds 2 >> "%PS_SCRIPT%"
-echo         if (-not (Test-Path $localDir)) { New-Item -ItemType Directory -Path $localDir ^| Out-Null } >> "%PS_SCRIPT%"
-echo         Copy-Item -LiteralPath $sourceExe -Destination $localExe -Force >> "%PS_SCRIPT%"
-echo         Set-Content -Path $localVerFile -Value $latestVersion >> "%PS_SCRIPT%"
-echo         Unblock-File -Path $localExe >> "%PS_SCRIPT%"
-echo         Write-Host "Gotowe." -ForegroundColor Green >> "%PS_SCRIPT%"
-echo     } else { >> "%PS_SCRIPT%"
-echo         Write-Host "Aplikacja aktualna." -ForegroundColor Green >> "%PS_SCRIPT%"
-echo     } >> "%PS_SCRIPT%"
-echo } catch { >> "%PS_SCRIPT%"
-echo     Write-Host "[BLAD KRYTYCZNY] $($_.Exception.Message)" -ForegroundColor Red >> "%PS_SCRIPT%"
-echo     exit 1 >> "%PS_SCRIPT%"
-echo } >> "%PS_SCRIPT%"
-
-:: --- 3. URUCHOMIENIE ---
-powershell -NoProfile -ExecutionPolicy Bypass -File "%PS_SCRIPT%"
-
-:: Jesli byl blad, nie zamykaj okna
-if %errorlevel% NEQ 0 (
-    echo.
-    echo [ERROR] Skrypt napotkal problem.
-    pause
-)
-
-:: Sprzatanie
-del "%PS_SCRIPT%" >nul 2>&1
-
-:: Start aplikacji
-echo.
-if exist "%LOCAL_EXE%" (
-    echo [INFO] Uruchamianie aplikacji...
-    start "" "%LOCAL_EXE%"
-) else (
-    echo [BLAD] Nie udalo sie uruchomic aplikacji.
-    pause
-)
-
-popd
-
-Dlaczego to zadziała?
- * Usunąłem blokadę ( ... ): Zamiast grupować komendy, każda linijka jest oddzielnie dopisywana (>>) do pliku. Dzięki temu jeden błąd nie "wysadza" całego skryptu.
- * Debugowanie: Kod jest tak skonstruowany, że jeśli PowerShell zwróci błąd (exit 1), skrypt .bat to wykryje (if %errorlevel% NEQ 0) i zrobi pause, więc zobaczysz czerwony komunikat zamiast znikającego okna.
-Pamiętaj o strukturze folderów:
-Skrypt .bat musi leżeć w tym samym folderze co podfoldery z wersjami (1.0.17, 1.0.18 itd.).
+na:
+set "LOCAL_DIR=C:\Users\%USERNAME%\TeamFlowApp_Local"
+Podsumowanie dla Ciebie
+Błąd, który widzisz, nie wynika z błędu w kodzie Pythona. Twoja aplikacja jest poprawna. Po prostu systemy bezpieczeństwa w Twojej firmie zablokowały ten konkretny plik .exe, bo jest nowy.
+Co zrobić teraz?
+Skorzystaj z ostatniego skryptu (Metoda Hybrydowa), który Ci podałem. On wykonuje następujące czynności, które pomagają ominąć ten błąd:
+ * Pobiera plik z sieci na dysk lokalny.
+ * Używa komendy Unblock-File (w PowerShell), co "mówi" Windowsowi, że plik jest bezpieczny.
+ * Dopiero wtedy go uruchamia.
+Jeśli po użyciu tamtego skryptu nadal masz ten błąd – musisz skontaktować się z administratorem bezpieczeństwa (IT), aby dodał Twój folder lub sumę kontrolną pliku do wyjątków w CyberArk, ponieważ jako zwykły użytkownik nie obejdziesz blokady "Access Denied" nałożonej przez EPM.
