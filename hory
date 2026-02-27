@@ -1,0 +1,126 @@
+Tak, ten cel „Automatyzacja i efektywność” jest świetny jako nadrzędny – można pod niego podpiąć mniejsze cele jako podzadania lub kwartalne milestone'y. Oto jak to zorganizować w aplikacji Horyzonty:
+
+## **Cel nadrzędny**  
+**Tytuł:** Automatyzacja i efektywność procesów raportowych  
+
+**Opis:** Zidentyfikuję i zautomatyzuję 3 kluczowe procesy raportowe/operacyjne w moim obszarze (w tym CC FLOW, nowy model rozliczeń, dashboard HR/TFA), tak aby skrócić czas ich realizacji o min. 30% i zmniejszyć błędy manualne o 50%.  
+
+**Miary sukcesu:**  
+-  3 zautomatyzowane procesy wdrożone i używane operacyjnie  
+-  Oszczędność min. 10h/miesiąc na zespole (mierzone godzinami)  
+-  Brak zgłoszonych błędów w raportach po automatyzacji  
+
+***
+
+## **Podcele / Zadania pod „Automatyzacja i efektywność"**  
+Te wpiszesz jako podpunkty lub osobne zadania w sekcji poniżej opisu:
+
+**Podcel 1.1 – CC FLOW prototyp**  
+„Opracowanie prototypu CC FLOW dla optymalizacji procesów szkoleniowych TFA”  
+*Miara:* działający prototyp z min. 1 raportem używanym operacyjnie  
+
+**Podcel 1.2 – Nowy model rozliczeń**  
+„Testowe wyliczenia nowego modelu rozliczeń zespołu X na danych historycznych"  
+*Miara:* zaakceptowany model + wyliczenia za 3 miesiące  
+
+**Podcel 1.3 – Dashboard HR/TFA**  
+„Dodanie 3 nowych metryk do dashboardu HR/TFA”  
+*Miara:* regularne użytkowanie przez min. 3 osoby  
+
+***
+
+## **Pozostałe cele (2-5)**  
+Reszta pozostaje bez zmian:  
+**Cel 2:** Szkolenia Python na nowych serwerach Windows  
+**Cel 3:** Konsultacje merytoryczne w Teams  
+**Cel 4:** Knowledge sharing / sesje szkoleniowe  
+**Cel 5:** Optymalizacja dashboardu HR/TFA (lub jako podcel 1.3)  
+
+***
+
+**Zaleta takiego podejścia:** Pokazujesz strategiczne myślenie (1 duży cel = 3 konkretne projekty) + masz elastyczność w realizacji. Wpisz nadrzędny cel jako główny, a podcele jako zadania/kroki. Gotowe do kopiowania!
+
+Źródła
+
+
+Oto kompletny zestaw 6 celów w formacie „Horyzonty” – gotowy do kopiowania i wklejania do aplikacji. Każdy ma tytuł, opis i miary sukcesu w stylu Twojego kolegi.
+
+***
+
+## **Cel 1**  
+**Tytuł:** CC FLOW – wdrożenie w TFA narzędzia do optymalizacji procesów szkoleniowych  
+
+**Opis:** Opracuję i przygotuję do wdrożenia w TFA pierwszą wersję narzędzia CC FLOW wspierającego optymalizację procesów szkoleniowych (agregacja danych, raporty, rekomendacje), tak aby usprawnić planowanie i rozliczanie szkoleń w zespole.  
+
+**Miary sukcesu:**  
+-  Przygotowany i działający prototyp CC FLOW  
+-  Minimum 1 raport/ekran wykorzystywany operacyjnie przez TFA  
+-  Pozytywny feedback użytkowników (min. 70% ocen „dobry/bardzo dobry")  
+
+***
+
+## **Cel 2**  
+**Tytuł:** Wypracowanie nowego modelu rozliczania zespołu X  
+
+**Opis:** Przeanalizuję obecny sposób rozliczania pracy zespołu X, zidentyfikuję potrzeby biznesowe i przygotuję nowy, przejrzysty model rozliczeń (zasady, parametry, źródła danych), uzgodniony z przełożoną i właścicielami procesu i gotowy do wdrożenia operacyjnego.  
+
+**Miary sukcesu:**  
+-  Opisany i zaakceptowany model rozliczeń  
+-  Testowe wyliczenia na min. 3 miesiącach danych historycznych  
+-  Wykorzystanie modelu w bieżącym raportowaniu przez min. 1 kwartał  
+
+***
+
+## **Cel 3**  
+**Tytuł:** Uruchomienie systemu konsultacji merytorycznych w Microsoft Teams  
+
+**Opis:** Zaprojektuję i wdrożę w Microsoft Teams prosty system konsultacji merytorycznych (rezerwacja terminów, opis sprawy, kanał do wymiany materiałów), który ułatwi ocenę spraw i współpracę między zespołami, skracając czas uzyskania odpowiedzi i porządkując komunikację.  
+
+**Miary sukcesu:**  
+-  Uruchomiony kanał/aplikacja konsultacji w Teams  
+-  Min. 20 zrealizowanych konsultacji w 2026 roku  
+-  Skrócenie średniego czasu uzyskania odpowiedzi o 20% lub pozytywny feedback  
+
+***
+
+## **Cel 4**  
+**Tytuł:** Automatyzacja 3 kluczowych procesów raportowych  
+
+**Opis:** Zidentyfikuję i zautomatyzuję 3 powtarzalne procesy raportowe/operacyjne w moim obszarze, tak aby skrócić czas ich realizacji o min. 30% i zmniejszyć błędy manualne o 50%.  
+
+**Miary sukcesu:**  
+-  3 zautomatyzowane procesy wdrożone i używane  
+-  Oszczędność min. 10h/miesiąc na zespole  
+-  Brak zgłoszonych błędów w raportach po automatyzacji  
+
+***
+
+## **Cel 5**  
+**Tytuł:** Szkolenia Python na nowych serwerach Windows  
+
+**Opis:** Przeprowadzę 2 sesje szkoleniowe dla zespołu z wykorzystania Pythona do automatyzacji pobierania danych i raportowania na nowych serwerach wirtualnych Windows (setup Jupyter, podstawy skryptów), tak aby zespół mógł samodzielnie tworzyć proste automatyzacje.  
+
+**Miary sukcesu:**  
+-  2 zrealizowane sesje (frekwencja min. 4 osoby/sesja)  
+-  Min. 70% pozytywnych ocen w feedbacku  
+-  Min. 1 osoba z zespołu stworzy i uruchomi własny skrypt Python  
+
+***
+
+## **Cel 6**  
+**Tytuł:** Rozwój dashboardu HR/TFA z nowymi metrykami  
+
+**Opis:** Rozwinę istniejący dashboard HR/TFA o nowe metryki (np. efektywność szkoleń, rozliczenia), tak aby usprawnić monitoring procesów i podejmowanie decyzji w zespole.  
+
+**Miary sukcesu:**  
+-  3 nowe metryki/raporty dodane do dashboardu  
+-  Regularne użytkowanie przez min. 3 osoby w zespole  
+-  Pozytywny feedback od właściciela procesu (TFA)  
+
+***
+
+**Kopiuj po kolei do aplikacji!** Wszystkie cele są zgodne ze strategią mBanku (technologia, efektywność, dane) i pokazują konkretną wartość biznesową. Powodzenia! 🚀[1][2]
+
+Źródła
+[1] mBank ze strategią na lata 2026–2030 - BANK.pl https://bank.pl/mbank-ze-strategia-na-lata-2026-2030/
+[2] Strategia mBanku 2026–2030: wzrost, relacje, odpowiedzialność i ... https://itwiz.pl/strategia-mbanku-2026-2030-wzrost-relacje-odpowiedzialnosc-i-technologia/
